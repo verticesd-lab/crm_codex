@@ -1,0 +1,26 @@
+# Sistema de arquivos
+.DS_Store
+Thumbs.db
+
+# Dependências PHP (se usar composer futuramente)
+vendor/
+
+# Ambientes / configs sensíveis (se criar esses arquivos)
+.env
+.env.local
+
+# Uploads (imagens reais em produção – em dev pode deixar assim mesmo)
+uploads/
+
+# Arquivos de log
+*.log
+logs/
+
+# Pastas temporárias
+tmp/
+temp/
+
+# Arquivos de IDE/Editor
+.vscode/
+.idea/
+*.iml
