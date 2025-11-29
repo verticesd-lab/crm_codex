@@ -118,3 +118,4 @@ function checkApiToken(): void
 
     exit;
 }
+// rebuild coolify
