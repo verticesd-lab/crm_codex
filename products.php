@@ -46,6 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $categoria = trim($_POST['categoria'] ?? '');
     $ativo     = isset($_POST['ativo']) ? 1 : 0;
     $destaque  = isset($_POST['destaque']) ? 1 : 0;
+    $sizes     = trim($_POST['sizes'] ?? '');
     $oldImage  = trim($_POST['current_image'] ?? '');
 
     if ($nome === '' || $preco <= 0) {
@@ -67,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // UPDATE
                 $stmt = $pdo->prepare('
                     UPDATE products
-                    SET nome = ?, descricao = ?, preco = ?, categoria = ?, imagem = ?, ativo = ?, destaque = ?, updated_at = NOW()
+                    SET nome = ?, descricao = ?, preco = ?, categoria = ?, sizes = ?, imagem = ?, ativo = ?, destaque = ?, updated_at = NOW()
                     WHERE id = ? AND company_id = ?
                 ');
                 $stmt->execute([
@@ -75,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $descricao,
                     $preco,
                     $categoria,
+                    $sizes,
                     $imgPath,
                     $ativo,
                     $destaque,
@@ -85,8 +87,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 // INSERT
                 $stmt = $pdo->prepare('
-                    INSERT INTO products (company_id, nome, descricao, preco, categoria, imagem, ativo, destaque, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    INSERT INTO products (company_id, nome, descricao, preco, categoria, sizes, imagem, ativo, destaque, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                 ');
                 $stmt->execute([
                     $companyId,
@@ -94,6 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $descricao,
                     $preco,
                     $categoria,
+                    $sizes,
                     $imgPath,
                     $ativo,
                     $destaque
@@ -128,6 +131,27 @@ $flashSuccess = get_flash('success') ?? $flashSuccess;
 
 include __DIR__ . '/views/partials/header.php';
 ?>
+<style>
+    .size-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .size-option-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid #e2e8f0;
+        background-color: #f8fafc;
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+    .size-option-check input[type="checkbox"] {
+        margin: 0;
+    }
+</style>
 
 <div class="space-y-6">
     <div class="flex items-center justify-between">
@@ -166,6 +190,7 @@ include __DIR__ . '/views/partials/header.php';
             'imagem'    => '',
             'ativo'     => 1,
             'destaque'  => 0,
+            'sizes'     => '',
         ];
         ?>
         <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
@@ -256,6 +281,22 @@ include __DIR__ . '/views/partials/header.php';
                                 </label>
                             </div>
                         </div>
+                        <div>
+                            <label for="sizePreset" class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+                                Tamanhos disponГveis
+                            </label>
+                            <select id="sizePreset" class="w-full rounded border-slate-300 dark:bg-slate-900 dark:border-slate-700 text-sm">
+                                <option value="">Selecione o tipo de tamanho</option>
+                                <option value="roupa">Roupas – P, M, G, GG</option>
+                                <option value="calcado">Calçados – 37 ao 45</option>
+                                <option value="custom">Personalizado</option>
+                            </select>
+                            <div id="sizeOptions" class="size-options mt-2"></div>
+                            <input type="hidden" name="sizes" id="sizesHidden" value="<?= sanitize($prod['sizes'] ?? '') ?>">
+                            <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                                Use para marcar rapidamente quais tamanhos estгo disponГveis neste produto.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
@@ -333,5 +374,82 @@ include __DIR__ . '/views/partials/header.php';
         </div>
     <?php endif; ?>
 </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const sizePreset = document.getElementById('sizePreset');
+        const sizeOptions = document.getElementById('sizeOptions');
+        const sizesHidden = document.getElementById('sizesHidden');
+
+        if (!sizePreset || !sizeOptions || !sizesHidden) return;
+
+        function updateHidden() {
+            const checked = sizeOptions.querySelectorAll('input[type="checkbox"]:checked');
+            const values = Array.from(checked).map(function (el) { return el.value; });
+            sizesHidden.value = values.join(',');
+        }
+
+        function renderOptions(preset, initialValues) {
+            if (!Array.isArray(initialValues)) initialValues = [];
+            sizeOptions.innerHTML = '';
+
+            let sizes = [];
+            if (preset === 'roupa') {
+                sizes = ['P', 'M', 'G', 'GG'];
+            } else if (preset === 'calcado') {
+                sizes = ['37', '38', '39', '40', '41', '42', '43', '44', '45'];
+            } else if (preset === 'custom') {
+                sizeOptions.innerHTML = '<small>Modo personalizado ainda será implementado futuramente.</small>';
+                sizesHidden.value = '';
+                return;
+            } else {
+                sizesHidden.value = '';
+                return;
+            }
+
+            sizes.forEach(function (size) {
+                const isChecked = initialValues.indexOf(size) !== -1;
+
+                const label = document.createElement('label');
+                label.className = 'size-option-check';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = size;
+                checkbox.checked = isChecked;
+                checkbox.addEventListener('change', updateHidden);
+
+                const span = document.createElement('span');
+                span.textContent = size;
+
+                label.appendChild(checkbox);
+                label.appendChild(span);
+                sizeOptions.appendChild(label);
+            });
+
+            updateHidden();
+        }
+
+        sizePreset.addEventListener('change', function () {
+            renderOptions(this.value);
+        });
+
+        const initial = sizesHidden.value;
+        if (initial) {
+            const arr = initial.split(',').map(function (v) { return v.trim(); }).filter(Boolean);
+            let preset = '';
+            if (arr.some(function (v) { return ['P', 'M', 'G', 'GG'].indexOf(v) !== -1; })) {
+                preset = 'roupa';
+            } else if (arr.some(function (v) { return ['37', '38', '39', '40', '41', '42', '43', '44', '45'].indexOf(v) !== -1; })) {
+                preset = 'calcado';
+            }
+
+            if (preset) {
+                sizePreset.value = preset;
+                renderOptions(preset, arr);
+            }
+        }
+    });
+</script>
 
 <?php include __DIR__ . '/views/partials/footer.php'; ?>
