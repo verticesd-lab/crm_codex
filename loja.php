@@ -237,26 +237,31 @@ if (isset($_GET['add'])) {
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <?php foreach ($featured ?: array_slice($products, 0, 3) as $product): ?>
                             <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
-                                <?php if (!empty($product['imagem'])): ?>
-                                    <img src="<?= sanitize(image_url($product['imagem'])) ?>" class="h-44 w-full object-cover group-hover:scale-105 transition">
-                                <?php else: ?>
-                                    <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
-                                <?php endif; ?>
-                                <div class="p-4 space-y-2">
-                                    <p class="text-xs uppercase tracking-wide text-emerald-200/80">
-                                        <?= sanitize($product['categoria']) ?>
-                                    </p>
-                                    <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
-                                    <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
-                                    <div class="flex items-center justify-between">
-                                        <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
-                                        <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Destaque</span>
+                                <!-- LINK P/ DETALHES DO PRODUTO -->
+                                <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
+                                    <?php if (!empty($product['imagem'])): ?>
+                                        <img src="<?= sanitize(image_url($product['imagem'])) ?>" class="h-44 w-full object-cover group-hover:scale-105 transition">
+                                    <?php else: ?>
+                                        <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
+                                    <?php endif; ?>
+                                    <div class="p-4 space-y-2">
+                                        <p class="text-xs uppercase tracking-wide text-emerald-200/80">
+                                            <?= sanitize($product['categoria']) ?>
+                                        </p>
+                                        <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
+                                        <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
+                                        <div class="flex items-center justify-between">
+                                            <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
+                                            <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Destaque</span>
+                                        </div>
                                     </div>
-                                    <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
-                                       class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
-                                        Adicionar ao carrinho
-                                    </a>
-                                </div>
+                                </a>
+
+                                <!-- BOTÃO: ADICIONAR AO CARRINHO -->
+                                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
+                                   class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
+                                    Adicionar ao carrinho
+                                </a>
                             </div>
                         <?php endforeach; ?>
                         <?php if (empty($featured) && empty($products)): ?>
@@ -276,26 +281,31 @@ if (isset($_GET['add'])) {
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <?php foreach ($products as $product): ?>
                             <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
-                                <?php if (!empty($product['imagem'])): ?>
-                                    <img src="<?= sanitize(image_url($product['imagem'])) ?>" class="h-44 w-full object-cover group-hover:scale-105 transition">
-                                <?php else: ?>
-                                    <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
-                                <?php endif; ?>
-                                <div class="p-4 space-y-2">
-                                    <p class="text-xs uppercase tracking-wide text-emerald-200/80">
-                                        <?= sanitize($product['categoria']) ?>
-                                    </p>
-                                    <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
-                                    <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
-                                    <div class="flex items-center justify-between">
-                                        <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
-                                        <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Disponível</span>
+                                <!-- LINK P/ DETALHES DO PRODUTO -->
+                                <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
+                                    <?php if (!empty($product['imagem'])): ?>
+                                        <img src="<?= sanitize(image_url($product['imagem'])) ?>" class="h-44 w-full object-cover group-hover:scale-105 transition">
+                                    <?php else: ?>
+                                        <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
+                                    <?php endif; ?>
+                                    <div class="p-4 space-y-2">
+                                        <p class="text-xs uppercase tracking-wide text-emerald-200/80">
+                                            <?= sanitize($product['categoria']) ?>
+                                        </p>
+                                        <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
+                                        <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
+                                        <div class="flex items-center justify-between">
+                                            <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
+                                            <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Disponível</span>
+                                        </div>
                                     </div>
-                                    <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
-                                       class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
-                                        Adicionar ao carrinho
-                                    </a>
-                                </div>
+                                </a>
+
+                                <!-- BOTÃO: ADICIONAR AO CARRINHO -->
+                                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
+                                   class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
+                                    Adicionar ao carrinho
+                                </a>
                             </div>
                         <?php endforeach; ?>
                         <?php if (empty($products)): ?>
