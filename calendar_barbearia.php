@@ -9,7 +9,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
 require_login();
 
-$pdo = get_pdo();
+$pdo       = get_pdo();
 $companyId = current_company_id();
 
 if (!$companyId) {
@@ -39,12 +39,12 @@ $SLOT_INTERVAL_MINUTES = 30;
 $OPEN_TIME  = '09:00';
 $CLOSE_TIME = '19:00';
 
-// Horários bloqueados (ex.: almoço) – se usar na agenda pública, repete aqui
+// Horários bloqueados (ex.: almoço) – mesmos da agenda pública
 $BLOCKED_SLOTS = [
-    // '11:00',
-    // '11:30',
-    // '12:00',
-    // '12:30',
+    '11:00',
+    '11:30',
+    '12:00',
+    '12:30',
 ];
 
 /**
@@ -52,13 +52,13 @@ $BLOCKED_SLOTS = [
  * DATA SELECIONADA
  * ============================
  */
-$today = new DateTimeImmutable('today');
+$today           = new DateTimeImmutable('today');
 $selectedDateStr = $_GET['data'] ?? $today->format('Y-m-d');
 
 $selectedDate = DateTime::createFromFormat('Y-m-d', $selectedDateStr);
 if (!$selectedDate) {
-    $selectedDate = DateTime::createFromFormat('Y-m-d', $today->format('Y-m-d'));
-    $selectedDateStr = $selectedDate->format('Y-m-d');
+    $selectedDate     = DateTime::createFromFormat('Y-m-d', $today->format('Y-m-d'));
+    $selectedDateStr  = $selectedDate->format('Y-m-d');
 }
 
 /**
@@ -94,11 +94,11 @@ $timeSlots = generate_time_slots($OPEN_TIME, $CLOSE_TIME, $SLOT_INTERVAL_MINUTES
 $stmt = $pdo->prepare('
     SELECT id, customer_name, phone, instagram, date, time
     FROM appointments
-    WHERE company_id = ? AND date = ?
+    WHERE company_id = ? AND date = ? AND status = "agendado"
     ORDER BY time ASC, customer_name ASC
 ');
 $stmt->execute([$companyId, $selectedDateStr]);
-$appointments = $stmt->fetchAll();
+$appointments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Índice por horário HH:MM
 $appointmentsByTime = [];
@@ -194,13 +194,14 @@ include __DIR__ . '/views/partials/header.php';
                 <?php else: ?>
                     <?php foreach ($timeSlots as $slot): ?>
                         <?php
+                        // Pula horários bloqueados (almoço etc.)
                         if (in_array($slot, $BLOCKED_SLOTS, true)) {
                             continue;
                         }
 
                         $slotAppointments = $appointmentsByTime[$slot] ?? [];
-                        $count = count($slotAppointments);
-                        $isFull = $count >= $MAX_PER_SLOT;
+                        $count            = count($slotAppointments);
+                        $isFull           = $count >= $MAX_PER_SLOT;
 
                         if ($count === 0) {
                             $border = 'border-emerald-300/50';
@@ -233,7 +234,7 @@ include __DIR__ . '/views/partials/header.php';
                             <?php if ($count > 0): ?>
                                 <ul class="space-y-0.5 text-[11px] text-slate-700">
                                     <?php foreach ($slotAppointments as $appt): ?>
-                                        <li class="flex flex-col">
+                                        <li class="flex flex-col gap-0.5">
                                             <span class="font-medium">
                                                 <?= sanitize($appt['customer_name']) ?>
                                             </span>
@@ -243,6 +244,15 @@ include __DIR__ . '/views/partials/header.php';
                                                     • @<?= sanitize(ltrim($appt['instagram'], '@')) ?>
                                                 <?php endif; ?>
                                             </span>
+                                            <div class="text-[11px]">
+                                                <a
+                                                    href="<?= BASE_URL ?>/cancel_appointment.php?id=<?= (int)$appt['id'] ?>&data=<?= urlencode($selectedDateStr) ?>"
+                                                    class="inline-flex items-center gap-1 text-rose-600 hover:text-rose-500"
+                                                    onclick="return confirm('Cancelar este agendamento?');"
+                                                >
+                                                    ✕ Cancelar
+                                                </a>
+                                            </div>
                                         </li>
                                     <?php endforeach; ?>
                                 </ul>
