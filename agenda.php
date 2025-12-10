@@ -8,12 +8,37 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 /**
- * Configuração básica da agenda
+ * ==============================
+ * CONFIGURAÇÃO DA AGENDA
+ * ==============================
  */
-$MAX_PER_SLOT = 2;               // 👉 hoje são 2 barbeiros. Se quiser 3, muda pra 3.
-$SLOT_INTERVAL_MINUTES = 30;     // intervalo entre horários
-$OPEN_TIME  = '09:00';           // horário de abertura
-$CLOSE_TIME = '19:00';           // horário de fechamento (último horário começa antes disso)
+
+// 👉 Quantos clientes por horário (nº de barbeiros)
+$MAX_PER_SLOT = 2;
+
+// 👉 Duração de cada atendimento, em minutos (30, 45, 60...)
+$SLOT_INTERVAL_MINUTES = 30;
+
+// 👉 Horário de abertura e fechamento da barbearia
+$OPEN_TIME  = '09:00';
+$CLOSE_TIME = '19:00';
+
+// 👉 Horários bloqueados (ex.: almoço)
+// Com intervalo de 30min, de 11h às 13h:
+$BLOCKED_SLOTS = [
+    '11:00',
+    '11:30',
+    '12:00',
+    '12:30',
+];
+// Se mudar o intervalo para 45min, por exemplo,
+// ajuste a lista pra bater com os novos horários.
+
+/**
+ * ==============================
+ * CARREGA EMPRESA E DATA
+ * ==============================
+ */
 
 // slug da empresa: via GET ou sessão (igual loja.php)
 $slug = $_GET['empresa'] ?? ($_SESSION['company_slug'] ?? '');
@@ -58,7 +83,12 @@ if ($selectedDate < $today) {
 $errors = [];
 $success = null;
 
-// Se enviou o formulário de agendamento
+/**
+ * ==============================
+ * PROCESSA AGENDAMENTO (POST)
+ * ==============================
+ */
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nome      = trim($_POST['nome'] ?? '');
     $telefone  = trim($_POST['telefone'] ?? '');
@@ -86,6 +116,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Validação simples da hora no formato HH:MM
     if (!preg_match('/^\d{2}:\d{2}$/', $horaPost)) {
         $errors[] = 'Horário inválido.';
+    }
+
+    // Não deixa agendar em horário bloqueado (ex.: almoço)
+    if (in_array($horaPost, $BLOCKED_SLOTS, true)) {
+        $errors[] = 'Este horário não está disponível para agendamento.';
     }
 
     if (empty($errors) && $dataObj) {
@@ -135,6 +170,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+/**
+ * ==============================
+ * CARREGA AGENDAMENTOS DO DIA
+ * ==============================
+ */
+
 // Carrega agendamentos da data selecionada para montar os slots
 $appointmentsByTime = [];
 $stmt = $pdo->prepare('
@@ -183,7 +224,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Agenda - <?= sanitize($company['nome_fantasia']) ?></title>
 
-    <!-- Favicon (se já tiver no projeto) -->
+    <!-- Favicon -->
     <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -310,15 +351,25 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                             <?php
                             $qtd = $appointmentsByTime[$slot] ?? 0;
                             $isFull = $qtd >= $MAX_PER_SLOT;
+                            $isBlocked = in_array($slot, $BLOCKED_SLOTS, true);
                             ?>
                             <div
                                 class="flex flex-col items-center justify-center px-3 py-2 rounded-xl border text-xs
-                                <?= $isFull
-                                    ? 'border-red-500/40 bg-red-500/10 text-red-100 cursor-not-allowed'
-                                    : 'border-white/15 bg-white/5 text-slate-100'
+                                <?=
+                                    $isBlocked
+                                        ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-100'
+                                        : (
+                                            $isFull
+                                                ? 'border-red-500/40 bg-red-500/10 text-red-100'
+                                                : 'border-white/15 bg-white/5 text-slate-100'
+                                        )
                                 ?>">
                                 <span class="font-semibold"><?= sanitize($slot) ?></span>
-                                <?php if ($isFull): ?>
+                                <?php if ($isBlocked): ?>
+                                    <span class="mt-1 text-[10px] uppercase tracking-wide">
+                                        Indisponível
+                                    </span>
+                                <?php elseif ($isFull): ?>
                                     <span class="mt-1 text-[10px] uppercase tracking-wide">
                                         Lotado
                                     </span>
@@ -402,33 +453,30 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                             <?php
                             $qtd = $appointmentsByTime[$slot] ?? 0;
                             $isFull = $qtd >= $MAX_PER_SLOT;
+                            $isBlocked = in_array($slot, $BLOCKED_SLOTS, true);
+
+                            // Só mostra horários realmente disponíveis
+                            if ($isFull || $isBlocked) {
+                                continue;
+                            }
+
                             $inputId = 'hora_' . str_replace(':', '', $slot);
                             ?>
                             <label for="<?= $inputId ?>"
-                                   class="flex flex-col items-center justify-center px-3 py-2 rounded-xl border text-xs cursor-pointer
-                                   <?= $isFull
-                                       ? 'border-red-500/40 bg-red-500/10 text-red-100 cursor-not-allowed opacity-60'
-                                       : 'border-white/15 bg-white/5 text-slate-100 hover:border-brand-500 hover:bg-brand-500/20'
-                                   ?>">
+                                   class="slot-button flex flex-col items-center justify-center px-3 py-2 rounded-xl border text-xs cursor-pointer
+                                   border-white/15 bg-white/5 text-slate-100 hover:border-brand-500 hover:bg-brand-500/20">
                                 <input
                                     type="radio"
                                     id="<?= $inputId ?>"
                                     name="hora"
                                     value="<?= sanitize($slot) ?>"
                                     class="hidden"
-                                    <?= ($isFull ? 'disabled' : '') ?>
                                     <?= (($_POST['hora'] ?? '') === $slot) ? 'checked' : '' ?>
                                 >
                                 <span class="font-semibold"><?= sanitize($slot) ?></span>
-                                <?php if ($isFull): ?>
-                                    <span class="mt-1 text-[10px] uppercase tracking-wide">
-                                        Lotado
-                                    </span>
-                                <?php else: ?>
-                                    <span class="mt-1 text-[10px] text-emerald-200">
-                                        <?= $MAX_PER_SLOT - $qtd ?> vaga(s)
-                                    </span>
-                                <?php endif; ?>
+                                <span class="mt-1 text-[10px] text-emerald-200">
+                                    <?= $MAX_PER_SLOT - $qtd ?> vaga(s)
+                                </span>
                             </label>
                         <?php endforeach; ?>
                     </div>
@@ -448,5 +496,37 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
         </section>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const radios = document.querySelectorAll('input[name="hora"]');
+    const buttons = document.querySelectorAll('.slot-button');
+
+    function clearSelection() {
+        buttons.forEach(btn => {
+            btn.classList.remove('ring-2', 'ring-brand-500', 'bg-brand-500/20');
+        });
+    }
+
+    radios.forEach(radio => {
+        radio.addEventListener('change', function () {
+            clearSelection();
+            const label = radio.closest('label');
+            if (label) {
+                label.classList.add('ring-2', 'ring-brand-500', 'bg-brand-500/20');
+            }
+        });
+
+        // Se já vier marcado (ex.: depois de erro de validação), mantém destacado
+        if (radio.checked) {
+            const label = radio.closest('label');
+            if (label) {
+                label.classList.add('ring-2', 'ring-brand-500', 'bg-brand-500/20');
+            }
+        }
+    });
+});
+</script>
+
 </body>
 </html>
