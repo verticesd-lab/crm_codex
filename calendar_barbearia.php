@@ -112,8 +112,8 @@ foreach ($appointments as $appt) {
 
 $selfUrl = BASE_URL . '/calendar_barbearia.php';
 
+// 🔹 Importa só o header (ele já cuida da estrutura + sidebar)
 include __DIR__ . '/views/partials/header.php';
-include __DIR__ . '/views/partials/sidebar.php';
 ?>
 
 <main class="flex-1 bg-slate-100 min-h-screen">
@@ -194,7 +194,6 @@ include __DIR__ . '/views/partials/sidebar.php';
                 <?php else: ?>
                     <?php foreach ($timeSlots as $slot): ?>
                         <?php
-                        // pula horários bloqueados (ex.: almoço)
                         if (in_array($slot, $BLOCKED_SLOTS, true)) {
                             continue;
                         }
