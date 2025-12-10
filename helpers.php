@@ -165,7 +165,7 @@ function image_url(?string $path): string
  * Upload otimizado de imagem.
  *
  * - $fieldName: nome do campo do formulário (ex: "imagem" ou "logo")
- * - $folder: subpasta dentro de /uploads (ex: "products", "logos")
+ * - $folder: subpasta dentro de /uploads (ex: "products", "logos" ou "uploads/products")
  * - Retorna: "uploads/products/arquivo.jpg" para salvar no banco
  * - Retorna null em caso de falha
  */
@@ -210,8 +210,14 @@ function upload_image_optimized(
     }
 
     // Pasta física alvo: UPLOAD_DIR/<folder>
-    $relativeFolder = trim($folder, '/'); // ex: "products"
-    $targetDir      = rtrim(UPLOAD_DIR, '/') . '/' . $relativeFolder;
+    $relativeFolder = trim($folder, '/'); // pode vir "products" OU "uploads/products"
+
+    // 🔧 Normaliza para SEM "uploads/" na frente
+    if (str_starts_with($relativeFolder, 'uploads/')) {
+        $relativeFolder = substr($relativeFolder, strlen('uploads/'));
+    }
+
+    $targetDir = rtrim(UPLOAD_DIR, '/') . '/' . $relativeFolder;
 
     if (!is_dir($targetDir)) {
         mkdir($targetDir, 0777, true);
