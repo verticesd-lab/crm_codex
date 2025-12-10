@@ -24,15 +24,12 @@ $OPEN_TIME  = '09:00';
 $CLOSE_TIME = '19:00';
 
 // 👉 Horários bloqueados (ex.: almoço)
-// Com intervalo de 30min, de 11h às 13h:
 $BLOCKED_SLOTS = [
     '11:00',
     '11:30',
     '12:00',
     '12:30',
 ];
-// Se mudar o intervalo para 45min, por exemplo,
-// ajuste a lista pra bater com os novos horários.
 
 /**
  * ==============================
@@ -124,16 +121,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errors) && $dataObj) {
-        // Verificar se o horário ainda tem vagas (independente de quem seja)
+        // Verificar se o horário ainda tem vagas (só status agendado)
         $stmt = $pdo->prepare('
             SELECT COUNT(*) AS total
             FROM appointments
-            WHERE company_id = ? AND date = ? AND time = ?
+            WHERE company_id = ? AND date = ? AND time = ? AND status = "agendado"
         ');
         $stmt->execute([
             $companyId,
             $dataObj->format('Y-m-d'),
-            $horaPost . ':00' // TIME no MySQL é HH:MM:SS
+            $horaPost . ':00'
         ]);
         $row          = $stmt->fetch();
         $totalMarcado = (int)($row['total'] ?? 0);
@@ -141,11 +138,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($totalMarcado >= $MAX_PER_SLOT) {
             $errors[] = 'Esse horário acabou de ficar cheio. Escolha outro horário.';
         } else {
-            // 🚫 NOVO: impede o MESMO telefone de agendar 2x no mesmo horário
+            // Impede o MESMO telefone de agendar 2x no mesmo horário (status agendado)
             $stmt = $pdo->prepare('
                 SELECT COUNT(*) AS total
                 FROM appointments
-                WHERE company_id = ? AND date = ? AND time = ? AND phone = ?
+                WHERE company_id = ? AND date = ? AND time = ? AND phone = ? AND status = "agendado"
             ');
             $stmt->execute([
                 $companyId,
@@ -161,8 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Inserir agendamento
                 $stmt = $pdo->prepare('
                     INSERT INTO appointments
-                        (company_id, customer_name, phone, instagram, date, time, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, NOW())
+                        (company_id, customer_name, phone, instagram, date, time, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, "agendado", NOW())
                 ');
                 $stmt->execute([
                     $companyId,
@@ -199,12 +196,11 @@ $appointmentsByTime = [];
 $stmt = $pdo->prepare('
     SELECT time, COUNT(*) AS total
     FROM appointments
-    WHERE company_id = ? AND date = ?
+    WHERE company_id = ? AND date = ? AND status = "agendado"
     GROUP BY time
 ');
 $stmt->execute([$companyId, $selectedDateStr]);
 foreach ($stmt->fetchAll() as $row) {
-    // time vem como "HH:MM:SS" → converte pra "HH:MM"
     $timeKey = substr($row['time'], 0, 5);
     $appointmentsByTime[$timeKey] = (int)$row['total'];
 }
@@ -298,8 +294,8 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
             <p class="text-xs text-slate-400">Loja</p>
             <p class="font-semibold"><?= sanitize($company['nome_fantasia']) ?></p>
             <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
-               class="inline-flex text-sm text-emerald-300 hover:text-emerald-200 underline">
-                ← Voltar à loja
+               class="inline-flex text-sm font-semibold text-emerald-300 hover:text-emerald-200 underline">
+                Ver produtos da loja
             </a>
         </div>
     </header>
@@ -404,6 +400,13 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                 <p class="text-[11px] text-slate-400">
                     Para agendar, escolha o horário desejado ao lado e preencha seus dados.
                 </p>
+
+                <a
+                    href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+                    class="inline-flex mt-2 items-center justify-center px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-xs font-semibold text-white"
+                >
+                    👉 Ver produtos da For Men Store
+                </a>
             </div>
         </section>
 
@@ -535,7 +538,6 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
 
-        // Se já vier marcado (ex.: depois de erro de validação), mantém destacado
         if (radio.checked) {
             const label = radio.closest('label');
             if (label) {
