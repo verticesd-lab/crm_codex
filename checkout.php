@@ -55,29 +55,29 @@ if (!empty($cart)) {
         if (!isset($map[$productId])) {
             continue;
         }
-        $produto = $map[$productId];
-        $qty = (int)$qty;
+        $produto  = $map[$productId];
+        $qty      = (int)$qty;
         $subtotal = $qty * (float)$produto['preco'];
-        $total += $subtotal;
+        $total   += $subtotal;
 
         $items[] = [
-            'id'       => $produto['id'],
-            'nome'     => $produto['nome'],
-            'preco'    => (float)$produto['preco'],
+            'id'         => $produto['id'],
+            'nome'       => $produto['nome'],
+            'preco'      => (float)$produto['preco'],
             'quantidade' => $qty,
-            'subtotal' => $subtotal,
+            'subtotal'   => $subtotal,
         ];
     }
 }
 
 // Se enviou o formulário, montar mensagem e redirecionar pro WhatsApp
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
-    $nome  = trim($_POST['nome'] ?? '');
-    $tel   = trim($_POST['telefone'] ?? '');
-    $obs   = trim($_POST['observacoes'] ?? '');
+    $nome = trim($_POST['nome'] ?? '');
+    $tel  = trim($_POST['telefone'] ?? '');
+    $obs  = trim($_POST['observacoes'] ?? '');
 
     $linhas = [];
-    $linhas[] = "Novo pedido vindo da loja online " . $company['nome_fantasia'] . "";
+    $linhas[] = "Novo pedido vindo da loja online " . $company['nome_fantasia'];
     $linhas[] = "";
     $linhas[] = "Itens:";
 
@@ -89,6 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
     $linhas[] = "Total: " . format_currency($total);
     $linhas[] = "";
     $linhas[] = "Dados do cliente:";
+
     if ($nome !== '') {
         $linhas[] = "Nome: {$nome}";
     }
@@ -102,22 +103,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
     }
 
     $mensagem = implode("\n", $linhas);
-    $whatsapp = $company['whatsapp_principal'] ?? '';
+
+    // --------- NORMALIZA O WHATSAPP DA EMPRESA ----------
+    $whatsapp = trim($company['whatsapp_principal'] ?? '');
+
+    // Se tiver um link inteiro salvo (começa com http), tenta extrair só o phone=...
+    if ($whatsapp !== '' && strpos($whatsapp, 'http') === 0) {
+        $parsed = parse_url($whatsapp);
+        $query  = $parsed['query'] ?? '';
+        parse_str($query, $qs);
+        if (!empty($qs['phone'])) {
+            $whatsapp = $qs['phone'];
+        }
+    }
+
+    // Deixa só dígitos (remove +, espaço, parênteses, etc)
+    $whatsapp = preg_replace('/\D+/', '', $whatsapp);
+
+    // DEBUG OPCIONAL: ver o texto que vai pro Whats na tela
+    if (isset($_GET['debug'])) {
+        echo '<pre>' . htmlspecialchars($mensagem) . '</pre>';
+        echo '<hr>';
+        echo 'Enviando para o número: ' . htmlspecialchars($whatsapp);
+        exit;
+    }
+    // -----------------------------------------------------
 
     if ($whatsapp) {
-        $url = 'https://api.whatsapp.com/send?phone=' . urlencode($whatsapp) .
-            '&text=' . rawurlencode($mensagem);
+        $url = 'https://api.whatsapp.com/send?phone=' . $whatsapp .
+            '&text=' . urlencode($mensagem);
 
-        // Opcional: limpa o carrinho depois de montar o pedido
+        // limpa o carrinho depois de montar o pedido
         unset($_SESSION[$cartKey]);
 
         header('Location: ' . $url);
         exit;
     } else {
-        $erro = 'WhatsApp da empresa não configurado.';
+        $erro = 'WhatsApp da empresa não configurado corretamente.';
     }
 }
-
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
