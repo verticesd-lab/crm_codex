@@ -80,7 +80,7 @@ if ($selectedDate < $today) {
     $selectedDateStr = $selectedDate->format('Y-m-d');
 }
 
-$errors = [];
+$errors  = [];
 $success = null;
 
 /**
@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errors) && $dataObj) {
-        // Verificar se o horário ainda tem vagas
+        // Verificar se o horário ainda tem vagas (independente de quem seja)
         $stmt = $pdo->prepare('
             SELECT COUNT(*) AS total
             FROM appointments
@@ -135,37 +135,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dataObj->format('Y-m-d'),
             $horaPost . ':00' // TIME no MySQL é HH:MM:SS
         ]);
-        $row = $stmt->fetch();
+        $row          = $stmt->fetch();
         $totalMarcado = (int)($row['total'] ?? 0);
 
         if ($totalMarcado >= $MAX_PER_SLOT) {
             $errors[] = 'Esse horário acabou de ficar cheio. Escolha outro horário.';
         } else {
-            // Inserir agendamento
+            // 🚫 NOVO: impede o MESMO telefone de agendar 2x no mesmo horário
             $stmt = $pdo->prepare('
-                INSERT INTO appointments
-                    (company_id, customer_name, phone, instagram, date, time, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, NOW())
+                SELECT COUNT(*) AS total
+                FROM appointments
+                WHERE company_id = ? AND date = ? AND time = ? AND phone = ?
             ');
             $stmt->execute([
                 $companyId,
-                $nome,
-                $telefone,
-                $instagram !== '' ? $instagram : null,
                 $dataObj->format('Y-m-d'),
                 $horaPost . ':00',
+                $telefone,
             ]);
+            $jaCliente = (int)$stmt->fetchColumn();
 
-            $success = 'Agendamento criado com sucesso! Você será atendido em '
-                . $dataObj->format('d/m/Y')
-                . ' às ' . $horaPost . 'h.';
+            if ($jaCliente > 0) {
+                $errors[] = 'Este telefone já possui agendamento neste horário.';
+            } else {
+                // Inserir agendamento
+                $stmt = $pdo->prepare('
+                    INSERT INTO appointments
+                        (company_id, customer_name, phone, instagram, date, time, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, NOW())
+                ');
+                $stmt->execute([
+                    $companyId,
+                    $nome,
+                    $telefone,
+                    $instagram !== '' ? $instagram : null,
+                    $dataObj->format('Y-m-d'),
+                    $horaPost . ':00',
+                ]);
 
-            // Atualiza data selecionada para a data marcada
-            $selectedDate = $dataObj;
-            $selectedDateStr = $selectedDate->format('Y-m-d');
+                $success = 'Agendamento criado com sucesso! Você será atendido em '
+                    . $dataObj->format('d/m/Y')
+                    . ' às ' . $horaPost . 'h.';
 
-            // Limpa POST pra não repopular o formulário
-            $_POST = [];
+                // Atualiza data selecionada para a data marcada
+                $selectedDate    = $dataObj;
+                $selectedDateStr = $selectedDate->format('Y-m-d');
+
+                // Limpa POST pra não repopular o formulário
+                $_POST = [];
+            }
         }
     }
 }
@@ -196,7 +214,7 @@ foreach ($stmt->fetchAll() as $row) {
  */
 function generate_time_slots(string $start, string $end, int $intervalMinutes): array
 {
-    $slots = [];
+    $slots   = [];
     $current = DateTime::createFromFormat('H:i', $start);
     $endTime = DateTime::createFromFormat('H:i', $end);
 
@@ -349,8 +367,8 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     <?php else: ?>
                         <?php foreach ($timeSlots as $slot): ?>
                             <?php
-                            $qtd = $appointmentsByTime[$slot] ?? 0;
-                            $isFull = $qtd >= $MAX_PER_SLOT;
+                            $qtd       = $appointmentsByTime[$slot] ?? 0;
+                            $isFull    = $qtd >= $MAX_PER_SLOT;
                             $isBlocked = in_array($slot, $BLOCKED_SLOTS, true);
                             ?>
                             <div
@@ -451,8 +469,8 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-1">
                         <?php foreach ($timeSlots as $slot): ?>
                             <?php
-                            $qtd = $appointmentsByTime[$slot] ?? 0;
-                            $isFull = $qtd >= $MAX_PER_SLOT;
+                            $qtd       = $appointmentsByTime[$slot] ?? 0;
+                            $isFull    = $qtd >= $MAX_PER_SLOT;
                             $isBlocked = in_array($slot, $BLOCKED_SLOTS, true);
 
                             // Só mostra horários realmente disponíveis
@@ -499,7 +517,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const radios = document.querySelectorAll('input[name="hora"]');
+    const radios  = document.querySelectorAll('input[name="hora"]');
     const buttons = document.querySelectorAll('.slot-button');
 
     function clearSelection() {
