@@ -149,6 +149,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
     <meta charset="UTF-8">
     <title>Checkout - <?= sanitize($company['nome_fantasia']) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
