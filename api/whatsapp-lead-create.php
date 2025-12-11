@@ -42,7 +42,6 @@ $message   = $data['message']    ?? null;
 $intentRaw = $data['intent_raw'] ?? null;
 $source    = $data['source']     ?? 'whatsapp';
 
-
 // =============================
 // 3. (Por enquanto) apenas responder
 // =============================
