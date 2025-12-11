@@ -4,7 +4,22 @@ $theme = current_theme();
 $guestCompany = $GLOBALS['__GUEST_COMPANY__'] ?? null;
 
 $companyName = $_SESSION['company_name'] ?? ($guestCompany['nome_fantasia'] ?? APP_NAME);
+
+// Tenta pegar favicon vindo da empresa / sessão
 $favicon = $_SESSION['company_favicon'] ?? ($guestCompany['favicon'] ?? ($guestCompany['logo'] ?? ''));
+
+// SE ainda estiver vazio, usa o logo atual da empresa como fallback
+if (empty($favicon)) {
+    $logo = current_company_logo();
+    if (!empty($logo)) {
+        $favicon = $logo;
+    }
+}
+
+// (Opcional) SE ainda assim não tiver nada, poderia apontar para um favicon padrão na pasta assets
+// if (empty($favicon)) {
+//     $favicon = BASE_URL . '/assets/favicon.png';
+// }
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR" class="<?= $theme === 'dark' ? 'dark' : '' ?>">
