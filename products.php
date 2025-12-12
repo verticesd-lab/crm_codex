@@ -451,10 +451,16 @@ include __DIR__ . '/views/partials/header.php';
                                 </div>
                             </div>
                             <div class="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700 mt-2">
-                                <a href="<?= BASE_URL ?>/products.php?action=edit&id=<?= (int)$p['id'] ?>"
-                                   class="text-xs text-indigo-600 hover:underline">
-                                    Editar
-                                </a>
+                                <div class="flex gap-3">
+                                    <a href="<?= BASE_URL ?>/products.php?action=edit&id=<?= (int)$p['id'] ?>"
+                                       class="text-xs text-indigo-600 hover:underline">
+                                        Editar
+                                    </a>
+                                    <a href="<?= BASE_URL ?>/product_stock.php?id=<?= (int)$p['id'] ?>"
+                                       class="text-xs text-emerald-600 hover:underline">
+                                        Estoque
+                                    </a>
+                                </div>
                                 <a href="<?= BASE_URL ?>/products.php?action=delete&id=<?= (int)$p['id'] ?>"
                                    class="text-xs text-red-600 hover:underline"
                                    onclick="return confirm('Remover este produto?');">
