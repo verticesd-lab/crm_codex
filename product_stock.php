@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             WHERE product_variant_id = ? AND location = 'loja_fisica'
         ");
         $stmt->execute([$variantId]);
-        $row = $stmt->fetch();
+        $row   = $stmt->fetch();
         $atual = $row ? (int)$row['quantity'] : 0;
 
         if ($atual === $novaQtd) {
@@ -40,6 +40,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $dif = $novaQtd - $atual;
+
+        // tenta pegar o usuário logado da sessão (se existir)
+        $userId = $_SESSION['user_id'] ?? null;
 
         // registra movimento de ajuste
         $stmtMov = $pdo->prepare("
@@ -51,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmtMov->execute([
             $variantId,
             abs($dif),
-            current_user_id() // se tiver essa função; senão, use null
+            $userId
         ]);
 
         // atualiza saldo
