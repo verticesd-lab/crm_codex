@@ -6,6 +6,70 @@ require_login();
 
 $pdo = get_pdo();
 
+/**
+ * Sincroniza as variantes (product_variants) e saldos (stock_balances)
+ * a partir da string de tamanhos salva no campo products.sizes.
+ *
+ * Regra atual (simples):
+ * - Cada tamanho vira uma variante com "size" preenchido e "color" NULL.
+ * - Variantes antigas do produto são apagadas e recriadas.
+ * - Estoque inicial sempre 0 na tabela stock_balances.
+ */
+function sync_product_variants_from_sizes($pdo, int $productId, string $sizesCsv): void
+{
+    // explode tamanhos: "P,M,G" -> ["P","M","G"]
+    $sizes = array_filter(array_map('trim', explode(',', $sizesCsv)));
+
+    // Busca variantes antigas desse produto
+    $stmt = $pdo->prepare('SELECT id FROM product_variants WHERE product_id = ?');
+    $stmt->execute([$productId]);
+    $oldVariantIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    if (!empty($oldVariantIds)) {
+        // Monta placeholders: ?, ?, ? ...
+        $placeholders = implode(',', array_fill(0, count($oldVariantIds), '?'));
+
+        // Remove movimentos de estoque ligados às variantes antigas
+        $stmtDelMov = $pdo->prepare("DELETE FROM stock_movements WHERE product_variant_id IN ($placeholders)");
+        $stmtDelMov->execute($oldVariantIds);
+
+        // Remove saldos de estoque ligados às variantes antigas
+        $stmtDelBal = $pdo->prepare("DELETE FROM stock_balances WHERE product_variant_id IN ($placeholders)");
+        $stmtDelBal->execute($oldVariantIds);
+
+        // Remove as próprias variantes
+        $stmtDelVar = $pdo->prepare("DELETE FROM product_variants WHERE id IN ($placeholders)");
+        $stmtDelVar->execute($oldVariantIds);
+    }
+
+    // Se não tiver tamanhos, só limpa as variantes e sai
+    if (empty($sizes)) {
+        return;
+    }
+
+    // Cria novas variantes e saldo 0 para cada uma
+    foreach ($sizes as $size) {
+        if ($size === '') {
+            continue;
+        }
+
+        // Cria variante
+        $stmtVar = $pdo->prepare('
+            INSERT INTO product_variants (product_id, size, active, created_at, updated_at)
+            VALUES (?, ?, 1, NOW(), NOW())
+        ');
+        $stmtVar->execute([$productId, $size]);
+        $variantId = (int)$pdo->lastInsertId();
+
+        // Cria saldo inicial 0 na loja física
+        $stmtBal = $pdo->prepare('
+            INSERT INTO stock_balances (product_variant_id, location, quantity, updated_at)
+            VALUES (?, ?, 0, NOW())
+        ');
+        $stmtBal->execute([$variantId, 'loja_fisica']);
+    }
+}
+
 $companyId = current_company_id();
 if (!$companyId) {
     // fallback: primeira empresa
@@ -28,6 +92,23 @@ $flashError   = null;
 // DELETE
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
+
+    // Antes de apagar o produto, apaga variantes e estoque ligado a ele
+    $stmt = $pdo->prepare('SELECT id FROM product_variants WHERE product_id = ?');
+    $stmt->execute([$id]);
+    $variantIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    if (!empty($variantIds)) {
+        $placeholders = implode(',', array_fill(0, count($variantIds), '?'));
+        $stmtDelMov = $pdo->prepare("DELETE FROM stock_movements WHERE product_variant_id IN ($placeholders)");
+        $stmtDelMov->execute($variantIds);
+
+        $stmtDelBal = $pdo->prepare("DELETE FROM stock_balances WHERE product_variant_id IN ($placeholders)");
+        $stmtDelBal->execute($variantIds);
+
+        $stmtDelVar = $pdo->prepare("DELETE FROM product_variants WHERE id IN ($placeholders)");
+        $stmtDelVar->execute($variantIds);
+    }
 
     $stmt = $pdo->prepare('DELETE FROM products WHERE id = ? AND company_id = ?');
     $stmt->execute([$id, $companyId]);
@@ -83,6 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $id,
                     $companyId
                 ]);
+                $productId = $id;
                 flash('success', 'Produto atualizado com sucesso.');
             } else {
                 // INSERT
@@ -101,8 +183,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ativo,
                     $destaque
                 ]);
+                $productId = (int)$pdo->lastInsertId();
                 flash('success', 'Produto cadastrado com sucesso.');
             }
+
+            // Sincroniza variantes e estoque com base nos tamanhos
+            sync_product_variants_from_sizes($pdo, $productId, $sizes);
 
             redirect('products.php');
         }
@@ -281,9 +367,10 @@ include __DIR__ . '/views/partials/header.php';
                                 </label>
                             </div>
                         </div>
+
                         <div>
                             <label for="sizePreset" class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
-                                Tamanhos disponГveis
+                                Tamanhos disponíveis
                             </label>
                             <select id="sizePreset" class="w-full rounded border-slate-300 dark:bg-slate-900 dark:border-slate-700 text-sm">
                                 <option value="">Selecione o tipo de tamanho</option>
@@ -294,7 +381,7 @@ include __DIR__ . '/views/partials/header.php';
                             <div id="sizeOptions" class="size-options mt-2"></div>
                             <input type="hidden" name="sizes" id="sizesHidden" value="<?= sanitize($prod['sizes'] ?? '') ?>">
                             <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                                Use para marcar rapidamente quais tamanhos estгo disponГveis neste produto.
+                                Use para marcar rapidamente quais tamanhos estão disponíveis neste produto.
                             </p>
                         </div>
                     </div>
@@ -339,6 +426,13 @@ include __DIR__ . '/views/partials/header.php';
                                 <p class="text-sm font-bold text-emerald-600 dark:text-emerald-400">
                                     <?= format_currency($p['preco']) ?>
                                 </p>
+
+                                <?php if (!empty($p['sizes'])): ?>
+                                    <p class="text-[11px] text-slate-500 mt-1">
+                                        Tamanhos: <?= sanitize($p['sizes']) ?>
+                                    </p>
+                                <?php endif; ?>
+
                                 <div class="flex flex-wrap gap-1 mt-1">
                                     <?php if ($p['ativo']): ?>
                                         <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
