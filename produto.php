@@ -43,6 +43,33 @@ if (!$product) {
     exit;
 }
 
+/**
+ *  🔹 Carrega as variantes (tamanhos) + estoque da loja física
+ */
+$stmt = $pdo->prepare("
+    SELECT
+        pv.id,
+        pv.size,
+        COALESCE(b.quantity, 0) AS quantity
+    FROM product_variants pv
+    LEFT JOIN stock_balances b
+        ON b.product_variant_id = pv.id
+       AND b.location = 'loja_fisica'
+    WHERE pv.product_id = ?
+    ORDER BY pv.size
+");
+$stmt->execute([$productId]);
+$variants = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// verifica se existe pelo menos 1 tamanho com estoque > 0
+$hasAvailableSizes = false;
+foreach ($variants as $v) {
+    if ((int)($v['quantity'] ?? 0) > 0) {
+        $hasAvailableSizes = true;
+        break;
+    }
+}
+
 // monta array de imagens (principal + extras se existirem)
 $images = [];
 if (!empty($product['imagem'])) {
@@ -147,6 +174,31 @@ if (!isset($_SESSION[$cartKey])) {
             <p class="text-2xl font-bold text-emerald-300">
                 <?= format_currency($product['preco']) ?>
             </p>
+
+            <?php if ($hasAvailableSizes): ?>
+                <div class="mt-3 space-y-1">
+                    <p class="text-xs font-semibold text-emerald-300 uppercase tracking-[0.2em]">
+                        Tamanhos disponíveis
+                    </p>
+                    <div class="flex flex-wrap gap-2 mt-1">
+                        <?php foreach ($variants as $v): ?>
+                            <?php $qtd = (int)($v['quantity'] ?? 0); ?>
+                            <?php if ($qtd <= 0) continue; ?>
+                            <span
+                                class="px-3 py-1 rounded-full text-xs font-medium
+                                       bg-emerald-500/15 text-emerald-100 border border-emerald-400/60">
+                                <?= sanitize($v['size']) ?>
+                                <span class="text-[9px] ml-1 opacity-80">
+                                    (<?= $qtd ?> em estoque)
+                                </span>
+                            </span>
+                        <?php endforeach; ?>
+                    </div>
+                    <p class="text-[11px] text-slate-400">
+                        Estoque exibido com base na loja física.
+                    </p>
+                </div>
+            <?php endif; ?>
 
             <div class="prose prose-invert max-w-none text-sm text-slate-200/90">
                 <?= nl2br(sanitize($product['descricao'])) ?>
