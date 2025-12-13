@@ -1,7 +1,7 @@
 <?php
 // api/estoque_consultar.php
 ini_set('display_errors', 0);
-error_reporting(E_ALL);
+error_reporting(EALL);
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -38,7 +38,7 @@ try {
     }
 
     // 2) Modo DEBUG via GET (o que você já testou no navegador)
-    $debug    = isset($_GET['debug']) ? (int)$_GET['debug'] : 0;
+    $debug           = isset($_GET['debug']) ? (int)$_GET['debug'] : 0;
     $mensagemUsuario = '';
 
     if ($debug === 1) {
@@ -69,8 +69,40 @@ try {
         }
     }
 
-    // 4) Descobrir o produto a partir da mensagem
-    //    (regra simples: procura pelo nome do produto dentro da mensagem)
+    // ---------------------------------------------------------
+    // 4) Escolher o produto com "melhor match" com a mensagem
+    // ---------------------------------------------------------
+
+    // palavras que não ajudam a identificar o produto
+    $stopwords = [
+        'tenis','tênis','camiseta','camisa','calça','bermuda','short','polo','blusa',
+        'tamanho','tam','numero','número','num','cor','cor:',
+        'tem','quero','gostaria','procuro','procurando','de','do','da','um','uma',
+        'pra','para','no','na','ai','aí','me','vc','você','voce','por','favor',
+        '?','!','.',','
+    ];
+
+    // função auxiliar pra quebrar texto em tokens úteis
+    $tokenize = function (string $texto) use ($stopwords): array {
+        $t = mb_strtolower($texto, 'UTF-8');
+        // troca qualquer coisa que não é letra/número por espaço
+        $t = preg_replace('/[^a-z0-9áéíóúâêîôûãõç]+/u', ' ', $t);
+        $parts = array_filter(array_map('trim', explode(' ', $t)));
+
+        $tokens = [];
+        foreach ($parts as $p) {
+            if ($p === '') continue;
+            if (in_array($p, $stopwords, true)) continue;
+            // ignora números puros (muitas vezes é só o tamanho 40, 41...)
+            if (preg_match('/^\d+$/', $p)) continue;
+            $tokens[] = $p;
+        }
+        return array_values(array_unique($tokens));
+    };
+
+    $tokensMensagem = $tokenize($mensagemUsuario);
+
+    // carrega produtos ativos
     $stmt = $pdo->prepare('
         SELECT id, nome
         FROM products
@@ -91,18 +123,30 @@ try {
     }
 
     $produtoEscolhido = null;
+    $bestScore        = -1;
 
     foreach ($allProducts as $p) {
-        $nomeLower = mb_strtolower($p['nome'], 'UTF-8');
-        $msgLower  = mb_strtolower($mensagemUsuario, 'UTF-8');
+        $tokensProduto = $tokenize($p['nome']);
 
-        if (strpos($msgLower, $nomeLower) !== false) {
+        if (empty($tokensProduto) || empty($tokensMensagem)) {
+            continue;
+        }
+
+        // conta quantas palavras do produto aparecem na mensagem
+        $score = 0;
+        foreach ($tokensProduto as $tp) {
+            if (in_array($tp, $tokensMensagem, true)) {
+                $score++;
+            }
+        }
+
+        if ($score > $bestScore) {
+            $bestScore        = $score;
             $produtoEscolhido = $p;
-            break;
         }
     }
 
-    // Se não encontrou nada pelo nome, pega o primeiro só pra não estourar
+    // se nada casou (score 0 pra todo mundo), fallback pro primeiro produto
     if (!$produtoEscolhido) {
         $produtoEscolhido = $allProducts[0];
     }
@@ -110,7 +154,9 @@ try {
     $productId   = (int)$produtoEscolhido['id'];
     $nomeProduto = $produtoEscolhido['nome'];
 
+    // ---------------------------------------------------------
     // 5) Buscar tamanhos e estoque (variants + stock_balances)
+    // ---------------------------------------------------------
     $stmt = $pdo->prepare('
         SELECT
             pv.size AS tamanho,
@@ -136,7 +182,9 @@ try {
         }
     }
 
+    // ---------------------------------------------------------
     // 6) Monta resposta em texto
+    // ---------------------------------------------------------
     if (empty($tamanhos)) {
         $resposta = "No momento não tenho {$nomeProduto} disponível no estoque físico.";
     } else {
@@ -151,21 +199,23 @@ try {
         $resposta .= "- " . $lista;
     }
 
+    // ---------------------------------------------------------
     // 7) Retorno final
+    // ---------------------------------------------------------
     echo json_encode([
-        'ok'              => true,
-        'empresa'         => [
+        'ok'               => true,
+        'empresa'          => [
             'slug'          => $company['slug'],
             'nome_fantasia' => $company['nome_fantasia'],
         ],
-        'mensagem_usuario'=> $mensagemUsuario,
-        'produto'         => $nomeProduto,
-        'tamanhos'        => $tamanhos,
-        'resposta'        => $resposta,
+        'mensagem_usuario' => $mensagemUsuario,
+        'produto'          => $nomeProduto,
+        'tamanhos'         => $tamanhos,
+        'resposta'         => $resposta,
     ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 
 } catch (Throwable $e) {
-    http_response_code(200); // pra não estourar 500 no Activepieces
+    http_response_code(200); // evita 500 pro Activepieces
     echo json_encode([
         'ok'   => false,
         'erro' => 'excecao',
