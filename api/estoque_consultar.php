@@ -8,6 +8,9 @@ error_reporting(E_ALL);
 
 header('Content-Type: application/json; charset=utf-8');
 
+// LOG pra garantir que este arquivo está rodando
+error_log("DEBUG_ESTOQUE_V1 rodando");
+
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../helpers.php';
 require_once __DIR__ . '/../db.php';
@@ -23,8 +26,9 @@ try {
 
     if ($slug === '') {
         echo json_encode([
-            'ok'   => false,
-            'erro' => 'Empresa não informada. Use ?empresa=slug_da_loja.',
+            'ok'             => false,
+            'versao_codigo'  => 'v1_db_match_2025-12-13',
+            'erro'           => 'Empresa não informada. Use ?empresa=slug_da_loja.',
         ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
         exit;
     }
@@ -35,9 +39,10 @@ try {
 
     if (!$company) {
         echo json_encode([
-            'ok'   => false,
-            'erro' => 'Empresa não encontrada para o slug informado.',
-            'slug' => $slug,
+            'ok'            => false,
+            'versao_codigo' => 'v1_db_match_2025-12-13',
+            'erro'          => 'Empresa não encontrada para o slug informado.',
+            'slug'          => $slug,
         ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
         exit;
     }
@@ -50,8 +55,8 @@ try {
     // - Produção (Activepieces): POST JSON { "mensagem_usuario": "..." }
     // - Debug no navegador: GET ?debug=1&q=...
     // -----------------------------------------------------------------
-    $debug   = isset($_GET['debug']);
-    $rawBody = file_get_contents('php://input') ?: '';
+    $debug    = isset($_GET['debug']);
+    $rawBody  = file_get_contents('php://input') ?: '';
     $jsonBody = json_decode($rawBody, true);
 
     $mensagemUsuario = null;
@@ -67,10 +72,11 @@ try {
 
     if ($mensagemUsuario === '') {
         echo json_encode([
-            'ok'       => false,
-            'erro'     => 'Body inválido. Envie JSON com campo "mensagem_usuario".',
-            'raw_body' => $rawBody,
-            'exemplo'  => ['mensagem_usuario' => 'tenis new balance 41?'],
+            'ok'            => false,
+            'versao_codigo' => 'v1_db_match_2025-12-13',
+            'erro'          => 'Body inválido. Envie JSON com campo "mensagem_usuario".',
+            'raw_body'      => $rawBody,
+            'exemplo'       => ['mensagem_usuario' => 'tenis new balance 41?'],
         ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
         exit;
     }
@@ -131,19 +137,27 @@ try {
 
     if (!$products) {
         echo json_encode([
-            'ok'   => false,
-            'erro' => 'Nenhum produto ativo encontrado para esta empresa.',
+            'ok'            => false,
+            'versao_codigo' => 'v1_db_match_2025-12-13',
+            'erro'          => 'Nenhum produto ativo encontrado para esta empresa.',
         ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
         exit;
     }
 
     $produtoEscolhido = null;
     $bestScore        = 0;
+    $scoresDebug      = [];
 
     foreach ($products as $p) {
         $tokensProduto = $tokenize((string)$p['nome']);
 
         if (empty($tokensProduto) || empty($tokensMensagem)) {
+            $scoresDebug[] = [
+                'id'            => (int)$p['id'],
+                'nome'          => (string)$p['nome'],
+                'tokens_produto'=> $tokensProduto,
+                'score'         => 0,
+            ];
             continue;
         }
 
@@ -155,6 +169,13 @@ try {
             }
         }
 
+        $scoresDebug[] = [
+            'id'             => (int)$p['id'],
+            'nome'           => (string)$p['nome'],
+            'tokens_produto' => $tokensProduto,
+            'score'          => $score,
+        ];
+
         if ($score > $bestScore) {
             $bestScore        = $score;
             $produtoEscolhido = $p;
@@ -163,8 +184,9 @@ try {
 
     // Se nenhuma palavra de nenhum produto bateu com a mensagem
     if (!$produtoEscolhido || $bestScore === 0) {
-        echo json_encode([
+        $out = [
             'ok'               => true,
+            'versao_codigo'    => 'v1_db_match_2025-12-13',
             'empresa'          => [
                 'slug'          => $company['slug'],
                 'nome_fantasia' => $company['nome_fantasia'],
@@ -173,7 +195,19 @@ try {
             'produto'          => null,
             'tamanhos'         => [],
             'resposta'         => 'Não encontrei nenhum produto com esse nome ou relacionado a essa mensagem.',
-        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        ];
+
+        if ($debug) {
+            $out['debug'] = [
+                'raw_body'        => $rawBody,
+                'json'            => $jsonBody,
+                'tokens_mensagem' => $tokensMensagem,
+                'best_score'      => $bestScore,
+                'scores'          => $scoresDebug,
+            ];
+        }
+
+        echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
         exit;
     }
 
@@ -232,6 +266,7 @@ try {
     // -----------------------------------------------------------------
     $out = [
         'ok'               => true,
+        'versao_codigo'    => 'v1_db_match_2025-12-13',
         'empresa'          => [
             'slug'          => $company['slug'],
             'nome_fantasia' => $company['nome_fantasia'],
@@ -244,9 +279,12 @@ try {
 
     if ($debug) {
         $out['debug'] = [
-            'raw_body' => $rawBody,
-            'json'     => $jsonBody,
+            'raw_body'        => $rawBody,
+            'json'            => $jsonBody,
             'tokens_mensagem' => $tokensMensagem,
+            'best_score'      => $bestScore,
+            'produto_escolhido' => $produtoEscolhido,
+            'scores'          => $scoresDebug,
         ];
     }
 
@@ -256,9 +294,10 @@ try {
 } catch (Throwable $e) {
     // Nunca deixar estourar 500 pro Activepieces
     echo json_encode([
-        'ok'   => false,
-        'erro' => 'Exceção interna em estoque_consultar.php',
-        'msg'  => $e->getMessage(),
+        'ok'            => false,
+        'versao_codigo' => 'v1_db_match_2025-12-13',
+        'erro'          => 'Exceção interna em estoque_consultar.php',
+        'msg'           => $e->getMessage(),
     ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     exit;
 }
