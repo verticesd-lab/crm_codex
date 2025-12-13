@@ -1,58 +1,60 @@
 <?php
 // api/whatsapp-lead-create.php
 
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+
 header('Content-Type: application/json; charset=utf-8');
 
-// =============================
-// 1. Autenticação simples
-// =============================
-$headers = getallheaders();
-$apiKey  = $headers['X-Api-Key'] ?? $headers['x-api-key'] ?? null;
+try {
+    // =============================
+    // 1. Receber o JSON
+    // =============================
+    $rawBody = file_get_contents('php://input');
+    $data    = json_decode($rawBody, true);
 
-$secretKey = 'SEU_TOKEN_SECRETO_AQUI'; // Trocar depois
+    if (!is_array($data)) {
+        http_response_code(200); // evita 500 no Activepieces
+        echo json_encode([
+            'ok'       => false,
+            'error'    => 'Invalid JSON. Envie um corpo JSON válido.',
+            'raw_body' => $rawBody,
+        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        exit;
+    }
 
-if ($apiKey !== $secretKey) {
-    http_response_code(401);
+    // Campos da mensagem
+    $phone     = trim($data['phone']      ?? '');
+    $name      = trim($data['name']       ?? '');
+    $message   = trim($data['message']    ?? '');
+    $intentRaw = trim($data['intent_raw'] ?? '');
+    $source    = trim($data['source']     ?? 'whatsapp');
+
+    // =============================
+    // 2. (Por enquanto) apenas responder
+    //    Depois a gente pluga no CRM de verdade
+    // =============================
+
     echo json_encode([
-        'ok' => false,
-        'error' => 'Unauthorized'
-    ]);
+        'ok'       => true,
+        'received' => [
+            'phone'      => $phone,
+            'name'       => $name,
+            'message'    => $message,
+            'intentRaw'  => $intentRaw,
+            'source'     => $source,
+        ],
+        'debug'    => [
+            'raw_body' => $rawBody,
+        ],
+    ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+} catch (Throwable $e) {
+    http_response_code(200); // evita 500 estourar no Activepieces
+    echo json_encode([
+        'ok'   => false,
+        'error'=> 'exception',
+        'msg'  => $e->getMessage(),
+    ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     exit;
 }
-
-// =============================
-// 2. Receber o JSON
-// =============================
-$rawBody = file_get_contents('php://input');
-$data    = json_decode($rawBody, true);
-
-if (!$data) {
-    http_response_code(400);
-    echo json_encode([
-        'ok' => false,
-        'error' => 'Invalid JSON'
-    ]);
-    exit;
-}
-
-// Campos da mensagem
-$phone     = $data['phone']      ?? null;
-$name      = $data['name']       ?? null;
-$message   = $data['message']    ?? null;
-$intentRaw = $data['intent_raw'] ?? null;
-$source    = $data['source']     ?? 'whatsapp';
-
-// =============================
-// 3. (Por enquanto) apenas responder
-// =============================
-
-echo json_encode([
-    'ok'        => true,
-    'received'  => [
-        'phone'     => $phone,
-        'name'      => $name,
-        'message'   => $message,
-        'intentRaw' => $intentRaw,
-        'source'    => $source,
-    ]
-]);
