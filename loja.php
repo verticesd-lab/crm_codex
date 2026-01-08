@@ -82,6 +82,9 @@ if (isset($_GET['add'])) {
     redirect('loja.php?empresa=' . urlencode($slug));
 }
 
+// WhatsApp fixo (limpa número)
+$whats = preg_replace('/\D+/', '', (string)($company['whatsapp_principal'] ?? ''));
+$msg   = 'Olá, vim da loja online!';
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -91,9 +94,8 @@ if (isset($_GET['add'])) {
 
     <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
 
-
     <title>Loja - <?= sanitize($company['nome_fantasia']) ?></title>
-    
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -134,7 +136,7 @@ if (isset($_GET['add'])) {
                         <h1 class="text-3xl font-bold tracking-tight"><?= sanitize($company['nome_fantasia']) ?></h1>
                         <?php if (!empty($company['instagram_usuario'])): ?>
                             <a class="text-sm text-sky-300 hover:underline"
-                               target="_blank"
+                               target="_blank" rel="noopener"
                                href="https://instagram.com/<?= ltrim(sanitize($company['instagram_usuario']), '@') ?>">
                                 Instagram
                             </a>
@@ -187,7 +189,8 @@ if (isset($_GET['add'])) {
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <aside class="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3 sticky top-4 h-fit">
+            <!-- ✅ CORREÇÃO: sticky só no desktop (lg). No mobile NÃO fica sticky -->
+            <aside class="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3 h-fit lg:sticky lg:top-4">
                 <p class="text-sm text-slate-200/80 font-semibold">Categorias</p>
                 <div class="flex flex-col gap-2">
                     <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
@@ -202,15 +205,13 @@ if (isset($_GET['add'])) {
                     <?php endforeach; ?>
                 </div>
 
+                <!-- ✅ Atendimento: removi o Whats daqui (vai ficar fixo no canto) -->
                 <div class="pt-4 border-t border-white/10 space-y-2">
                     <p class="text-sm text-slate-200/80 font-semibold">Atendimento</p>
-                    <a class="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-emerald-500 text-slate-900 font-semibold shadow hover:bg-emerald-400"
-                       href="https://api.whatsapp.com/send?phone=<?= urlencode($company['whatsapp_principal']) ?>&text=Ol%C3%A1%2C%20vim%20da%20loja%20online!">
-                        WhatsApp
-                    </a>
+
                     <?php if (!empty($company['instagram_usuario'])): ?>
                         <a class="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-white/20 hover:border-white/40"
-                           target="_blank"
+                           target="_blank" rel="noopener"
                            href="https://instagram.com/<?= ltrim(sanitize($company['instagram_usuario']), '@') ?>">
                             Instagram
                         </a>
@@ -242,7 +243,6 @@ if (isset($_GET['add'])) {
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <?php foreach ($featured ?: array_slice($products, 0, 3) as $product): ?>
                             <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
-                                <!-- LINK P/ DETALHES DO PRODUTO -->
                                 <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
                                     <?php if (!empty($product['imagem'])): ?>
                                         <img src="<?= sanitize(image_url($product['imagem'])) ?>" class="h-44 w-full object-cover group-hover:scale-105 transition">
@@ -262,7 +262,6 @@ if (isset($_GET['add'])) {
                                     </div>
                                 </a>
 
-                                <!-- BOTÃO: ADICIONAR AO CARRINHO -->
                                 <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
                                    class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
@@ -286,7 +285,6 @@ if (isset($_GET['add'])) {
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <?php foreach ($products as $product): ?>
                             <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
-                                <!-- LINK P/ DETALHES DO PRODUTO -->
                                 <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
                                     <?php if (!empty($product['imagem'])): ?>
                                         <img src="<?= sanitize(image_url($product['imagem'])) ?>" class="h-44 w-full object-cover group-hover:scale-105 transition">
@@ -306,7 +304,6 @@ if (isset($_GET['add'])) {
                                     </div>
                                 </a>
 
-                                <!-- BOTÃO: ADICIONAR AO CARRINHO -->
                                 <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
                                    class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
@@ -321,6 +318,25 @@ if (isset($_GET['add'])) {
             </div>
         </div>
     </div>
+
+    <!-- ✅ BOTÃO WHATSAPP FIXO (sempre no mesmo lugar) -->
+    <?php if ($whats): ?>
+        <a
+            href="https://wa.me/<?= $whats ?>?text=<?= urlencode($msg) ?>"
+            target="_blank"
+            rel="noopener"
+            class="
+                fixed bottom-5 right-5 z-50
+                flex items-center gap-2
+                bg-emerald-500 hover:bg-emerald-400
+                text-slate-900 font-semibold
+                px-5 py-3 rounded-full
+                shadow-lg shadow-emerald-500/40
+            "
+        >
+            WhatsApp
+        </a>
+    <?php endif; ?>
 
     <script>
         const slides = document.querySelectorAll('[data-slide]');
