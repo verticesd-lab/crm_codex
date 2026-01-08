@@ -49,9 +49,7 @@ function sync_product_variants_from_sizes($pdo, int $productId, string $sizesCsv
 
     // Cria novas variantes e saldo 0 para cada uma
     foreach ($sizes as $size) {
-        if ($size === '') {
-            continue;
-        }
+        if ($size === '') continue;
 
         // Cria variante
         $stmtVar = $pdo->prepare('
@@ -89,6 +87,26 @@ $action       = $_GET['action'] ?? 'list';
 $flashSuccess = null;
 $flashError   = null;
 
+/**
+ * Mantém filtros/paginação ao navegar
+ */
+$q = trim($_GET['q'] ?? '');
+$categoria = trim($_GET['categoria'] ?? '');
+$page = max(1, (int)($_GET['page'] ?? 1));
+
+$perPage = (int)($_GET['per_page'] ?? 30);
+$perPage = in_array($perPage, [30, 60], true) ? $perPage : 30;
+
+$backQueryArr = [
+    'q' => $q,
+    'categoria' => $categoria,
+    'page' => $page,
+    'per_page' => $perPage,
+];
+$backQuery = http_build_query(array_filter($backQueryArr, function ($v) {
+    return $v !== '' && $v !== null;
+}));
+
 // DELETE
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
@@ -114,7 +132,7 @@ if ($action === 'delete' && isset($_GET['id'])) {
     $stmt->execute([$id, $companyId]);
 
     flash('success', 'Produto removido com sucesso.');
-    redirect('products.php');
+    redirect('products.php' . ($backQuery ? ('?' . $backQuery) : ''));
 }
 
 // CREATE/UPDATE
@@ -124,11 +142,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $descricao = trim($_POST['descricao'] ?? '');
     $precoRaw  = str_replace(['.', ','], ['', '.'], $_POST['preco'] ?? '0');
     $preco     = (float)$precoRaw;
-    $categoria = trim($_POST['categoria'] ?? '');
+    $categoriaPost = trim($_POST['categoria'] ?? '');
     $ativo     = isset($_POST['ativo']) ? 1 : 0;
     $destaque  = isset($_POST['destaque']) ? 1 : 0;
     $sizes     = trim($_POST['sizes'] ?? '');
     $oldImage  = trim($_POST['current_image'] ?? '');
+
+    // retorno preservando filtros/paginação
+    $returnQ = trim($_POST['return_q'] ?? '');
+    $returnCategoria = trim($_POST['return_categoria'] ?? '');
+    $returnPage = max(1, (int)($_POST['return_page'] ?? 1));
+    $returnPerPage = (int)($_POST['return_per_page'] ?? 30);
+    $returnPerPage = in_array($returnPerPage, [30, 60], true) ? $returnPerPage : 30;
+
+    $returnArr = [
+        'q' => $returnQ,
+        'categoria' => $returnCategoria,
+        'page' => $returnPage,
+        'per_page' => $returnPerPage,
+    ];
+    $returnQuery = http_build_query(array_filter($returnArr, function ($v) {
+        return $v !== '' && $v !== null;
+    }));
 
     if ($nome === '' || $preco <= 0) {
         $flashError = 'Informe ao menos o nome e um preço válido.';
@@ -156,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $nome,
                     $descricao,
                     $preco,
-                    $categoria,
+                    $categoriaPost,
                     $sizes,
                     $imgPath,
                     $ativo,
@@ -177,7 +212,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $nome,
                     $descricao,
                     $preco,
-                    $categoria,
+                    $categoriaPost,
                     $sizes,
                     $imgPath,
                     $ativo,
@@ -190,7 +225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Sincroniza variantes e estoque com base nos tamanhos
             sync_product_variants_from_sizes($pdo, $productId, $sizes);
 
-            redirect('products.php');
+            redirect('products.php' . ($returnQuery ? ('?' . $returnQuery) : ''));
         }
     }
 }
@@ -207,10 +242,56 @@ if ($action === 'edit' && isset($_GET['id'])) {
     }
 }
 
-// Lista de produtos
-$stmt = $pdo->prepare('SELECT * FROM products WHERE company_id = ? ORDER BY created_at DESC');
-$stmt->execute([$companyId]);
-$products = $stmt->fetchAll();
+/**
+ * Categorias dinâmicas (para o menu lateral)
+ */
+$categoriesStmt = $pdo->prepare('
+    SELECT DISTINCT categoria
+    FROM products
+    WHERE company_id = ?
+      AND categoria IS NOT NULL
+      AND categoria <> ""
+    ORDER BY categoria
+');
+$categoriesStmt->execute([$companyId]);
+$categories = $categoriesStmt->fetchAll(PDO::FETCH_COLUMN);
+
+/**
+ * Lista de produtos (COM FILTRO + PAGINAÇÃO)
+ */
+$where = 'company_id = ?';
+$params = [$companyId];
+
+if ($q !== '') {
+    $where .= ' AND nome LIKE ?';
+    $params[] = '%' . $q . '%';
+}
+
+if ($categoria !== '') {
+    $where .= ' AND categoria = ?';
+    $params[] = $categoria;
+}
+
+// total
+$countStmt = $pdo->prepare("SELECT COUNT(*) FROM products WHERE $where");
+$countStmt->execute($params);
+$totalProducts = (int)$countStmt->fetchColumn();
+
+$totalPages = max(1, (int)ceil($totalProducts / $perPage));
+if ($page > $totalPages) $page = $totalPages;
+
+$offset = ($page - 1) * $perPage;
+
+// itens paginados (recentes primeiro)
+$listStmt = $pdo->prepare("
+    SELECT *
+    FROM products
+    WHERE $where
+    ORDER BY created_at DESC
+    LIMIT $perPage OFFSET $offset
+");
+$listStmt->execute($params);
+$products = $listStmt->fetchAll();
 
 // Pega flash de sucesso se veio de redirect
 $flashSuccess = get_flash('success') ?? $flashSuccess;
@@ -247,7 +328,7 @@ include __DIR__ . '/views/partials/header.php';
                 Cadastre produtos e serviços para usar no PDV, na loja pública e nas campanhas.
             </p>
         </div>
-        <a href="<?= BASE_URL ?>/products.php?action=create"
+        <a href="<?= BASE_URL ?>/products.php?action=create&<?= sanitize($backQuery) ?>"
            class="inline-flex items-center px-4 py-2 rounded bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">
             + Novo produto
         </a>
@@ -283,15 +364,22 @@ include __DIR__ . '/views/partials/header.php';
             <h2 class="text-lg font-semibold mb-4">
                 <?= $prod['id'] ? 'Editar produto' : 'Novo produto' ?>
             </h2>
+
             <form method="POST" enctype="multipart/form-data" class="space-y-4">
                 <input type="hidden" name="id" value="<?= (int)$prod['id'] ?>">
                 <input type="hidden" name="current_image" value="<?= sanitize($prod['imagem'] ?? '') ?>">
+
+                <!-- manter retorno para a mesma página/filtros -->
+                <input type="hidden" name="return_q" value="<?= sanitize($q) ?>">
+                <input type="hidden" name="return_categoria" value="<?= sanitize($categoria) ?>">
+                <input type="hidden" name="return_page" value="<?= (int)$page ?>">
+                <input type="hidden" name="return_per_page" value="<?= (int)$perPage ?>">
 
                 <div class="grid grid-cols-1 md:grid-cols-[auto,1fr] gap-6 items-start">
                     <div class="flex flex-col items-center gap-3">
                         <div class="h-24 w-24 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden border border-slate-200 dark:border-slate-700">
                             <?php if (!empty($prod['imagem'])): ?>
-                                <img src="<?= sanitize(image_url($prod['imagem'])) ?>" class="h-full w-full object-cover" alt="Produto">
+                                <img src="<?= sanitize(image_url($prod['imagem'])) ?>" class="h-full w-full object-contain p-2" alt="Produto">
                             <?php else: ?>
                                 <span class="text-xs text-slate-400 text-center px-2">
                                     Sem imagem
@@ -388,7 +476,8 @@ include __DIR__ . '/views/partials/header.php';
                 </div>
 
                 <div class="flex justify-between mt-4">
-                    <a href="<?= BASE_URL ?>/products.php" class="text-sm text-slate-600 dark:text-slate-300 hover:underline">
+                    <a href="<?= BASE_URL ?>/products.php<?= $backQuery ? ('?' . $backQuery) : '' ?>"
+                       class="text-sm text-slate-600 dark:text-slate-300 hover:underline">
                         Voltar
                     </a>
                     <button type="submit"
@@ -401,76 +490,200 @@ include __DIR__ . '/views/partials/header.php';
     <?php endif; ?>
 
     <?php if ($action === 'list'): ?>
-        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
-            <h2 class="text-lg font-semibold mb-4">Lista de produtos</h2>
-            <?php if (empty($products)): ?>
-                <p class="text-sm text-slate-500">Nenhum produto cadastrado.</p>
-            <?php else: ?>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <?php foreach ($products as $p): ?>
-                        <div class="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-lg p-3 flex flex-col gap-2">
-                            <div class="h-32 w-full rounded-md overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                                <?php if (!empty($p['imagem'])): ?>
-                                    <img src="<?= sanitize(image_url($p['imagem'])) ?>" class="h-full w-full object-cover" alt="">
-                                <?php else: ?>
-                                    <span class="text-xs text-slate-400">Sem imagem</span>
-                                <?php endif; ?>
-                            </div>
-                            <div class="flex-1 space-y-1">
-                                <p class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                    <?= sanitize($p['categoria'] ?? '') ?>
-                                </p>
-                                <h3 class="text-sm font-semibold">
-                                    <?= sanitize($p['nome']) ?>
-                                </h3>
-                                <p class="text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                                    <?= format_currency($p['preco']) ?>
-                                </p>
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <!-- SIDEBAR CATEGORIAS (igual ao site) -->
+            <aside class="lg:col-span-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 h-fit lg:sticky lg:top-4">
+                <div class="space-y-2">
+                    <p class="text-sm text-slate-600 dark:text-slate-300 font-semibold">Categorias</p>
 
-                                <?php if (!empty($p['sizes'])): ?>
-                                    <p class="text-[11px] text-slate-500 mt-1">
-                                        Tamanhos: <?= sanitize($p['sizes']) ?>
-                                    </p>
-                                <?php endif; ?>
+                    <a
+                        href="<?= BASE_URL ?>/products.php?<?= http_build_query(['q' => $q, 'categoria' => '', 'page' => 1, 'per_page' => $perPage]) ?>"
+                        class="block px-3 py-2 rounded-lg border <?= $categoria === '' ? 'bg-indigo-600 text-white border-transparent' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600' ?>"
+                    >
+                        Todas
+                    </a>
 
-                                <div class="flex flex-wrap gap-1 mt-1">
-                                    <?php if ($p['ativo']): ?>
-                                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                            Ativo
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                                            Inativo
-                                        </span>
-                                    <?php endif; ?>
-                                    <?php if ($p['destaque']): ?>
-                                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
-                                            Destaque
-                                        </span>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                            <div class="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700 mt-2">
-                                <div class="flex gap-3">
-                                    <a href="<?= BASE_URL ?>/products.php?action=edit&id=<?= (int)$p['id'] ?>"
-                                       class="text-xs text-indigo-600 hover:underline">
-                                        Editar
-                                    </a>
-                                    <a href="<?= BASE_URL ?>/product_stock.php?id=<?= (int)$p['id'] ?>"
-                                       class="text-xs text-emerald-600 hover:underline">
-                                        Estoque
-                                    </a>
-                                </div>
-                                <a href="<?= BASE_URL ?>/products.php?action=delete&id=<?= (int)$p['id'] ?>"
-                                   class="text-xs text-red-600 hover:underline"
-                                   onclick="return confirm('Remover este produto?');">
-                                    Remover
-                                </a>
-                            </div>
-                        </div>
+                    <?php foreach ($categories as $cat): ?>
+                        <a
+                            href="<?= BASE_URL ?>/products.php?<?= http_build_query(['q' => $q, 'categoria' => $cat, 'page' => 1, 'per_page' => $perPage]) ?>"
+                            class="block px-3 py-2 rounded-lg border <?= $categoria === $cat ? 'bg-indigo-600 text-white border-transparent' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600' ?>"
+                        >
+                            <?= sanitize($cat) ?>
+                        </a>
                     <?php endforeach; ?>
                 </div>
-            <?php endif; ?>
+
+                <div class="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                    <p class="text-sm text-slate-600 dark:text-slate-300 font-semibold">Buscar</p>
+
+                    <form method="GET" class="space-y-2">
+                        <input type="hidden" name="categoria" value="<?= sanitize($categoria) ?>">
+                        <input type="hidden" name="page" value="1">
+
+                        <input
+                            name="q"
+                            value="<?= sanitize($q) ?>"
+                            placeholder="Buscar por nome..."
+                            class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                        >
+
+                        <div class="flex items-center gap-2">
+                            <select name="per_page" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+                                <option value="30" <?= $perPage === 30 ? 'selected' : '' ?>>30 / página</option>
+                                <option value="60" <?= $perPage === 60 ? 'selected' : '' ?>>60 / página</option>
+                            </select>
+                            <button class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">
+                                Aplicar
+                            </button>
+                        </div>
+
+                        <?php if ($q !== '' || $categoria !== ''): ?>
+                            <a
+                                href="<?= BASE_URL ?>/products.php?<?= http_build_query(['q' => '', 'categoria' => '', 'page' => 1, 'per_page' => $perPage]) ?>"
+                                class="block text-center px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm hover:border-slate-300 dark:hover:border-slate-600"
+                            >
+                                Limpar filtros
+                            </a>
+                        <?php endif; ?>
+                    </form>
+                </div>
+            </aside>
+
+            <!-- CONTEÚDO -->
+            <div class="lg:col-span-3">
+                <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+                    <div class="flex items-center justify-between gap-4 mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold">Lista de produtos</h2>
+                            <p class="text-xs text-slate-500 dark:text-slate-400">
+                                Total: <?= (int)$totalProducts ?> • Página <?= (int)$page ?> de <?= (int)$totalPages ?>
+                            </p>
+                        </div>
+
+                        <div class="text-xs text-slate-500 dark:text-slate-400">
+                            Mostrando <?= (int)$perPage ?>/página
+                        </div>
+                    </div>
+
+                    <?php if (empty($products)): ?>
+                        <p class="text-sm text-slate-500">Nenhum produto encontrado.</p>
+                    <?php else: ?>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <?php foreach ($products as $p): ?>
+                                <?php
+                                    $itemQuery = http_build_query([
+                                        'q' => $q,
+                                        'categoria' => $categoria,
+                                        'page' => $page,
+                                        'per_page' => $perPage,
+                                    ]);
+                                ?>
+                                <div class="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden flex flex-col">
+                                    <!-- IMAGEM: NÃO CORTA -->
+                                    <div class="h-32 w-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+                                        <?php if (!empty($p['imagem'])): ?>
+                                            <img src="<?= sanitize(image_url($p['imagem'])) ?>" class="h-full w-full object-contain p-2" alt="<?= sanitize($p['nome']) ?>">
+                                        <?php else: ?>
+                                            <span class="text-xs text-slate-400">Sem imagem</span>
+                                        <?php endif; ?>
+                                    </div>
+
+                                    <div class="p-3 flex flex-col gap-2">
+                                        <div class="flex-1 space-y-1">
+                                            <p class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                <?= sanitize($p['categoria'] ?? '') ?>
+                                            </p>
+                                            <h3 class="text-sm font-semibold">
+                                                <?= sanitize($p['nome']) ?>
+                                            </h3>
+                                            <p class="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                                                <?= format_currency($p['preco']) ?>
+                                            </p>
+
+                                            <?php if (!empty($p['sizes'])): ?>
+                                                <p class="text-[11px] text-slate-500 mt-1">
+                                                    Tamanhos: <?= sanitize($p['sizes']) ?>
+                                                </p>
+                                            <?php endif; ?>
+
+                                            <div class="flex flex-wrap gap-1 mt-1">
+                                                <?php if ($p['ativo']): ?>
+                                                    <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                                        Ativo
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                                                        Inativo
+                                                    </span>
+                                                <?php endif; ?>
+                                                <?php if ($p['destaque']): ?>
+                                                    <span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
+                                                        Destaque
+                                                    </span>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+
+                                        <div class="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700 mt-2">
+                                            <div class="flex gap-3">
+                                                <a href="<?= BASE_URL ?>/products.php?action=edit&id=<?= (int)$p['id'] ?>&<?= sanitize($itemQuery) ?>"
+                                                   class="text-xs text-indigo-600 hover:underline">
+                                                    Editar
+                                                </a>
+                                                <a href="<?= BASE_URL ?>/product_stock.php?id=<?= (int)$p['id'] ?>"
+                                                   class="text-xs text-emerald-600 hover:underline">
+                                                    Estoque
+                                                </a>
+                                            </div>
+                                            <a href="<?= BASE_URL ?>/products.php?action=delete&id=<?= (int)$p['id'] ?>&<?= sanitize($itemQuery) ?>"
+                                               class="text-xs text-red-600 hover:underline"
+                                               onclick="return confirm('Remover este produto?');">
+                                                Remover
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <!-- PAGINAÇÃO -->
+                        <?php if ($totalPages > 1): ?>
+                            <?php
+                                $makePageUrl = function(int $p) use ($q, $categoria, $perPage) {
+                                    return BASE_URL . '/products.php?' . http_build_query([
+                                        'q' => $q,
+                                        'categoria' => $categoria,
+                                        'per_page' => $perPage,
+                                        'page' => $p
+                                    ]);
+                                };
+                            ?>
+                            <div class="flex flex-wrap items-center justify-center gap-2 mt-6">
+                                <a href="<?= $makePageUrl(max(1, $page-1)) ?>"
+                                   class="px-3 py-2 rounded border border-slate-200 dark:border-slate-700 <?= $page<=1 ? 'opacity-40 pointer-events-none' : 'hover:border-slate-300 dark:hover:border-slate-600' ?>">
+                                    Anterior
+                                </a>
+
+                                <?php for ($p=max(1,$page-2); $p<=min($totalPages,$page+2); $p++): ?>
+                                    <a href="<?= $makePageUrl($p) ?>"
+                                       class="px-3 py-2 rounded border border-slate-200 dark:border-slate-700 <?= $p===$page ? 'bg-indigo-600 text-white border-transparent' : 'hover:border-slate-300 dark:hover:border-slate-600' ?>">
+                                        <?= $p ?>
+                                    </a>
+                                <?php endfor; ?>
+
+                                <a href="<?= $makePageUrl(min($totalPages, $page+1)) ?>"
+                                   class="px-3 py-2 rounded border border-slate-200 dark:border-slate-700 <?= $page>=$totalPages ? 'opacity-40 pointer-events-none' : 'hover:border-slate-300 dark:hover:border-slate-600' ?>">
+                                    Próxima
+                                </a>
+                            </div>
+
+                            <p class="text-center text-xs text-slate-500 dark:text-slate-400 mt-2">
+                                Página <?= (int)$page ?> de <?= (int)$totalPages ?> — <?= (int)$totalProducts ?> produtos
+                            </p>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+            </div>
         </div>
     <?php endif; ?>
 </div>
