@@ -1,9 +1,12 @@
 <?php if (is_logged_in()): ?>
-        </main>
+            </main>
+        </div>
     </div>
-</div>
-<?php else: ?>
-    </main>
-<?php endif; ?>
 </body>
 </html>
+<?php else: ?>
+        </div>
+    </main>
+</body>
+</html>
+<?php endif; ?>
