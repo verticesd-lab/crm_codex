@@ -5,8 +5,6 @@ require_once __DIR__ . '/db.php';
 require_login();
 $pdo = get_pdo();
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-// (Opcional) melhora consistência de tipos/prepare em alguns ambientes
-$pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
 
 $companyId = current_company_id();
 if (!$companyId) {
@@ -78,8 +76,7 @@ function detect_csv_delimiter(string $filePath): string {
 
 function normalize_header_cell($x): string {
     $x = (string)$x;
-    $x = preg_replace('/^\xEF\xBB\xBF/', '', $x); // remove BOM
-
+    $x = preg_replace('/^\xEF\xBB\xBF/', '', $x); // BOM
     $x = trim(mb_strtolower($x));
     $x = preg_replace('/\s+/', ' ', $x);
     $x = str_replace(['á','à','ã','â','ä'], 'a', $x);
@@ -122,29 +119,9 @@ function paginate(int $page, int $perPage): array {
 
 function url_import(string $qs = ''): string {
     $base = rtrim((string)BASE_URL, '/');
-    $self = basename(__FILE__); // evita 404
+    $self = basename(__FILE__);
     return $base . '/' . $self . ($qs ? ('?' . $qs) : '');
 }
-
-/**
- * Descobre qual coluna de "linha" existe: row_number ou row_index
- * (e evita erro por palavra reservada, sempre usaremos crase depois)
- */
-function detect_row_column(PDO $pdo): string {
-    try {
-        $cols = $pdo->query("SHOW COLUMNS FROM `product_import_items`")->fetchAll(PDO::FETCH_ASSOC);
-        $names = array_map(fn($c) => (string)$c['Field'], $cols);
-
-        if (in_array('row_number', $names, true)) return 'row_number';
-        if (in_array('row_index', $names, true)) return 'row_index';
-    } catch (Throwable $e) {
-        // se falhar, cai no padrão
-    }
-    // fallback (se sua tabela for nova, use o mais provável do seu código)
-    return 'row_number';
-}
-
-$rowCol = detect_row_column($pdo);
 
 /** =========================
  * Estado / Flash
@@ -210,7 +187,7 @@ if ($action === 'process' && isset($_GET['id'])) {
 
     $stmt = $pdo->prepare('SELECT * FROM product_imports WHERE id = ? AND company_id = ?');
     $stmt->execute([$importId, $companyId]);
-    $imp = $stmt->fetch(PDO::FETCH_ASSOC);
+    $imp = $stmt->fetch();
 
     if (!$imp) {
         flash('error', 'Importação não encontrada.');
@@ -224,96 +201,106 @@ if ($action === 'process' && isset($_GET['id'])) {
     try {
         $pdo->beginTransaction();
 
-        // Limpa itens antigos (reprocessar)
         $pdo->prepare('DELETE FROM product_import_items WHERE import_id = ? AND company_id = ?')
             ->execute([$importId, $companyId]);
 
-        if ($ext !== 'csv') {
-            $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
-                ->execute([$importId, $companyId]);
+        if ($ext === 'csv') {
+            if (!file_exists($filePath)) throw new Exception('Arquivo não existe no servidor.');
+
+            $delimiter = detect_csv_delimiter($filePath);
+            $fh = fopen($filePath, 'r');
+            if (!$fh) throw new Exception('Não foi possível abrir o CSV.');
+
+            $header = fgetcsv($fh, 0, $delimiter);
+            if (!$header || count($header) < 1) {
+                fclose($fh);
+                throw new Exception('CSV vazio ou inválido.');
+            }
+
+            $map = map_columns($header);
+            if ($map['nome'] === null) $map['nome'] = 0;
+
+            $stmtIns = $pdo->prepare('
+                INSERT INTO product_import_items
+                    (import_id, company_id, row_number, raw_nome, raw_preco, raw_categoria, raw_descricao,
+                     final_nome, final_preco, final_categoria, final_descricao, status, error_message)
+                VALUES
+                    (:import_id, :company_id, :row_number, :raw_nome, :raw_preco, :raw_categoria, :raw_descricao,
+                     :final_nome, :final_preco, :final_categoria, :final_descricao, :status, :error_message)
+            ');
+
+            $rowNumber = 1; // header = 1
+            while (($row = fgetcsv($fh, 0, $delimiter)) !== false) {
+                $rowNumber++;
+                if (count($row) === 1 && trim((string)$row[0]) === '') continue;
+
+                $rawNome  = $map['nome'] !== null ? ($row[$map['nome']] ?? '') : '';
+                $rawPreco = $map['preco'] !== null ? ($row[$map['preco']] ?? null) : null;
+                $rawCat   = $map['categoria'] !== null ? ($row[$map['categoria']] ?? '') : '';
+                $rawDesc  = $map['descricao'] !== null ? ($row[$map['descricao']] ?? '') : '';
+
+                $finalNome  = smart_title($rawNome);
+                if ($finalNome === '') continue;
+
+                // 🔥 FIX PRINCIPAL: nunca inserir '' em decimal
+                $rawPrecoStr = trim((string)$rawPreco);
+                $rawPrecoDb  = ($rawPrecoStr === '') ? null : $rawPrecoStr;
+
+                $finalPreco = normalize_price($rawPrecoStr);
+                $finalCat   = trim((string)$rawCat);
+                $finalDesc  = trim((string)$rawDesc);
+
+                $stmtIns->bindValue(':import_id', $importId, PDO::PARAM_INT);
+                $stmtIns->bindValue(':company_id', $companyId, PDO::PARAM_INT);
+                $stmtIns->bindValue(':row_number', $rowNumber, PDO::PARAM_INT);
+                $stmtIns->bindValue(':raw_nome', (string)$rawNome, PDO::PARAM_STR);
+
+                if ($rawPrecoDb === null) {
+                    $stmtIns->bindValue(':raw_preco', null, PDO::PARAM_NULL);
+                } else {
+                    $stmtIns->bindValue(':raw_preco', $rawPrecoDb, PDO::PARAM_STR);
+                }
+
+                $stmtIns->bindValue(':raw_categoria', (string)$rawCat, PDO::PARAM_STR);
+                $stmtIns->bindValue(':raw_descricao', (string)$rawDesc, PDO::PARAM_STR);
+                $stmtIns->bindValue(':final_nome', $finalNome, PDO::PARAM_STR);
+
+                if ($finalPreco === null) {
+                    $stmtIns->bindValue(':final_preco', null, PDO::PARAM_NULL);
+                } else {
+                    $stmtIns->bindValue(':final_preco', $finalPreco);
+                }
+
+                $stmtIns->bindValue(':final_categoria', $finalCat, PDO::PARAM_STR);
+                $stmtIns->bindValue(':final_descricao', $finalDesc, PDO::PARAM_STR);
+                $stmtIns->bindValue(':status', 'draft', PDO::PARAM_STR);
+                $stmtIns->bindValue(':error_message', null, PDO::PARAM_NULL);
+
+                $stmtIns->execute();
+                $total++;
+            }
+
+            fclose($fh);
+
+            $pdo->prepare('UPDATE product_imports SET status="processed", total_rows=? WHERE id=? AND company_id=?')
+                ->execute([$total, $importId, $companyId]);
+
             $pdo->commit();
 
-            if ($ext === 'xlsx') {
-                flash('error', 'XLSX (Excel) ainda não é suportado neste MVP (sem libs). Exporte para CSV e reenvie.');
-            } else {
-                flash('error', 'PDF ainda não está ativo neste MVP simples (sem OCR/sem libs). Use CSV por enquanto.');
-            }
+            flash('success', "Processado! Foram gerados {$total} rascunhos.");
             redirect(url_import('action=view&id=' . $importId));
         }
 
-        if (!file_exists($filePath)) throw new Exception('Arquivo não existe no servidor.');
-
-        $delimiter = detect_csv_delimiter($filePath);
-        $fh = fopen($filePath, 'r');
-        if (!$fh) throw new Exception('Não foi possível abrir o CSV.');
-
-        $header = fgetcsv($fh, 0, $delimiter);
-        if (!$header || count($header) < 1) {
-            fclose($fh);
-            throw new Exception('CSV vazio ou inválido.');
-        }
-
-        $map = map_columns($header);
-        if ($map['nome'] === null) $map['nome'] = 0;
-
-        // IMPORTANTE: crase para evitar conflito com ROW_NUMBER (MySQL)
-        $rowColSafe = preg_replace('/[^a-zA-Z0-9_]/', '', $rowCol);
-        $insertSql = '
-            INSERT INTO `product_import_items`
-                (`import_id`, `company_id`, `'.$rowColSafe.'`, `raw_nome`, `raw_preco`, `raw_categoria`, `raw_descricao`,
-                 `final_nome`, `final_preco`, `final_categoria`, `final_descricao`, `status`, `error_message`)
-            VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ';
-        $stmtIns = $pdo->prepare($insertSql);
-
-        $rowNumber = 1; // header = 1
-        while (($row = fgetcsv($fh, 0, $delimiter)) !== false) {
-            $rowNumber++;
-            if (count($row) === 1 && trim((string)$row[0]) === '') continue;
-
-            $rawNome  = $map['nome'] !== null ? ($row[$map['nome']] ?? '') : '';
-            $rawPreco = $map['preco'] !== null ? ($row[$map['preco']] ?? null) : null;
-            $rawCat   = $map['categoria'] !== null ? ($row[$map['categoria']] ?? '') : '';
-            $rawDesc  = $map['descricao'] !== null ? ($row[$map['descricao']] ?? '') : '';
-
-            $finalNome  = smart_title($rawNome);
-            $finalPreco = normalize_price($rawPreco);
-            $finalCat   = trim((string)$rawCat);
-            $finalDesc  = trim((string)$rawDesc);
-
-            if ($finalNome === '') continue;
-
-            $status = 'draft';
-            $errMsg = null;
-
-            $stmtIns->execute([
-                $importId,
-                $companyId,
-                $rowNumber,
-                (string)$rawNome,
-                (string)$rawPreco, // raw como texto
-                (string)$rawCat,
-                (string)$rawDesc,
-                $finalNome,
-                $finalPreco,       // final como float/null
-                $finalCat,
-                $finalDesc,
-                $status,
-                $errMsg
-            ]);
-
-            $total++;
-        }
-
-        fclose($fh);
-
-        $pdo->prepare('UPDATE product_imports SET status="processed", total_rows=? WHERE id=? AND company_id=?')
-            ->execute([$total, $importId, $companyId]);
-
+        // XLSX/PDF (MVP)
+        $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
+            ->execute([$importId, $companyId]);
         $pdo->commit();
 
-        flash('success', "Processado! Foram gerados {$total} rascunhos.");
+        if ($ext === 'xlsx') {
+            flash('error', 'XLSX (Excel) ainda não é suportado neste MVP (sem libs). Exporte para CSV e reenvie.');
+        } else {
+            flash('error', 'PDF ainda não está ativo neste MVP simples (sem OCR/sem libs). Use CSV por enquanto.');
+        }
         redirect(url_import('action=view&id=' . $importId));
 
     } catch (Throwable $e) {
@@ -380,7 +367,7 @@ if ($action === 'publish' && isset($_GET['id'])) {
         ORDER BY id ASC
     ');
     $stmt->execute([$importId, $companyId]);
-    $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $items = $stmt->fetchAll();
 
     if (!$items) {
         flash('error', 'Nenhum item aprovado para publicar.');
@@ -431,7 +418,7 @@ if ($action === 'delete' && isset($_GET['id'])) {
 
     $stmt = $pdo->prepare('SELECT stored_path FROM product_imports WHERE id=? AND company_id=?');
     $stmt->execute([$importId, $companyId]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $row = $stmt->fetch();
 
     $pdo->prepare('DELETE FROM product_imports WHERE id=? AND company_id=?')->execute([$importId, $companyId]);
 
@@ -506,7 +493,7 @@ include __DIR__ . '/views/partials/header.php';
                 LIMIT 30
             ');
             $stmt->execute([$companyId]);
-            $imports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $imports = $stmt->fetchAll();
         ?>
         <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
             <h2 class="text-lg font-semibold mb-4">Últimas importações</h2>
@@ -568,7 +555,7 @@ include __DIR__ . '/views/partials/header.php';
             $importId = (int)$_GET['id'];
             $stmt = $pdo->prepare('SELECT * FROM product_imports WHERE id=? AND company_id=?');
             $stmt->execute([$importId, $companyId]);
-            $imp = $stmt->fetch(PDO::FETCH_ASSOC);
+            $imp = $stmt->fetch();
 
             if (!$imp) {
                 echo '<div class="p-3 rounded bg-red-50 text-red-700 border border-red-200">Importação não encontrada.</div>';
@@ -594,7 +581,7 @@ include __DIR__ . '/views/partials/header.php';
                 $stmtItems->bindValue(3, $perPage, PDO::PARAM_INT);
                 $stmtItems->bindValue(4, $offset, PDO::PARAM_INT);
                 $stmtItems->execute();
-                $items = $stmtItems->fetchAll(PDO::FETCH_ASSOC);
+                $items = $stmtItems->fetchAll();
 
                 $stmtStats = $pdo->prepare('
                     SELECT status, COUNT(*) as c
@@ -604,7 +591,7 @@ include __DIR__ . '/views/partials/header.php';
                 ');
                 $stmtStats->execute([$importId, $companyId]);
                 $stats = [];
-                foreach ($stmtStats->fetchAll(PDO::FETCH_ASSOC) as $s) $stats[$s['status']] = (int)$s['c'];
+                foreach ($stmtStats->fetchAll() as $s) $stats[$s['status']] = (int)$s['c'];
             }
         ?>
 
@@ -696,7 +683,7 @@ include __DIR__ . '/views/partials/header.php';
 
                                 <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                                     <div class="text-sm">
-                                        <b>#<?= (int)($it[$rowCol] ?? 0) ?></b>
+                                        <b>#<?= (int)($it['row_number'] ?? 0) ?></b>
                                         <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full
                                             <?= $it['status']==='draft' ? 'bg-slate-200/60 text-slate-700' : '' ?>
                                             <?= $it['status']==='approved' ? 'bg-amber-100 text-amber-800' : '' ?>
@@ -750,26 +737,6 @@ include __DIR__ . '/views/partials/header.php';
                                 </div>
                             </form>
                         <?php endforeach; ?>
-                    </div>
-
-                    <div class="flex items-center justify-between mt-4">
-                        <div class="text-sm text-slate-600 dark:text-slate-400">
-                            Página <?= (int)$page ?> / <?= (int)$totalPages ?>
-                        </div>
-                        <div class="flex gap-2">
-                            <?php
-                                $prev = max(1, $page - 1);
-                                $next = min($totalPages, $page + 1);
-                            ?>
-                            <a class="px-3 py-2 rounded border border-slate-200 dark:border-slate-800 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 <?= $page<=1 ? 'opacity-50 pointer-events-none' : '' ?>"
-                               href="<?= sanitize(url_import('action=view&id=' . (int)$importId . '&page=' . (int)$prev . '&per_page=' . (int)$perPage)) ?>">
-                                Anterior
-                            </a>
-                            <a class="px-3 py-2 rounded border border-slate-200 dark:border-slate-800 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 <?= $page>=$totalPages ? 'opacity-50 pointer-events-none' : '' ?>"
-                               href="<?= sanitize(url_import('action=view&id=' . (int)$importId . '&page=' . (int)$next . '&per_page=' . (int)$perPage)) ?>">
-                                Próxima
-                            </a>
-                        </div>
                     </div>
                 <?php endif; ?>
             </div>
