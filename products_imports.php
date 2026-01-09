@@ -4,6 +4,7 @@ require_once __DIR__ . '/db.php';
 
 require_login();
 $pdo = get_pdo();
+$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 $companyId = current_company_id();
 if (!$companyId) {
@@ -19,26 +20,26 @@ if (!$companyId) {
     }
 }
 
+/** =========================
+ * Helpers
+ * ========================= */
+
 function normalize_price($value): ?float {
     if ($value === null) return null;
     $v = trim((string)$value);
     if ($v === '') return null;
 
-    // Remove R$, espaços e coisas estranhas
+    // Remove R$ e espaços
     $v = str_ireplace(['R$', ' '], '', $v);
 
-    // Se vier tipo "1.234,56" vira "1234.56"
-    // Se vier "1234.56" mantém
+    // "1.234,56" -> "1234.56"
     if (strpos($v, ',') !== false && strpos($v, '.') !== false) {
-        // assume . milhar e , decimal
         $v = str_replace('.', '', $v);
         $v = str_replace(',', '.', $v);
     } elseif (strpos($v, ',') !== false && strpos($v, '.') === false) {
-        // assume , decimal
         $v = str_replace(',', '.', $v);
     }
 
-    // remove qualquer coisa que não seja número ou ponto
     $v = preg_replace('/[^0-9.]/', '', $v);
     if ($v === '' || !is_numeric($v)) return null;
 
@@ -50,9 +51,13 @@ function normalize_price($value): ?float {
 function smart_title($s): string {
     $s = trim((string)$s);
     $s = preg_replace('/\s+/', ' ', $s);
-    // não força strtolower total (pra não quebrar marcas),
-    // mas dá uma limpada mínima
     return $s;
+}
+
+function ensure_upload_dir(string $dir): void {
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
 }
 
 function detect_csv_delimiter(string $filePath): string {
@@ -71,25 +76,31 @@ function detect_csv_delimiter(string $filePath): string {
     return $best;
 }
 
+function normalize_header_cell($x): string {
+    $x = (string)$x;
+    // remove BOM UTF-8 (Excel)
+    $x = preg_replace('/^\xEF\xBB\xBF/', '', $x);
+
+    $x = trim(mb_strtolower($x));
+    $x = preg_replace('/\s+/', ' ', $x);
+    $x = str_replace(['á','à','ã','â','ä'], 'a', $x);
+    $x = str_replace(['é','ê','ë'], 'e', $x);
+    $x = str_replace(['í','î','ï'], 'i', $x);
+    $x = str_replace(['ó','ô','õ','ö'], 'o', $x);
+    $x = str_replace(['ú','û','ü'], 'u', $x);
+    $x = str_replace(['ç'], 'c', $x);
+    return $x;
+}
+
 function map_columns(array $header): array {
-    // retorna mapa: ['nome'=>idx, 'preco'=>idx, 'categoria'=>idx, 'descricao'=>idx]
-    $h = array_map(function($x){
-        $x = trim(mb_strtolower((string)$x));
-        $x = preg_replace('/\s+/', ' ', $x);
-        $x = str_replace(['á','à','ã','â','ä'], 'a', $x);
-        $x = str_replace(['é','ê','ë'], 'e', $x);
-        $x = str_replace(['í','î','ï'], 'i', $x);
-        $x = str_replace(['ó','ô','õ','ö'], 'o', $x);
-        $x = str_replace(['ú','û','ü'], 'u', $x);
-        $x = str_replace(['ç'], 'c', $x);
-        return $x;
-    }, $header);
+    $h = array_map('normalize_header_cell', $header);
 
     $pick = function(array $aliases) use ($h) {
         foreach ($h as $i => $name) {
             foreach ($aliases as $a) {
+                $a = normalize_header_cell($a);
                 if ($name === $a) return $i;
-                if (strpos($name, $a) !== false) return $i;
+                if ($a !== '' && strpos($name, $a) !== false) return $i;
             }
         }
         return null;
@@ -103,23 +114,34 @@ function map_columns(array $header): array {
     ];
 }
 
-function ensure_upload_dir(string $dir): void {
-    if (!is_dir($dir)) {
-        @mkdir($dir, 0775, true);
-    }
+function paginate(int $page, int $perPage): array {
+    $page = max(1, $page);
+    $perPage = max(10, min(200, $perPage));
+    $offset = ($page - 1) * $perPage;
+    return [$page, $perPage, $offset];
 }
+
+function url_import(string $qs = ''): string {
+    $base = rtrim((string)BASE_URL, '/');
+    $self = basename(__FILE__); // <- evita 404 (seja products_imports.php ou outro nome)
+    return $base . '/' . $self . ($qs ? ('?' . $qs) : '');
+}
+
+/** =========================
+ * Estado / Flash
+ * ========================= */
 
 $action = $_GET['action'] ?? 'list';
 $flashSuccess = get_flash('success') ?? null;
 $flashError = get_flash('error') ?? null;
 
-/**
- * Upload + cria import
- */
+/** =========================
+ * Upload (cria lote)
+ * ========================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_upload'])) {
     if (empty($_FILES['file']['name'])) {
         flash('error', 'Selecione um arquivo.');
-        redirect('products_import.php?action=create');
+        redirect(url_import('action=create'));
     }
 
     $name = $_FILES['file']['name'];
@@ -128,18 +150,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_upload'])) {
 
     if ($err !== UPLOAD_ERR_OK) {
         flash('error', 'Falha no upload. Código: ' . $err);
-        redirect('products_import.php?action=create');
+        redirect(url_import('action=create'));
     }
 
     $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
     $allowed = ['csv','xlsx','pdf'];
     if (!in_array($ext, $allowed, true)) {
-        flash('error', 'Formato não suportado. Use CSV (recomendado), XLSX ou PDF.');
-        redirect('products_import.php?action=create');
+        flash('error', 'Formato não suportado. Use CSV (recomendado).');
+        redirect(url_import('action=create'));
     }
 
-    // Sem Composer: XLSX e PDF ficam “assistidos”
-    // (aqui vamos aceitar, salvar e depois orientar/limitar no processamento)
     $uploadDir = __DIR__ . '/uploads/imports';
     ensure_upload_dir($uploadDir);
 
@@ -149,7 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_upload'])) {
 
     if (!move_uploaded_file($tmp, $destPath)) {
         flash('error', 'Não foi possível salvar o arquivo no servidor.');
-        redirect('products_import.php?action=create');
+        redirect(url_import('action=create'));
     }
 
     $stmt = $pdo->prepare('
@@ -159,13 +179,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_upload'])) {
     $stmt->execute([$companyId, $name, 'uploads/imports/' . $finalName, $ext]);
     $importId = (int)$pdo->lastInsertId();
 
-    flash('success', 'Arquivo enviado! Agora processe para gerar os rascunhos.');
-    redirect('products_import.php?action=view&id=' . $importId);
+    flash('success', 'Arquivo enviado! Agora clique em PROCESSAR para gerar os rascunhos.');
+    redirect(url_import('action=view&id=' . $importId));
 }
 
-/**
- * Processar import -> cria itens draft
- */
+/** =========================
+ * Processar (gera itens)
+ * ========================= */
 if ($action === 'process' && isset($_GET['id'])) {
     $importId = (int)$_GET['id'];
 
@@ -175,19 +195,20 @@ if ($action === 'process' && isset($_GET['id'])) {
 
     if (!$imp) {
         flash('error', 'Importação não encontrada.');
-        redirect('products_import.php');
+        redirect(url_import());
     }
 
-    // Limpa itens antigos (reprocessar)
-    $pdo->prepare('DELETE FROM product_import_items WHERE import_id = ? AND company_id = ?')
-        ->execute([$importId, $companyId]);
-
     $filePath = __DIR__ . '/' . $imp['stored_path'];
-    $ext = strtolower($imp['file_ext']);
-
+    $ext = strtolower((string)$imp['file_ext']);
     $total = 0;
 
     try {
+        // limpa e processa em transação
+        $pdo->beginTransaction();
+
+        $pdo->prepare('DELETE FROM product_import_items WHERE import_id = ? AND company_id = ?')
+            ->execute([$importId, $companyId]);
+
         if ($ext === 'csv') {
             if (!file_exists($filePath)) throw new Exception('Arquivo não existe no servidor.');
 
@@ -195,7 +216,6 @@ if ($action === 'process' && isset($_GET['id'])) {
             $fh = fopen($filePath, 'r');
             if (!$fh) throw new Exception('Não foi possível abrir o CSV.');
 
-            // tenta ler header
             $header = fgetcsv($fh, 0, $delimiter);
             if (!$header || count($header) < 1) {
                 fclose($fh);
@@ -203,34 +223,29 @@ if ($action === 'process' && isset($_GET['id'])) {
             }
 
             $map = map_columns($header);
-
-            // Se não achou "nome", assume primeira coluna como nome
             if ($map['nome'] === null) $map['nome'] = 0;
 
-            $rowNum = 1; // header é 1
+            $rowNumber = 1; // header = 1
             while (($row = fgetcsv($fh, 0, $delimiter)) !== false) {
-                $rowNum++;
+                $rowNumber++;
                 if (count($row) === 1 && trim((string)$row[0]) === '') continue;
 
-                $rawNome = $map['nome'] !== null ? ($row[$map['nome']] ?? '') : '';
+                $rawNome  = $map['nome'] !== null ? ($row[$map['nome']] ?? '') : '';
                 $rawPreco = $map['preco'] !== null ? ($row[$map['preco']] ?? null) : null;
-                $rawCat = $map['categoria'] !== null ? ($row[$map['categoria']] ?? '') : '';
-                $rawDesc = $map['descricao'] !== null ? ($row[$map['descricao']] ?? '') : '';
+                $rawCat   = $map['categoria'] !== null ? ($row[$map['categoria']] ?? '') : '';
+                $rawDesc  = $map['descricao'] !== null ? ($row[$map['descricao']] ?? '') : '';
 
-                $finalNome = smart_title($rawNome);
+                $finalNome  = smart_title($rawNome);
                 $finalPreco = normalize_price($rawPreco);
-                $finalCat = trim((string)$rawCat);
-                $finalDesc = trim((string)$rawDesc);
+                $finalCat   = trim((string)$rawCat);
+                $finalDesc  = trim((string)$rawDesc);
 
                 if ($finalNome === '') continue;
 
                 $status = 'draft';
                 $errMsg = null;
-                if (!$finalPreco) {
-                    // deixa como draft mesmo, só marca um aviso
-                    // (você pode exigir preço depois)
-                }
 
+                // INSERT correto (sem quebrar SQL)
                 $stmtIns = $pdo->prepare('
                     INSERT INTO product_import_items
                         (import_id, company_id, row_number, raw_nome, raw_preco, raw_categoria, raw_descricao,
@@ -238,16 +253,17 @@ if ($action === 'process' && isset($_GET['id'])) {
                     VALUES
                         (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ');
+
                 $stmtIns->execute([
                     $importId,
                     $companyId,
-                    $rowNum,
+                    $rowNumber,
                     (string)$rawNome,
-                    normalize_price($rawPreco),
+                    (string)$rawPreco,      // raw como texto
                     (string)$rawCat,
                     (string)$rawDesc,
                     $finalNome,
-                    $finalPreco,
+                    $finalPreco,            // final como float (ou null)
                     $finalCat,
                     $finalDesc,
                     $status,
@@ -259,44 +275,40 @@ if ($action === 'process' && isset($_GET['id'])) {
 
             fclose($fh);
 
-        } elseif ($ext === 'xlsx') {
-            // Sem Composer não vamos ler XLSX com segurança.
-            $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
-                ->execute([$importId, $companyId]);
+            $pdo->prepare('UPDATE product_imports SET status="processed", total_rows=? WHERE id=? AND company_id=?')
+                ->execute([$total, $importId, $companyId]);
 
-            flash('error', 'XLSX (Excel) ainda não é suportado sem Composer. Exporta o arquivo para CSV e reenvie.');
-            redirect('products_import.php?action=view&id=' . $importId);
+            $pdo->commit();
 
-        } elseif ($ext === 'pdf') {
-            // Sem Composer: PDF varia muito. MVP profissional: aceitar upload e orientar.
-            $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
-                ->execute([$importId, $companyId]);
-
-            flash('error', 'PDF ainda não está ativo neste MVP simples (sem OCR/sem libs). Use CSV agora. Depois fazemos PDF robusto.');
-            redirect('products_import.php?action=view&id=' . $importId);
-
-        } else {
-            throw new Exception('Extensão não suportada.');
+            flash('success', "Processado! Foram gerados {$total} rascunhos.");
+            redirect(url_import('action=view&id=' . $importId));
         }
 
-        $pdo->prepare('UPDATE product_imports SET status="processed", total_rows=? WHERE id=? AND company_id=?')
-            ->execute([$total, $importId, $companyId]);
+        // XLSX e PDF (mantém “bloqueado” no MVP)
+        $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
+            ->execute([$importId, $companyId]);
+        $pdo->commit();
 
-        flash('success', "Processado! Foram gerados {$total} rascunhos.");
-        redirect('products_import.php?action=view&id=' . $importId);
-
+        if ($ext === 'xlsx') {
+            flash('error', 'XLSX (Excel) ainda não é suportado neste MVP (sem libs). Exporte para CSV e reenvie.');
+        } else {
+            flash('error', 'PDF ainda não está ativo neste MVP simples (sem OCR/sem libs). Use CSV por enquanto.');
+        }
+        redirect(url_import('action=view&id=' . $importId));
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+
         $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
             ->execute([$importId, $companyId]);
 
         flash('error', 'Falha ao processar: ' . $e->getMessage());
-        redirect('products_import.php?action=view&id=' . $importId);
+        redirect(url_import('action=view&id=' . $importId));
     }
 }
 
-/**
- * Salvar edição de um item (inline)
- */
+/** =========================
+ * Salvar item (inline)
+ * ========================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_item'])) {
     $itemId = (int)($_POST['item_id'] ?? 0);
 
@@ -316,13 +328,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_item'])) {
     $stmt->execute([$nome, $preco, $cat, $desc, $status, $itemId, $companyId]);
 
     flash('success', 'Item atualizado.');
-    $back = $_POST['back'] ?? (BASE_URL . '/products_import.php');
+    $back = $_POST['back'] ?? url_import();
     redirect($back);
 }
 
-/**
- * Aprovar tudo (rápido)
- */
+/** =========================
+ * Aprovar tudo
+ * ========================= */
 if ($action === 'approve_all' && isset($_GET['id'])) {
     $importId = (int)$_GET['id'];
     $pdo->prepare('
@@ -332,16 +344,15 @@ if ($action === 'approve_all' && isset($_GET['id'])) {
     ')->execute([$importId, $companyId]);
 
     flash('success', 'Todos os itens foram aprovados.');
-    redirect('products_import.php?action=view&id=' . $importId);
+    redirect(url_import('action=view&id=' . $importId));
 }
 
-/**
- * Publicar aprovados -> inserir na products
- */
+/** =========================
+ * Publicar aprovados -> products
+ * ========================= */
 if ($action === 'publish' && isset($_GET['id'])) {
     $importId = (int)$_GET['id'];
 
-    // Pega aprovados
     $stmt = $pdo->prepare('
         SELECT * FROM product_import_items
         WHERE import_id=? AND company_id=? AND status="approved"
@@ -352,7 +363,7 @@ if ($action === 'publish' && isset($_GET['id'])) {
 
     if (!$items) {
         flash('error', 'Nenhum item aprovado para publicar.');
-        redirect('products_import.php?action=view&id=' . $importId);
+        redirect(url_import('action=view&id=' . $importId));
     }
 
     $published = 0;
@@ -364,7 +375,6 @@ if ($action === 'publish' && isset($_GET['id'])) {
         $descricao = trim((string)$it['final_descricao']);
 
         if ($nome === '' || $preco <= 0) {
-            // marca erro
             $pdo->prepare('
                 UPDATE product_import_items
                 SET status="error", error_message="Nome vazio ou preço inválido"
@@ -389,16 +399,15 @@ if ($action === 'publish' && isset($_GET['id'])) {
     }
 
     flash('success', "Publicação concluída! Produtos criados como RASCUNHO (ativo=0): {$published}");
-    redirect('products.php');
+    redirect(rtrim((string)BASE_URL, '/') . '/products.php');
 }
 
-/**
+/** =========================
  * Excluir lote
- */
+ * ========================= */
 if ($action === 'delete' && isset($_GET['id'])) {
     $importId = (int)$_GET['id'];
 
-    // pega caminho pra remover arquivo
     $stmt = $pdo->prepare('SELECT stored_path FROM product_imports WHERE id=? AND company_id=?');
     $stmt->execute([$importId, $companyId]);
     $row = $stmt->fetch();
@@ -411,20 +420,12 @@ if ($action === 'delete' && isset($_GET['id'])) {
     }
 
     flash('success', 'Importação removida.');
-    redirect('products_import.php');
+    redirect(url_import());
 }
 
 include __DIR__ . '/views/partials/header.php';
-
-// Helpers de paginação (para itens do lote)
-function paginate(int $page, int $perPage): array {
-    $page = max(1, $page);
-    $perPage = max(10, min(200, $perPage));
-    $offset = ($page - 1) * $perPage;
-    return [$page, $perPage, $offset];
-}
-
 ?>
+
 <div class="space-y-6">
     <div class="flex items-center justify-between">
         <div>
@@ -433,7 +434,7 @@ function paginate(int $page, int $perPage): array {
                 Importe produtos via <b>CSV</b> (recomendado). XLSX/PDF ficam para versão robusta.
             </p>
         </div>
-        <a href="<?= BASE_URL ?>/products_import.php?action=create"
+        <a href="<?= sanitize(url_import('action=create')) ?>"
            class="inline-flex items-center px-4 py-2 rounded bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">
             + Novo upload
         </a>
@@ -456,14 +457,14 @@ function paginate(int $page, int $perPage): array {
             <h2 class="text-lg font-semibold">Enviar arquivo</h2>
             <div class="text-sm text-slate-600 dark:text-slate-400">
                 <p><b>Formato recomendado:</b> CSV com colunas como: <code>nome, preco, categoria, descricao</code>.</p>
-                <p class="mt-1">Excel (XLSX) e PDF serão suportados na versão robusta (quando formos ativar dependências).</p>
+                <p class="mt-1">Excel (XLSX) e PDF serão suportados na versão robusta.</p>
             </div>
 
             <form method="POST" enctype="multipart/form-data" class="space-y-3">
                 <input type="hidden" name="do_upload" value="1">
                 <input type="file" name="file" accept=".csv,.xlsx,.pdf" class="text-sm">
                 <div class="flex justify-between">
-                    <a href="<?= BASE_URL ?>/products_import.php" class="text-sm text-slate-600 dark:text-slate-300 hover:underline">
+                    <a href="<?= sanitize(url_import()) ?>" class="text-sm text-slate-600 dark:text-slate-300 hover:underline">
                         Voltar
                     </a>
                     <button class="px-4 py-2 rounded bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">
@@ -522,12 +523,12 @@ function paginate(int $page, int $perPage): array {
                                     <td><?= (int)$imp['total_rows'] ?></td>
                                     <td class="text-right">
                                         <a class="text-indigo-600 hover:underline"
-                                           href="<?= BASE_URL ?>/products_import.php?action=view&id=<?= (int)$imp['id'] ?>">
+                                           href="<?= sanitize(url_import('action=view&id=' . (int)$imp['id'])) ?>">
                                             Abrir
                                         </a>
                                         <span class="mx-2 text-slate-300">|</span>
                                         <a class="text-red-600 hover:underline"
-                                           href="<?= BASE_URL ?>/products_import.php?action=delete&id=<?= (int)$imp['id'] ?>"
+                                           href="<?= sanitize(url_import('action=delete&id=' . (int)$imp['id'])) ?>"
                                            onclick="return confirm('Remover esta importação?');">
                                             Remover
                                         </a>
@@ -574,7 +575,6 @@ function paginate(int $page, int $perPage): array {
                 $stmtItems->execute();
                 $items = $stmtItems->fetchAll();
 
-                // Stats
                 $stmtStats = $pdo->prepare('
                     SELECT status, COUNT(*) as c
                     FROM product_import_items
@@ -599,37 +599,37 @@ function paginate(int $page, int $perPage): array {
 
                     <div class="flex flex-wrap gap-2">
                         <a class="px-3 py-2 rounded border border-slate-200 dark:border-slate-800 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-                           href="<?= BASE_URL ?>/products_import.php">
+                           href="<?= sanitize(url_import()) ?>">
                             Voltar
                         </a>
 
                         <a class="px-3 py-2 rounded bg-slate-900 text-white text-sm hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600"
-                           href="<?= BASE_URL ?>/<?= sanitize($imp['stored_path']) ?>"
+                           href="<?= sanitize(rtrim((string)BASE_URL,'/') . '/' . ltrim((string)$imp['stored_path'], '/')) ?>"
                            target="_blank">
                             Baixar arquivo
                         </a>
 
                         <a class="px-3 py-2 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700"
-                           href="<?= BASE_URL ?>/products_import.php?action=process&id=<?= (int)$imp['id'] ?>"
+                           href="<?= sanitize(url_import('action=process&id=' . (int)$imp['id'])) ?>"
                            onclick="return confirm('Processar e gerar rascunhos? (isso recria os itens)');">
                             Processar
                         </a>
 
                         <?php if (($imp['status'] ?? '') === 'processed'): ?>
                             <a class="px-3 py-2 rounded bg-amber-500 text-slate-900 text-sm font-semibold hover:bg-amber-400"
-                               href="<?= BASE_URL ?>/products_import.php?action=approve_all&id=<?= (int)$imp['id'] ?>">
+                               href="<?= sanitize(url_import('action=approve_all&id=' . (int)$imp['id'])) ?>">
                                 Aprovar todos
                             </a>
 
                             <a class="px-3 py-2 rounded bg-emerald-500 text-slate-900 text-sm font-semibold hover:bg-emerald-400"
-                               href="<?= BASE_URL ?>/products_import.php?action=publish&id=<?= (int)$imp['id'] ?>"
+                               href="<?= sanitize(url_import('action=publish&id=' . (int)$imp['id'])) ?>"
                                onclick="return confirm('Publicar itens aprovados? (cria produtos como rascunho: ativo=0)');">
                                 Publicar aprovados
                             </a>
                         <?php endif; ?>
 
                         <a class="px-3 py-2 rounded bg-red-600 text-white text-sm hover:bg-red-700"
-                           href="<?= BASE_URL ?>/products_import.php?action=delete&id=<?= (int)$imp['id'] ?>"
+                           href="<?= sanitize(url_import('action=delete&id=' . (int)$imp['id'])) ?>"
                            onclick="return confirm('Remover este lote?');">
                             Remover lote
                         </a>
@@ -671,11 +671,11 @@ function paginate(int $page, int $perPage): array {
                             <form method="POST" class="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-slate-50 dark:bg-slate-900/40">
                                 <input type="hidden" name="save_item" value="1">
                                 <input type="hidden" name="item_id" value="<?= (int)$it['id'] ?>">
-                                <input type="hidden" name="back" value="<?= sanitize(BASE_URL . '/products_import.php?action=view&id=' . $importId . '&page=' . $page . '&per_page=' . $perPage) ?>">
+                                <input type="hidden" name="back" value="<?= sanitize(url_import('action=view&id=' . $importId . '&page=' . $page . '&per_page=' . $perPage)) ?>">
 
                                 <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                                     <div class="text-sm">
-                                        <b>#<?= (int)$it['row_number'] ?></b>
+                                        <b>#<?= (int)($it['row_number'] ?? 0) ?></b>
                                         <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full
                                             <?= $it['status']==='draft' ? 'bg-slate-200/60 text-slate-700' : '' ?>
                                             <?= $it['status']==='approved' ? 'bg-amber-100 text-amber-800' : '' ?>
@@ -700,6 +700,7 @@ function paginate(int $page, int $perPage): array {
                                         <input name="final_nome" value="<?= sanitize($it['final_nome'] ?? '') ?>"
                                                class="w-full rounded border-slate-300 dark:bg-slate-900 dark:border-slate-700">
                                     </div>
+
                                     <div class="grid grid-cols-2 gap-3">
                                         <div>
                                             <label class="block text-xs text-slate-600 dark:text-slate-300 mb-1">Preço</label>
@@ -713,6 +714,7 @@ function paginate(int $page, int $perPage): array {
                                                    class="w-full rounded border-slate-300 dark:bg-slate-900 dark:border-slate-700">
                                         </div>
                                     </div>
+
                                     <div class="md:col-span-2">
                                         <label class="block text-xs text-slate-600 dark:text-slate-300 mb-1">Descrição</label>
                                         <textarea name="final_descricao" rows="3"
@@ -739,11 +741,11 @@ function paginate(int $page, int $perPage): array {
                                 $next = min($totalPages, $page + 1);
                             ?>
                             <a class="px-3 py-2 rounded border border-slate-200 dark:border-slate-800 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 <?= $page<=1 ? 'opacity-50 pointer-events-none' : '' ?>"
-                               href="<?= BASE_URL ?>/products_import.php?action=view&id=<?= (int)$importId ?>&page=<?= (int)$prev ?>&per_page=<?= (int)$perPage ?>">
+                               href="<?= sanitize(url_import('action=view&id=' . (int)$importId . '&page=' . (int)$prev . '&per_page=' . (int)$perPage)) ?>">
                                 Anterior
                             </a>
                             <a class="px-3 py-2 rounded border border-slate-200 dark:border-slate-800 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 <?= $page>=$totalPages ? 'opacity-50 pointer-events-none' : '' ?>"
-                               href="<?= BASE_URL ?>/products_import.php?action=view&id=<?= (int)$importId ?>&page=<?= (int)$next ?>&per_page=<?= (int)$perPage ?>">
+                               href="<?= sanitize(url_import('action=view&id=' . (int)$importId . '&page=' . (int)$next . '&per_page=' . (int)$perPage)) ?>">
                                 Próxima
                             </a>
                         </div>
