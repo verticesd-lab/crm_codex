@@ -15,8 +15,8 @@ define('APP_NAME', 'Micro CRM SaaS');
 // No Coolify: defina BASE_URL="/" nas variáveis de ambiente.
 // Em local: fallback para "/crm_codex".
 $envBaseUrl = getenv('BASE_URL');
-if ($envBaseUrl === false || $envBaseUrl === '') {
-    $envBaseUrl = '/crm_codex';
+if ($envBaseUrl === false) {
+    $envBaseUrl = '';
 }
 // remove barra no final pra evitar "//uploads"
 $envBaseUrl = rtrim($envBaseUrl, '/');

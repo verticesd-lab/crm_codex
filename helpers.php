@@ -6,6 +6,49 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 /**
+ * ========= TIMEZONE (Cuiabá/MT) =========
+ * Cuiabá = America/Cuiaba
+ * Isso ajusta todas as datas geradas pelo PHP (date(), time(), etc.)
+ */
+function app_timezone(): string {
+    return 'America/Cuiaba';
+}
+
+function apply_app_timezone(): void {
+    $tz = app_timezone();
+    if (function_exists('date_default_timezone_set')) {
+        date_default_timezone_set($tz);
+    }
+    // Opcional: locale pt_BR (não é obrigatório e pode depender do servidor)
+    if (function_exists('setlocale')) {
+        @setlocale(LC_TIME, 'pt_BR.UTF-8', 'pt_BR', 'Portuguese_Brazil');
+    }
+}
+apply_app_timezone();
+
+/**
+ * Retorna datetime atual no fuso do app (string MySQL-friendly).
+ */
+function now_datetime(): string {
+    return date('Y-m-d H:i:s');
+}
+
+/**
+ * Opcional: aplicar timezone também na sessão do MySQL.
+ * Chame logo após $pdo = get_pdo(); se quiser.
+ *
+ * Obs: 'America/Cuiaba' nem sempre está carregado nas tabelas de timezone do MySQL.
+ * Então usamos offset -04:00 (Cuiabá geralmente é UTC-4).
+ */
+function pdo_apply_timezone(PDO $pdo): void {
+    try {
+        $pdo->exec("SET time_zone = '-04:00'");
+    } catch (Throwable $e) {
+        // Se falhar, não quebra o sistema (apenas ignora)
+    }
+}
+
+/**
  * ========= AUTENTICAÇÃO / SESSÃO =========
  */
 
@@ -38,35 +81,36 @@ function require_admin(): void
 
 function current_company_id(): ?int
 {
-    return $_SESSION['company_id'] ?? null;
+    return isset($_SESSION['company_id']) ? (int)$_SESSION['company_id'] : null;
 }
 
 function current_company_logo(): string
 {
-    return $_SESSION['company_logo'] ?? '';
+    return (string)($_SESSION['company_logo'] ?? '');
 }
 
 function current_theme(): string
 {
-    return $_SESSION['theme'] ?? 'light';
+    return (string)($_SESSION['theme'] ?? 'light');
 }
 
 function current_user_name(): string
 {
-    return $_SESSION['nome'] ?? '';
+    return (string)($_SESSION['nome'] ?? '');
 }
 
 /**
  * ========= LOG / AUDITORIA =========
+ * IMPORTANTE: gravar created_at pelo PHP (no timezone Cuiabá),
+ * para evitar diferença quando o MySQL está em UTC.
  */
-
 function log_action(PDO $pdo, int $companyId, int $userId, string $action, string $details = ''): void
 {
     $stmt = $pdo->prepare(
         'INSERT INTO action_logs (company_id, user_id, action, details, created_at)
-         VALUES (?, ?, ?, ?, NOW())'
+         VALUES (?, ?, ?, ?, ?)'
     );
-    $stmt->execute([$companyId, $userId, $action, $details]);
+    $stmt->execute([$companyId, $userId, $action, $details, now_datetime()]);
 }
 
 function user_can_admin(): bool
@@ -86,7 +130,7 @@ function flash(string $key, string $message): void
 function get_flash(string $key): ?string
 {
     if (isset($_SESSION['flash'][$key])) {
-        $msg = $_SESSION['flash'][$key];
+        $msg = (string)$_SESSION['flash'][$key];
         unset($_SESSION['flash'][$key]);
         return $msg;
     }
@@ -105,6 +149,18 @@ function sanitize(string $value): string
 function format_currency($value): string
 {
     return 'R$ ' . number_format((float)$value, 2, ',', '.');
+}
+
+/**
+ * Formata datetime (Y-m-d H:i:s) para BR (d/m/Y H:i).
+ * Útil para exibir no painel.
+ */
+function format_datetime_br(?string $dt): string
+{
+    if (!$dt) return '';
+    $ts = strtotime($dt);
+    if ($ts === false) return $dt;
+    return date('d/m/Y H:i', $ts);
 }
 
 function redirect(string $path): void
@@ -186,7 +242,7 @@ function upload_image_optimized(
     }
 
     // Outro erro qualquer
-    if ($file['error'] !== UPLOAD_ERR_OK) {
+    if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
         return null;
     }
 
@@ -212,7 +268,7 @@ function upload_image_optimized(
     // Pasta física alvo: UPLOAD_DIR/<folder>
     $relativeFolder = trim($folder, '/'); // pode vir "products" OU "uploads/products"
 
-    // 🔧 Normaliza para SEM "uploads/" na frente
+    // Normaliza para SEM "uploads/" na frente
     if (str_starts_with($relativeFolder, 'uploads/')) {
         $relativeFolder = substr($relativeFolder, strlen('uploads/'));
     }
@@ -220,7 +276,7 @@ function upload_image_optimized(
     $targetDir = rtrim(UPLOAD_DIR, '/') . '/' . $relativeFolder;
 
     if (!is_dir($targetDir)) {
-        mkdir($targetDir, 0777, true);
+        @mkdir($targetDir, 0777, true);
     }
 
     // Nome único
