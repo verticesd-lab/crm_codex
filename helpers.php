@@ -16,7 +16,7 @@ if (!function_exists('str_starts_with')) {
 
 /**
  * ========= TIMEZONES (CORRETO) =========
- * APP_TZ = fuso da aplicação (para exibição)
+ * APP_TZ = fuso da aplicação (exibição)
  * DB_TZ  = fuso padrão do banco (recomendado: UTC)
  */
 function app_timezone(): string { return 'America/Cuiaba'; }
@@ -32,7 +32,6 @@ function apply_app_timezone(): void {
         date_default_timezone_set($tz);
     }
 
-    // Opcional (depende do servidor ter locale instalado)
     if (function_exists('setlocale')) {
         @setlocale(LC_TIME, 'pt_BR.UTF-8', 'pt_BR', 'Portuguese_Brazil');
     }
@@ -40,7 +39,7 @@ function apply_app_timezone(): void {
 apply_app_timezone();
 
 /**
- * Retorna datetime atual em UTC (para salvar no banco de forma consistente).
+ * Retorna datetime atual em UTC (para salvar no banco).
  */
 function now_utc_datetime(): string {
     $d = new DateTime('now', new DateTimeZone('UTC'));
@@ -48,7 +47,7 @@ function now_utc_datetime(): string {
 }
 
 /**
- * Retorna datetime atual no fuso do app (apenas se você precisar exibir/logar local).
+ * Retorna datetime atual no fuso do app (apenas para debug/exibição).
  */
 function now_app_datetime(): string {
     $d = new DateTime('now', new DateTimeZone(app_timezone()));
@@ -89,8 +88,8 @@ function db_datetime_to_app(?string $dt, ?string $dbTz = null): ?DateTime {
 
         // Normaliza ISO (T, milissegundos, Z)
         $normalized = str_replace('T', ' ', $dt);
-        $normalized = preg_replace('/\.\d+/', '', $normalized);
-        $normalized = preg_replace('/Z$/', '', $normalized);
+        $normalized = preg_replace('/\.\d+/', '', $normalized); // remove ms
+        $normalized = preg_replace('/Z$/', '', $normalized);    // remove Z
 
         $dbZone  = new DateTimeZone($dbTz);
         $appZone = new DateTimeZone(app_timezone());
@@ -105,7 +104,7 @@ function db_datetime_to_app(?string $dt, ?string $dbTz = null): ?DateTime {
 }
 
 /**
- * Formata datetime do banco para BR (d/m/Y H:i) já convertido pra Cuiabá.
+ * Formata datetime do banco para BR (d/m/Y H:i) já convertido para TZ do app.
  * Por padrão assume que o banco está em UTC.
  */
 function format_datetime_br(?string $dt, ?string $dbTz = null): string {
@@ -158,7 +157,7 @@ function current_user_name(): string {
 
 /**
  * ========= LOG / AUDITORIA =========
- * RECOMENDADO: salvar em UTC no banco.
+ * Salva em UTC no banco.
  */
 function log_action(PDO $pdo, int $companyId, int $userId, string $action, string $details = ''): void {
     $stmt = $pdo->prepare(

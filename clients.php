@@ -21,12 +21,6 @@ $id = isset($_GET['id']) ? (int)$_GET['id'] : null;
  * =========================================
  */
 
-/** Sempre salva timestamps em UTC (evita ficar 4h pra frente/atrás dependendo do servidor/MySQL). */
-function now_utc_datetime(): string {
-    $d = new DateTime('now', new DateTimeZone('UTC'));
-    return $d->format('Y-m-d H:i:s');
-}
-
 function phone_digits(?string $phone): string {
     $p = preg_replace('/\D+/', '', (string)$phone);
     return $p ?: '';
