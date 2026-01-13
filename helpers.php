@@ -15,7 +15,6 @@ if (!function_exists('str_starts_with')) {
 }
 
 /**
-<<<<<<< HEAD
  * ========= TIMEZONES (CORRETO) =========
  * APP_TZ = fuso da aplicação (exibição)
  * DB_TZ  = fuso padrão do banco (recomendado: UTC)
@@ -26,15 +25,6 @@ function db_timezone(): string  { return 'UTC'; }
 /**
  * Aplica timezone do app no PHP (para date(), DateTime sem tz, etc).
  */
-=======
- * ========= TIMEZONE (Cuiabá/MT) =========
- * Ajusta datas geradas pelo PHP (date(), time(), DateTime, etc.)
- */
-function app_timezone(): string {
-    return 'America/Cuiaba';
-}
-
->>>>>>> f3837e5 (Fix timezone display (dashboard))
 function apply_app_timezone(): void {
     $tz = app_timezone();
 
@@ -42,19 +32,15 @@ function apply_app_timezone(): void {
         date_default_timezone_set($tz);
     }
 
-<<<<<<< HEAD
-=======
     // Opcional (depende do servidor ter locale instalado)
->>>>>>> f3837e5 (Fix timezone display (dashboard))
     if (function_exists('setlocale')) {
         @setlocale(LC_TIME, 'pt_BR.UTF-8', 'pt_BR', 'Portuguese_Brazil');
     }
 }
-<<<<<<< HEAD
 apply_app_timezone();
 
 /**
- * Retorna datetime atual em UTC (para salvar no banco).
+ * Retorna datetime atual em UTC (para salvar no banco de forma consistente).
  */
 function now_utc_datetime(): string {
     $d = new DateTime('now', new DateTimeZone('UTC'));
@@ -62,7 +48,7 @@ function now_utc_datetime(): string {
 }
 
 /**
- * Retorna datetime atual no fuso do app (apenas para debug/exibição).
+ * Retorna datetime atual no fuso do app (apenas se precisar exibir/logar local).
  */
 function now_app_datetime(): string {
     $d = new DateTime('now', new DateTimeZone(app_timezone()));
@@ -73,31 +59,17 @@ function now_app_datetime(): string {
  * Define timezone da sessão do MySQL.
  * RECOMENDADO: manter em UTC (+00:00).
  *
- * Chame depois de $pdo = get_pdo(); (1x por request) se quiser forçar.
+ * Chame após $pdo = get_pdo(); (1x por request) se quiser forçar.
  */
 function pdo_apply_timezone(PDO $pdo, string $tz = '+00:00'): void {
     try {
         $pdo->exec("SET time_zone = " . $pdo->quote($tz));
     } catch (Throwable $e) {
         // Ignora
-=======
-
-apply_app_timezone();
-
-/**
- * Datetime atual no TZ do app (string MySQL-friendly).
- */
-function now_datetime(): string {
-    try {
-        return (new DateTime('now', new DateTimeZone(app_timezone())))->format('Y-m-d H:i:s');
-    } catch (Throwable $e) {
-        return date('Y-m-d H:i:s');
->>>>>>> f3837e5 (Fix timezone display (dashboard))
     }
 }
 
 /**
-<<<<<<< HEAD
  * ========= CONVERSÃO DE DATETIME DO BANCO =========
  * Converte um datetime (assumido como DB_TZ/UTC) para o TZ do app (Cuiabá).
  */
@@ -117,8 +89,8 @@ function db_datetime_to_app(?string $dt, ?string $dbTz = null): ?DateTime {
 
         // Normaliza ISO (T, milissegundos, Z)
         $normalized = str_replace('T', ' ', $dt);
-        $normalized = preg_replace('/\.\d+/', '', $normalized); // remove ms
-        $normalized = preg_replace('/Z$/', '', $normalized);    // remove Z
+        $normalized = preg_replace('/\.\d+/', '', $normalized);
+        $normalized = preg_replace('/Z$/', '', $normalized);
 
         $dbZone  = new DateTimeZone($dbTz);
         $appZone = new DateTimeZone(app_timezone());
@@ -129,22 +101,10 @@ function db_datetime_to_app(?string $dt, ?string $dbTz = null): ?DateTime {
         return $d;
     } catch (Throwable $e) {
         return null;
-=======
- * Formata datetime (Y-m-d H:i:s) para BR (d/m/Y H:i).
- */
-function format_datetime_br(?string $dt): string {
-    if (!$dt) return '';
-    try {
-        $d = new DateTime($dt, new DateTimeZone(app_timezone()));
-        return $d->format('d/m/Y H:i');
-    } catch (Throwable $e) {
-        return (string)$dt;
->>>>>>> f3837e5 (Fix timezone display (dashboard))
     }
 }
 
 /**
-<<<<<<< HEAD
  * Formata datetime do banco para BR (d/m/Y H:i) já convertido para TZ do app.
  * Por padrão assume que o banco está em UTC.
  */
@@ -155,8 +115,6 @@ function format_datetime_br(?string $dt, ?string $dbTz = null): string {
 }
 
 /**
-=======
->>>>>>> f3837e5 (Fix timezone display (dashboard))
  * ========= AUTENTICAÇÃO / SESSÃO =========
  */
 function is_logged_in(): bool {
@@ -200,22 +158,14 @@ function current_user_name(): string {
 
 /**
  * ========= LOG / AUDITORIA =========
-<<<<<<< HEAD
- * Salva em UTC no banco.
-=======
- * Se quiser manter o MySQL em UTC, grave pelo PHP usando now_datetime()
->>>>>>> f3837e5 (Fix timezone display (dashboard))
+ * Recomendado: salvar em UTC no banco.
  */
 function log_action(PDO $pdo, int $companyId, int $userId, string $action, string $details = ''): void {
     $stmt = $pdo->prepare(
         'INSERT INTO action_logs (company_id, user_id, action, details, created_at)
          VALUES (?, ?, ?, ?, ?)'
     );
-<<<<<<< HEAD
     $stmt->execute([$companyId, $userId, $action, $details, now_utc_datetime()]);
-=======
-    $stmt->execute([$companyId, $userId, $action, $details, now_datetime()]);
->>>>>>> f3837e5 (Fix timezone display (dashboard))
 }
 
 function user_can_admin(): bool {
@@ -250,15 +200,13 @@ function format_currency($value): string {
 }
 
 function redirect(string $path): void {
-<<<<<<< HEAD
-=======
     // Se for URL absoluta, redireciona direto
->>>>>>> f3837e5 (Fix timezone display (dashboard))
     if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
         header('Location: ' . $path);
         exit;
     }
 
+    // Garante que caminhos relativos respeitem o BASE_URL
     if (!str_starts_with($path, BASE_URL)) {
         $path = rtrim(BASE_URL, '/') . '/' . ltrim($path, '/');
     }
@@ -269,28 +217,19 @@ function redirect(string $path): void {
 
 /**
  * ========= IMAGENS / UPLOADS =========
+ * Monta URL pública de imagem a partir de um caminho salvo no banco.
  */
 function image_url(?string $path): string {
-<<<<<<< HEAD
     if (!$path) return '';
 
-=======
-    if (!$path) {
-        return '';
-    }
-
     // Já é URL completa?
->>>>>>> f3837e5 (Fix timezone display (dashboard))
     if (preg_match('~^https?://~i', $path)) {
         return $path;
     }
 
     $clean = ltrim($path, '/');
 
-<<<<<<< HEAD
-=======
-    // Se começar com "uploads/", remove esse prefixo
->>>>>>> f3837e5 (Fix timezone display (dashboard))
+    // Normaliza removendo "uploads/" do começo, pois UPLOAD_URL já aponta para /uploads
     if (str_starts_with($clean, 'uploads/')) {
         $clean = substr($clean, strlen('uploads/'));
     }
@@ -298,12 +237,10 @@ function image_url(?string $path): string {
     return rtrim(UPLOAD_URL, '/') . '/' . $clean;
 }
 
-<<<<<<< HEAD
-=======
 /**
  * Upload otimizado de imagem.
+ * - Retorna "uploads/pasta/arquivo.ext" para salvar no banco
  */
->>>>>>> f3837e5 (Fix timezone display (dashboard))
 function upload_image_optimized(
     string $fieldName,
     string $folder = 'uploads',
@@ -313,40 +250,26 @@ function upload_image_optimized(
 
     $file = $_FILES[$fieldName];
 
+    // Nenhum arquivo enviado
     if (($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) return null;
+
+    // Erro qualquer
     if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) return null;
 
-<<<<<<< HEAD
-=======
-    // Outro erro qualquer
-    if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
-        return null;
-    }
-
     // Tamanho
->>>>>>> f3837e5 (Fix timezone display (dashboard))
     $size = (int)($file['size'] ?? 0);
     if ($size <= 0) return null;
 
     $maxBytes = $maxSizeMB * 1024 * 1024;
     if ($size > $maxBytes) return null;
 
+    // Extensão permitida
     $ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
     $allowedExt = ['jpg', 'jpeg', 'png', 'webp'];
     if ($ext === '' || !in_array($ext, $allowedExt, true)) return null;
 
-<<<<<<< HEAD
-    $relativeFolder = trim($folder, '/');
-=======
-    if ($ext === '' || !in_array($ext, $allowedExt, true)) {
-        return null;
-    }
-
     // Pasta física alvo: UPLOAD_DIR/<folder>
-    $relativeFolder = trim($folder, '/'); // pode vir "products" OU "uploads/products"
-
-    // Normaliza para SEM "uploads/" na frente
->>>>>>> f3837e5 (Fix timezone display (dashboard))
+    $relativeFolder = trim($folder, '/'); // pode vir "products" ou "uploads/products"
     if (str_starts_with($relativeFolder, 'uploads/')) {
         $relativeFolder = substr($relativeFolder, strlen('uploads/'));
     }
@@ -356,6 +279,7 @@ function upload_image_optimized(
         @mkdir($targetDir, 0777, true);
     }
 
+    // Nome único
     $filename = time() . '_' . mt_rand(1000, 9999) . '.' . $ext;
     $targetPath = $targetDir . '/' . $filename;
 
@@ -363,9 +287,6 @@ function upload_image_optimized(
         return null;
     }
 
-<<<<<<< HEAD
-=======
     // Caminho salvo no banco
->>>>>>> f3837e5 (Fix timezone display (dashboard))
     return 'uploads/' . $relativeFolder . '/' . $filename;
 }

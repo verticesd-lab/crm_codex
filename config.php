@@ -4,11 +4,10 @@
 // =========================
 
 ini_set('default_charset', 'UTF-8');
-<<<<<<< HEAD
-date_default_timezone_set('America/Cuiaba');
-=======
+
+// ✅ Recomendado: PHP em UTC no config (base do sistema).
+// A exibição em "America/Cuiaba" deve ser feita no helpers (conversão).
 date_default_timezone_set('UTC');
->>>>>>> f3837e5 (Fix timezone display (dashboard))
 
 // Nome do sistema
 define('APP_NAME', 'Micro CRM SaaS');
@@ -17,7 +16,7 @@ define('APP_NAME', 'Micro CRM SaaS');
 // CAMINHO BASE (BASE_URL)
 // =========================
 // No Coolify: defina BASE_URL="/" nas variáveis de ambiente.
-// Em local: fallback para "/crm_codex".
+// Em local: fallback para "".
 $envBaseUrl = getenv('BASE_URL');
 if ($envBaseUrl === false) {
     $envBaseUrl = '';
@@ -29,8 +28,6 @@ define('BASE_URL', $envBaseUrl);
 // =========================
 // BANCO DE DADOS
 // =========================
-// Lê as variáveis de ambiente do servidor (Coolify).
-// Se estiver rodando local (sem env), cai no fallback.
 
 $dbHost = getenv('DB_HOST');
 $dbName = getenv('DB_NAME');
@@ -45,8 +42,6 @@ define('DB_PASS', $dbPass !== false && $dbPass !== '' ? $dbPass : '');
 // =========================
 // TOKEN PARA AGENTES DE IA
 // =========================
-// No servidor, SEMPRE configurar API_TOKEN_IA nas variáveis de ambiente.
-// Em local, usa um token de desenvolvimento.
 
 $envTokenIa = getenv('API_TOKEN_IA');
 define(
@@ -64,8 +59,6 @@ define(
 define('UPLOAD_DIR', __DIR__ . '/uploads');
 
 // URL pública da pasta de uploads
-// Ex.: local -> /crm_codex/uploads
-//      produção -> /uploads (BASE_URL="/")
 define('UPLOAD_URL', BASE_URL . '/uploads');
 
 // Limite de upload
@@ -85,7 +78,6 @@ define('ALLOWED_IMAGE_MIMES', [
 // =========================
 // VALIDAÇÃO DE TOKEN PARA API
 // =========================
-// Para endpoints que serão consumidos pelo ActivePieces / Evolution API / IA
 
 function checkApiToken(): void
 {
@@ -102,7 +94,7 @@ function checkApiToken(): void
             $decoded = json_decode($raw, true);
 
             if (is_array($decoded) && isset($decoded['token'])) {
-                $token = (string) $decoded['token'];
+                $token = (string)$decoded['token'];
             }
         }
     }
@@ -122,4 +114,3 @@ function checkApiToken(): void
 
     exit;
 }
-// rebuild coolify

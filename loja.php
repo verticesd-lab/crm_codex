@@ -96,11 +96,20 @@ if (!isset($_SESSION[$cartKey])) {
     $_SESSION[$cartKey] = [];
 }
 
-// Adicionar ao carrinho
+// Adicionar ao carrinho (preserva filtros/paginação)
 if (isset($_GET['add'])) {
     $productId = (int)$_GET['add'];
     $_SESSION[$cartKey][$productId] = ($_SESSION[$cartKey][$productId] ?? 0) + 1;
-    redirect('loja.php?empresa=' . urlencode($slug));
+
+    $backUrl = BASE_URL . '/loja.php?' . http_build_query([
+        'empresa'   => $slug,
+        'q'         => $search,
+        'categoria' => $categoria,
+        'page'      => $page,
+        'per_page'  => $perPage,
+    ]);
+
+    redirect($backUrl);
 }
 
 // WhatsApp fixo (limpa número)
@@ -149,7 +158,7 @@ $msg   = 'Olá, vim da loja online!';
                         <img src="<?= sanitize(image_url($company['logo'])) ?>" class="h-14 w-14 rounded-full border border-white/20 object-cover">
                     <?php else: ?>
                         <div class="h-14 w-14 rounded-full bg-brand-600 flex items-center justify-center text-lg font-semibold">
-                            <?= strtoupper(substr($company['nome_fantasia'],0,2)) ?>
+                            <?= strtoupper(substr($company['nome_fantasia'], 0, 2)) ?>
                         </div>
                     <?php endif; ?>
                     <div>
@@ -167,7 +176,7 @@ $msg   = 'Olá, vim da loja online!';
 
                 <a href="<?= BASE_URL ?>/checkout.php?empresa=<?= urlencode($slug) ?>"
                    class="inline-flex items-center gap-2 bg-emerald-500 text-slate-900 px-4 py-2 rounded-full shadow-lg shadow-emerald-500/30 hover:bg-emerald-400">
-                    Carrinho (<?= array_sum($_SESSION[$cartKey]) ?>)
+                    Carrinho (<?= (int)array_sum($_SESSION[$cartKey]) ?>)
                 </a>
             </div>
 
@@ -210,12 +219,7 @@ $msg   = 'Olá, vim da loja online!';
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-<<<<<<< HEAD
-            <!-- sticky só no desktop -->
-=======
-
-            <!-- ✅ CORREÇÃO AQUI: sticky só no desktop (lg) -->
->>>>>>> f3837e5 (Fix timezone display (dashboard))
+            <!-- sticky só no desktop (lg) -->
             <aside class="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3 h-fit lg:sticky lg:top-4">
                 <p class="text-sm text-slate-200/80 font-semibold">Categorias</p>
                 <div class="flex flex-col gap-2">
@@ -231,7 +235,6 @@ $msg   = 'Olá, vim da loja online!';
                     <?php endforeach; ?>
                 </div>
 
-                <!-- Atendimento (WhatsApp sai daqui; fica fixo no canto) -->
                 <div class="pt-4 border-t border-white/10 space-y-2">
                     <p class="text-sm text-slate-200/80 font-semibold">Atendimento</p>
 
@@ -250,8 +253,10 @@ $msg   = 'Olá, vim da loja online!';
                     <form class="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
                         <input type="hidden" name="page" value="1">
+
                         <input name="q" value="<?= sanitize($search) ?>" placeholder="Buscar produto"
                                class="rounded-lg border border-white/10 bg-white/5 text-white px-3 py-2 placeholder:text-slate-300">
+
                         <input name="categoria" value="<?= sanitize($categoria) ?>" placeholder="Categoria"
                                class="rounded-lg border border-white/10 bg-white/5 text-white px-3 py-2 placeholder:text-slate-300">
 
@@ -275,12 +280,12 @@ $msg   = 'Olá, vim da loja online!';
                         <h2 class="text-xl font-semibold">Destaques</h2>
                         <p class="text-sm text-slate-200/70">Curadoria para você decidir rápido</p>
                     </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <?php foreach ($featured ?: array_slice($products, 0, 3) as $product): ?>
                             <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
                                 <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
                                     <?php if (!empty($product['imagem'])): ?>
-                                        <!-- ✅ imagem sem cortar -->
                                         <div class="h-44 w-full bg-white/5 flex items-center justify-center">
                                             <img src="<?= sanitize(image_url($product['imagem'])) ?>"
                                                  alt="<?= sanitize($product['nome']) ?>"
@@ -303,23 +308,20 @@ $msg   = 'Olá, vim da loja online!';
                                     </div>
                                 </a>
 
-<<<<<<< HEAD
                                 <a href="<?= BASE_URL ?>/loja.php?<?= http_build_query([
-                                    'empresa' => $slug,
-                                    'q' => $search,
+                                    'empresa'   => $slug,
+                                    'q'         => $search,
                                     'categoria' => $categoria,
-                                    'page' => $page,
-                                    'per_page' => $perPage,
-                                    'add' => (int)$product['id']
+                                    'page'      => $page,
+                                    'per_page'  => $perPage,
+                                    'add'       => (int)$product['id']
                                 ]) ?>"
-=======
-                                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
->>>>>>> f3837e5 (Fix timezone display (dashboard))
                                    class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
                                 </a>
                             </div>
                         <?php endforeach; ?>
+
                         <?php if (empty($featured) && empty($products)): ?>
                             <p class="text-sm text-slate-200">Nenhum produto ativo.</p>
                         <?php endif; ?>
@@ -340,7 +342,6 @@ $msg   = 'Olá, vim da loja online!';
                             <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
                                 <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
                                     <?php if (!empty($product['imagem'])): ?>
-                                        <!-- ✅ imagem sem cortar -->
                                         <div class="h-44 w-full bg-white/5 flex items-center justify-center">
                                             <img src="<?= sanitize(image_url($product['imagem'])) ?>"
                                                  alt="<?= sanitize($product['nome']) ?>"
@@ -363,18 +364,14 @@ $msg   = 'Olá, vim da loja online!';
                                     </div>
                                 </a>
 
-<<<<<<< HEAD
                                 <a href="<?= BASE_URL ?>/loja.php?<?= http_build_query([
-                                    'empresa' => $slug,
-                                    'q' => $search,
+                                    'empresa'   => $slug,
+                                    'q'         => $search,
                                     'categoria' => $categoria,
-                                    'page' => $page,
-                                    'per_page' => $perPage,
-                                    'add' => (int)$product['id']
+                                    'page'      => $page,
+                                    'per_page'  => $perPage,
+                                    'add'       => (int)$product['id']
                                 ]) ?>"
-=======
-                                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
->>>>>>> f3837e5 (Fix timezone display (dashboard))
                                    class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
                                 </a>
@@ -386,15 +383,15 @@ $msg   = 'Olá, vim da loja online!';
                         <?php endif; ?>
                     </div>
 
-                    <!-- ✅ Paginação -->
+                    <!-- Paginação -->
                     <?php
                     $queryBase = [
-                        'empresa' => $slug,
-                        'q' => $search,
+                        'empresa'   => $slug,
+                        'q'         => $search,
                         'categoria' => $categoria,
-                        'per_page' => $perPage
+                        'per_page'  => $perPage
                     ];
-                    $makeUrl = function($p) use ($queryBase) {
+                    $makeUrl = function ($p) use ($queryBase) {
                         return BASE_URL . '/loja.php?' . http_build_query(array_merge($queryBase, ['page' => $p]));
                     };
                     ?>
@@ -409,7 +406,7 @@ $msg   = 'Olá, vim da loja online!';
                             <?php for ($p = max(1, $page - 2); $p <= min($totalPages, $page + 2); $p++): ?>
                                 <a href="<?= $makeUrl($p) ?>"
                                    class="px-4 py-2 rounded-full border border-white/15 hover:border-white/30 <?= $p === $page ? 'bg-brand-600 text-white border-transparent' : '' ?>">
-                                    <?= $p ?>
+                                    <?= (int)$p ?>
                                 </a>
                             <?php endfor; ?>
 
@@ -428,7 +425,7 @@ $msg   = 'Olá, vim da loja online!';
         </div>
     </div>
 
-    <!-- ✅ BOTÃO WHATSAPP FIXO -->
+    <!-- BOTÃO WHATSAPP FIXO -->
     <?php if ($whats): ?>
         <a
             href="https://wa.me/<?= $whats ?>?text=<?= urlencode($msg) ?>"
