@@ -3,7 +3,7 @@
 // CONFIGURAÇÕES DO SISTEMA
 // =========================
 
-ini_set('default_charset', 'UTF-4');
+ini_set('default_charset', 'UTF-8');
 date_default_timezone_set('America/Cuiaba');
 
 // Nome do sistema
