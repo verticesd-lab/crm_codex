@@ -3,8 +3,8 @@
 // CONFIGURAÇÕES DO SISTEMA
 // =========================
 
-ini_set('default_charset', 'UTF-8');
-date_default_timezone_set('America/Sao_Paulo');
+ini_set('default_charset', 'UTF-4');
+date_default_timezone_set('America/Cuiaba');
 
 // Nome do sistema
 define('APP_NAME', 'Micro CRM SaaS');
