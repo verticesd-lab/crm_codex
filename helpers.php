@@ -15,12 +15,16 @@ if (!function_exists('str_starts_with')) {
 }
 
 /**
- * ========= TIMEZONE (Cuiabá/MT) =========
+ * ========= TIMEZONES (CORRETO) =========
+ * APP_TZ = fuso da aplicação (para exibição)
+ * DB_TZ  = fuso padrão do banco (recomendado: UTC)
  */
-function app_timezone(): string {
-    return 'America/Cuiaba';
-}
+function app_timezone(): string { return 'America/Cuiaba'; }
+function db_timezone(): string  { return 'UTC'; }
 
+/**
+ * Aplica timezone do app no PHP (para date(), DateTime sem tz, etc).
+ */
 function apply_app_timezone(): void {
     $tz = app_timezone();
 
@@ -36,61 +40,62 @@ function apply_app_timezone(): void {
 apply_app_timezone();
 
 /**
- * Retorna datetime atual no fuso do app (string MySQL-friendly).
+ * Retorna datetime atual em UTC (para salvar no banco de forma consistente).
  */
-function now_datetime(): string {
+function now_utc_datetime(): string {
+    $d = new DateTime('now', new DateTimeZone('UTC'));
+    return $d->format('Y-m-d H:i:s');
+}
+
+/**
+ * Retorna datetime atual no fuso do app (apenas se você precisar exibir/logar local).
+ */
+function now_app_datetime(): string {
     $d = new DateTime('now', new DateTimeZone(app_timezone()));
     return $d->format('Y-m-d H:i:s');
 }
 
 /**
- * Opcional: aplicar timezone também na sessão do MySQL.
- * Chame logo após $pdo = get_pdo(); (1x por request).
+ * Define timezone da sessão do MySQL.
+ * RECOMENDADO: manter em UTC (+00:00).
  *
- * Obs: MySQL nem sempre tem "America/Cuiaba" carregado nas tabelas.
- * Por isso usamos offset fixo: -04:00
+ * Chame depois de $pdo = get_pdo(); (1x por request) se quiser forçar.
  */
-function pdo_apply_timezone(PDO $pdo): void {
+function pdo_apply_timezone(PDO $pdo, string $tz = '+00:00'): void {
     try {
-        $pdo->exec("SET time_zone = '-04:00'");
+        $pdo->exec("SET time_zone = " . $pdo->quote($tz));
     } catch (Throwable $e) {
-        // Ignora se falhar
+        // Ignora
     }
 }
 
 /**
  * ========= CONVERSÃO DE DATETIME DO BANCO =========
- *
- * Muitos ambientes salvam datetime em UTC (ou retornam como UTC).
- * Esta função converte um datetime do banco para o timezone do app.
- *
- * $dbTz: timezone assumido do valor vindo do banco (padrão: UTC).
- * Se você tiver certeza que o banco já está em -04:00, pode usar '-04:00' aqui.
+ * Converte um datetime (assumido como DB_TZ/UTC) para o TZ do app (Cuiabá).
  */
-function db_datetime_to_app(?string $dt, string $dbTz = 'UTC'): ?DateTime {
+function db_datetime_to_app(?string $dt, ?string $dbTz = null): ?DateTime {
     if (!$dt) return null;
 
     $dt = trim($dt);
     if ($dt === '') return null;
 
+    $dbTz = $dbTz ?: db_timezone();
+
     try {
-        // Se vier só data (Y-m-d), completa pra meia-noite
+        // Se vier só data (Y-m-d), completa
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dt)) {
             $dt .= ' 00:00:00';
         }
 
-        // Se vier com 'T' (ISO), normaliza
+        // Normaliza ISO (T, milissegundos, Z)
         $normalized = str_replace('T', ' ', $dt);
-        $normalized = preg_replace('/\.\d+/', '', $normalized); // remove milissegundos
-        $normalized = preg_replace('/Z$/', '', $normalized);    // remove Z no fim
+        $normalized = preg_replace('/\.\d+/', '', $normalized);
+        $normalized = preg_replace('/Z$/', '', $normalized);
 
-        $dbZone = new DateTimeZone($dbTz);
+        $dbZone  = new DateTimeZone($dbTz);
         $appZone = new DateTimeZone(app_timezone());
 
-        // Interpreta o valor como estando no fuso do banco (geralmente UTC)
         $d = new DateTime($normalized, $dbZone);
-
-        // Converte para o fuso do app (Cuiabá)
         $d->setTimezone($appZone);
 
         return $d;
@@ -100,10 +105,10 @@ function db_datetime_to_app(?string $dt, string $dbTz = 'UTC'): ?DateTime {
 }
 
 /**
- * Formata datetime do banco para BR (d/m/Y H:i) já convertido para TZ do app.
- * Por padrão assume que o datetime do banco está em UTC.
+ * Formata datetime do banco para BR (d/m/Y H:i) já convertido pra Cuiabá.
+ * Por padrão assume que o banco está em UTC.
  */
-function format_datetime_br(?string $dt, string $dbTz = 'UTC'): string {
+function format_datetime_br(?string $dt, ?string $dbTz = null): string {
     $d = db_datetime_to_app($dt, $dbTz);
     if (!$d) return $dt ? (string)$dt : '';
     return $d->format('d/m/Y H:i');
@@ -153,14 +158,14 @@ function current_user_name(): string {
 
 /**
  * ========= LOG / AUDITORIA =========
- * Salva created_at pelo PHP (timezone Cuiabá).
+ * RECOMENDADO: salvar em UTC no banco.
  */
 function log_action(PDO $pdo, int $companyId, int $userId, string $action, string $details = ''): void {
     $stmt = $pdo->prepare(
         'INSERT INTO action_logs (company_id, user_id, action, details, created_at)
          VALUES (?, ?, ?, ?, ?)'
     );
-    $stmt->execute([$companyId, $userId, $action, $details, now_datetime()]);
+    $stmt->execute([$companyId, $userId, $action, $details, now_utc_datetime()]);
 }
 
 function user_can_admin(): bool {

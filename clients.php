@@ -5,13 +5,8 @@ require_once __DIR__ . '/db.php';
 require_login();
 
 $pdo = get_pdo();
-
-// aplica timezone na sessão do MySQL (caso helpers tenha essa função)
-if (function_exists('pdo_apply_timezone')) {
-    pdo_apply_timezone($pdo);
-}
-
 $companyId = current_company_id();
+
 if (!$companyId) {
     flash('error', 'Empresa não definida na sessão.');
     redirect('dashboard.php');
@@ -21,30 +16,41 @@ $action = $_GET['action'] ?? 'list';
 $id = isset($_GET['id']) ? (int)$_GET['id'] : null;
 
 /**
- * ============ Helpers locais ============
+ * =========================================
+ * HELPERS LOCAIS (timezone + urls + telefone)
+ * =========================================
  */
+
+/** Sempre salva timestamps em UTC (evita ficar 4h pra frente/atrás dependendo do servidor/MySQL). */
+function now_utc_datetime(): string {
+    $d = new DateTime('now', new DateTimeZone('UTC'));
+    return $d->format('Y-m-d H:i:s');
+}
+
 function phone_digits(?string $phone): string {
-    $p = (string)$phone;
-    $p = preg_replace('/\D+/', '', $p);
+    $p = preg_replace('/\D+/', '', (string)$phone);
     return $p ?: '';
 }
 
 function clients_url(string $qs = ''): string {
-    // usa BASE_URL, mas mantém compatível com redirect() do helpers
     $path = 'clients.php';
     return $qs ? ($path . '?' . $qs) : $path;
 }
 
+/** Converte datetime do banco (assumido UTC) para fuso do app via helpers.php */
 function safe_dt(?string $dt): string {
     if (!$dt) return '';
     if (function_exists('format_datetime_br')) {
-        return format_datetime_br($dt);
+        return format_datetime_br($dt, 'UTC');
     }
+    // fallback simples (sem conversão)
     return date('d/m/Y H:i', strtotime($dt));
 }
 
 /**
- * ============ Create or update client ============
+ * ===========================
+ * CREATE / UPDATE CLIENTE
+ * ===========================
  */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'client') {
     $data = [
@@ -62,10 +68,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'client'
         redirect(clients_url('action=' . ($id ? 'edit&id=' . $id : 'create')));
     }
 
+    $nowUtc = now_utc_datetime();
+
     if ($id) {
         $stmt = $pdo->prepare('
             UPDATE clients
-            SET nome=?, telefone_principal=?, whatsapp=?, instagram_username=?, email=?, tags=?, observacoes=?, updated_at=NOW()
+            SET nome=?,
+                telefone_principal=?,
+                whatsapp=?,
+                instagram_username=?,
+                email=?,
+                tags=?,
+                observacoes=?,
+                updated_at=?
             WHERE id=? AND company_id=?
         ');
         $stmt->execute([
@@ -76,16 +91,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'client'
             $data['email'],
             $data['tags'],
             $data['observacoes'],
+            $nowUtc,
             $id,
-            $companyId
+            $companyId,
         ]);
 
-        log_action($pdo, (int)$companyId, (int)$_SESSION['user_id'], 'cliente_update', 'Cliente #' . $id);
+        log_action($pdo, (int)$companyId, (int)($_SESSION['user_id'] ?? 0), 'cliente_update', 'Cliente #' . $id);
         flash('success', 'Cliente atualizado com sucesso.');
     } else {
         $stmt = $pdo->prepare('
-            INSERT INTO clients (company_id, nome, telefone_principal, whatsapp, instagram_username, email, tags, observacoes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            INSERT INTO clients
+                (company_id, nome, telefone_principal, whatsapp, instagram_username, email, tags, observacoes, created_at, updated_at)
+            VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ');
         $stmt->execute([
             $companyId,
@@ -95,11 +113,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'client'
             $data['instagram_username'],
             $data['email'],
             $data['tags'],
-            $data['observacoes']
+            $data['observacoes'],
+            $nowUtc,
+            $nowUtc,
         ]);
 
         $id = (int)$pdo->lastInsertId();
-        log_action($pdo, (int)$companyId, (int)$_SESSION['user_id'], 'cliente_create', 'Cliente #' . $id);
+        log_action($pdo, (int)$companyId, (int)($_SESSION['user_id'] ?? 0), 'cliente_create', 'Cliente #' . $id);
         flash('success', 'Cliente criado com sucesso.');
     }
 
@@ -107,30 +127,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'client'
 }
 
 /**
- * ============ Delete client ============
+ * ===========================
+ * DELETE CLIENTE
+ * ===========================
  */
 if ($action === 'delete' && $id) {
     $stmt = $pdo->prepare('DELETE FROM clients WHERE id=? AND company_id=?');
     $stmt->execute([$id, $companyId]);
 
-    log_action($pdo, (int)$companyId, (int)$_SESSION['user_id'], 'cliente_delete', 'Cliente #' . $id);
+    log_action($pdo, (int)$companyId, (int)($_SESSION['user_id'] ?? 0), 'cliente_delete', 'Cliente #' . $id);
     flash('success', 'Cliente removido.');
-
     redirect(clients_url());
 }
 
 /**
- * ============ Interaction create (manual) ============
+ * ===========================
+ * CRIAR ATENDIMENTO (MANUAL)
+ * ===========================
  */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'interaction' && $id) {
-    $canal = $_POST['canal'] ?? 'whatsapp';
+    $canal  = $_POST['canal'] ?? 'whatsapp';
     $titulo = trim($_POST['titulo'] ?? '');
     $resumo = trim($_POST['resumo'] ?? '');
 
     if ($titulo !== '' && $resumo !== '') {
+        $nowUtc = now_utc_datetime();
+
         $stmt = $pdo->prepare('
-            INSERT INTO interactions (company_id, client_id, canal, origem, titulo, resumo, atendente, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+            INSERT INTO interactions
+                (company_id, client_id, canal, origem, titulo, resumo, atendente, created_at)
+            VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?)
         ');
         $stmt->execute([
             $companyId,
@@ -139,19 +166,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'interac
             'manual',
             $titulo,
             $resumo,
-            current_user_name()
+            current_user_name(),
+            $nowUtc,
         ]);
 
-        // atualiza "ultimo atendimento" com company_id também
-        $pdo->prepare('UPDATE clients SET ultimo_atendimento_em=NOW(), updated_at=NOW() WHERE id=? AND company_id=?')
-            ->execute([$id, $companyId]);
+        $pdo->prepare('
+            UPDATE clients
+            SET ultimo_atendimento_em=?, updated_at=?
+            WHERE id=? AND company_id=?
+        ')->execute([$nowUtc, $nowUtc, $id, $companyId]);
 
         flash('success', 'Atendimento registrado.');
     } else {
         flash('error', 'Preencha título e resumo.');
     }
 
-    redirect(clients_url('action=view&id=' . $id));
+    redirect(clients_url('action=view&id=' . (int)$id));
 }
 
 include __DIR__ . '/views/partials/header.php';
@@ -165,7 +195,9 @@ if ($msg = get_flash('error')) {
 }
 
 /**
- * ============ Create/Edit form ============
+ * ===========================
+ * FORM CREATE / EDIT
+ * ===========================
  */
 if ($action === 'create' || ($action === 'edit' && $id)) {
     $client = [
@@ -235,7 +267,9 @@ if ($action === 'create' || ($action === 'edit' && $id)) {
 }
 
 /**
- * ============ View client ============
+ * ===========================
+ * VIEW CLIENTE
+ * ===========================
  */
 if ($action === 'view' && $id) {
     $stmt = $pdo->prepare('SELECT * FROM clients WHERE id=? AND company_id=?');
@@ -299,8 +333,8 @@ if ($action === 'view' && $id) {
     }
 
     $waNumber = phone_digits($client['whatsapp'] ?? '');
-    $waText = 'Olá, ' . (string)($client['nome'] ?? '');
-    $waLink = $waNumber ? ('https://wa.me/' . $waNumber . '?text=' . urlencode($waText)) : '';
+    $waText   = 'Olá, ' . (string)($client['nome'] ?? '');
+    $waLink   = $waNumber ? ('https://wa.me/' . $waNumber . '?text=' . urlencode($waText)) : '';
 
     $igUser = ltrim((string)($client['instagram_username'] ?? ''), '@');
     $igLink = $igUser ? ('https://instagram.com/' . rawurlencode($igUser)) : '';
@@ -427,20 +461,22 @@ if ($action === 'view' && $id) {
 }
 
 /**
- * ============ List ============
+ * ===========================
+ * LISTAGEM
+ * ===========================
  */
 $search = trim($_GET['q'] ?? '');
 $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = 15;
 $offset = ($page - 1) * $perPage;
 
-$where = 'company_id = ?';
+$where  = 'company_id = ?';
 $params = [$companyId];
 
 if ($search !== '') {
-    $searchLike = '%' . $search . '%';
+    $like = '%' . $search . '%';
     $where .= ' AND (nome LIKE ? OR telefone_principal LIKE ? OR whatsapp LIKE ? OR instagram_username LIKE ? OR tags LIKE ?)';
-    $params = array_merge($params, [$searchLike, $searchLike, $searchLike, $searchLike, $searchLike]);
+    $params = array_merge($params, [$like, $like, $like, $like, $like]);
 }
 
 $countStmt = $pdo->prepare("SELECT COUNT(*) FROM clients WHERE $where");
