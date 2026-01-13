@@ -4,7 +4,11 @@
 // =========================
 
 ini_set('default_charset', 'UTF-8');
+<<<<<<< HEAD
 date_default_timezone_set('America/Cuiaba');
+=======
+date_default_timezone_set('UTC');
+>>>>>>> f3837e5 (Fix timezone display (dashboard))
 
 // Nome do sistema
 define('APP_NAME', 'Micro CRM SaaS');

@@ -210,7 +210,12 @@ $msg   = 'Olá, vim da loja online!';
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+<<<<<<< HEAD
             <!-- sticky só no desktop -->
+=======
+
+            <!-- ✅ CORREÇÃO AQUI: sticky só no desktop (lg) -->
+>>>>>>> f3837e5 (Fix timezone display (dashboard))
             <aside class="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3 h-fit lg:sticky lg:top-4">
                 <p class="text-sm text-slate-200/80 font-semibold">Categorias</p>
                 <div class="flex flex-col gap-2">
@@ -298,6 +303,7 @@ $msg   = 'Olá, vim da loja online!';
                                     </div>
                                 </a>
 
+<<<<<<< HEAD
                                 <a href="<?= BASE_URL ?>/loja.php?<?= http_build_query([
                                     'empresa' => $slug,
                                     'q' => $search,
@@ -306,6 +312,9 @@ $msg   = 'Olá, vim da loja online!';
                                     'per_page' => $perPage,
                                     'add' => (int)$product['id']
                                 ]) ?>"
+=======
+                                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
+>>>>>>> f3837e5 (Fix timezone display (dashboard))
                                    class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
                                 </a>
@@ -354,6 +363,7 @@ $msg   = 'Olá, vim da loja online!';
                                     </div>
                                 </a>
 
+<<<<<<< HEAD
                                 <a href="<?= BASE_URL ?>/loja.php?<?= http_build_query([
                                     'empresa' => $slug,
                                     'q' => $search,
@@ -362,6 +372,9 @@ $msg   = 'Olá, vim da loja online!';
                                     'per_page' => $perPage,
                                     'add' => (int)$product['id']
                                 ]) ?>"
+=======
+                                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&add=<?= (int)$product['id'] ?>"
+>>>>>>> f3837e5 (Fix timezone display (dashboard))
                                    class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
                                 </a>
