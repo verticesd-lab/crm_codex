@@ -14,10 +14,10 @@ if (session_status() === PHP_SESSION_NONE) {
  * ==============================
  */
 
-// Duracao de cada atendimento, em minutos (30, 45, 60...)
+// Duracao de cada atendimento, em minutos
 $SLOT_INTERVAL_MINUTES = 30;
 
-// Horario de abertura e fechamento da barbearia
+// Horario de abertura e fechamento
 $OPEN_TIME  = '09:00';
 $CLOSE_TIME = '20:00';
 
@@ -35,7 +35,7 @@ $BLOCKED_SLOTS = [
  * ==============================
  */
 
-// slug da empresa: via GET ou sessao (igual loja.php)
+// slug da empresa: via GET ou sessao
 $slug = $_GET['empresa'] ?? ($_SESSION['company_slug'] ?? '');
 
 if (!$slug) {
@@ -59,7 +59,6 @@ $companyId = (int)$company['id'];
 
 // Data selecionada
 $today = new DateTimeImmutable('today');
-
 $selectedDateStr = $_GET['data'] ?? $_POST['data'] ?? $today->format('Y-m-d');
 
 // Garante formato de data valido
@@ -84,7 +83,6 @@ $showConfirmation = false;
  * DADOS BASICOS DO FORMULARIO
  * ==============================
  */
-
 $servicesCatalog = agenda_get_services_catalog();
 $allBarbers = agenda_get_barbers($pdo, $companyId, false);
 $activeBarbers = array_values(array_filter($allBarbers, function ($barber) {
@@ -116,7 +114,6 @@ $slotsNeededForAvailability = $slotsNeeded > 0 ? $slotsNeeded : 1;
  * SLOT, BLOQUEIOS E OCUPACOES
  * ==============================
  */
-
 $timeSlots = agenda_generate_time_slots($OPEN_TIME, $CLOSE_TIME, $SLOT_INTERVAL_MINUTES);
 $slotIndex = agenda_build_time_slot_index($timeSlots);
 $blockedSlots = agenda_get_calendar_blocks($pdo, $companyId, $selectedDateStr, $BLOCKED_SLOTS);
@@ -129,18 +126,10 @@ $occupancy = agenda_build_occupancy_map($appointments, $timeSlots, $SLOT_INTERVA
  * PROCESSA AGENDAMENTO (POST)
  * ==============================
  */
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? 'preview';
 
-    // Validacoes basicas
-    if ($nome === '') {
-        $errors[] = 'Informe seu nome.';
-    }
-    if ($telefone === '') {
-        $errors[] = 'Informe seu WhatsApp/telefone.';
-    }
-
+    // Data
     $dataObj = DateTime::createFromFormat('Y-m-d', $dataPost);
     if (!$dataObj) {
         $errors[] = 'Data invalida.';
@@ -150,133 +139,161 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if ($selectedBarberId <= 0 || !isset($barbersById[$selectedBarberId])) {
-        $errors[] = 'Escolha o barbeiro desejado.';
-    } elseif ((int)$barbersById[$selectedBarberId]['is_active'] !== 1) {
-        $errors[] = 'Este barbeiro ainda nao esta disponivel.';
-    }
-
-    if (empty($selectedServices)) {
-        $errors[] = 'Escolha pelo menos um servico.';
-    }
-
-    if ($slotsNeeded <= 0) {
-        $errors[] = 'Duracao de servicos invalida.';
-    }
-
-    if ($horaPost === '') {
-        $errors[] = 'Selecione um horario disponivel.';
-    } elseif (!preg_match('/^\d{2}:\d{2}$/', $horaPost)) {
-        $errors[] = 'Horario invalido.';
-    } elseif (!isset($slotIndex[$horaPost])) {
-        $errors[] = 'Horario fora do funcionamento da barbearia.';
-    }
-
-    if (empty($errors) && $selectedBarberId > 0 && $slotsNeeded > 0 && $horaPost !== '') {
-        $isAvailable = agenda_is_barber_available(
-            $selectedBarberId,
-            $horaPost,
-            $slotsNeeded,
-            $timeSlots,
-            $blockedSlots,
-            $occupancy,
-            $slotIndex
-        );
-
-        if (!$isAvailable) {
-            $errors[] = 'Esse horario nao esta mais disponivel para o barbeiro escolhido.';
+    // Para REFRESH: validar somente o minimo pra liberar horarios (sem exigir nome/telefone/hora)
+    if ($action === 'refresh') {
+        // barbeiro
+        if ($selectedBarberId > 0 && isset($barbersById[$selectedBarberId])) {
+            if ((int)$barbersById[$selectedBarberId]['is_active'] !== 1) {
+                $errors[] = 'Este barbeiro ainda nao esta disponivel.';
+            }
         }
-    }
 
-    if (empty($errors) && $dataObj) {
-        $stmt = $pdo->prepare('
-            SELECT COUNT(*) AS total
-            FROM appointments
-            WHERE company_id = ? AND date = ? AND time = ? AND barber_id = ? AND phone = ? AND status = "agendado"
-        ');
-        $stmt->execute([
-            $companyId,
-            $dataObj->format('Y-m-d'),
-            $horaPost . ':00',
-            $selectedBarberId,
-            $telefone,
-        ]);
-        $jaCliente = (int)$stmt->fetchColumn();
-
-        if ($jaCliente > 0) {
-            $errors[] = 'Este telefone ja possui agendamento neste horario para o barbeiro escolhido.';
+        // servicos (se marcou algo, duracao tem que bater)
+        if (!empty($selectedServices) && $slotsNeeded <= 0) {
+            $errors[] = 'Duracao de servicos invalida.';
         }
-    }
 
-    if (empty($errors) && $dataObj) {
-        if ($action === 'confirm') {
-            $servicesJson = json_encode($selectedServices, JSON_UNESCAPED_UNICODE);
-            $totalPrice = $serviceTotals['total_price'];
-            $totalMinutes = $serviceTotals['total_minutes'];
-            $endsAtTime = agenda_calculate_end_time($horaPost, $totalMinutes);
+        // Nao mostra confirmacao no refresh
+        $showConfirmation = false;
 
+    } else {
+        // Preview / Confirm: validacoes completas
+
+        if ($nome === '') {
+            $errors[] = 'Informe seu nome.';
+        }
+        if ($telefone === '') {
+            $errors[] = 'Informe seu WhatsApp/telefone.';
+        }
+
+        if ($selectedBarberId <= 0 || !isset($barbersById[$selectedBarberId])) {
+            $errors[] = 'Escolha o barbeiro desejado.';
+        } elseif ((int)$barbersById[$selectedBarberId]['is_active'] !== 1) {
+            $errors[] = 'Este barbeiro ainda nao esta disponivel.';
+        }
+
+        if (empty($selectedServices)) {
+            $errors[] = 'Escolha pelo menos um servico.';
+        }
+
+        if ($slotsNeeded <= 0) {
+            $errors[] = 'Duracao de servicos invalida.';
+        }
+
+        if ($horaPost === '') {
+            $errors[] = 'Selecione um horario disponivel.';
+        } elseif (!preg_match('/^\d{2}:\d{2}$/', $horaPost)) {
+            $errors[] = 'Horario invalido.';
+        } elseif (!isset($slotIndex[$horaPost])) {
+            $errors[] = 'Horario fora do funcionamento da barbearia.';
+        }
+
+        if (empty($errors) && $selectedBarberId > 0 && $slotsNeeded > 0 && $horaPost !== '') {
+            $isAvailable = agenda_is_barber_available(
+                $selectedBarberId,
+                $horaPost,
+                $slotsNeeded,
+                $timeSlots,
+                $blockedSlots,
+                $occupancy,
+                $slotIndex
+            );
+
+            if (!$isAvailable) {
+                $errors[] = 'Esse horario nao esta mais disponivel para o barbeiro escolhido.';
+            }
+        }
+
+        if (empty($errors) && $dataObj) {
             $stmt = $pdo->prepare('
-                INSERT INTO appointments
-                    (company_id, barber_id, customer_name, phone, instagram, services_json, total_price,
-                     total_duration_minutes, ends_at_time, date, time, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "agendado", NOW())
+                SELECT COUNT(*) AS total
+                FROM appointments
+                WHERE company_id = ? AND date = ? AND time = ? AND barber_id = ? AND phone = ? AND status = "agendado"
             ');
             $stmt->execute([
                 $companyId,
-                $selectedBarberId,
-                $nome,
-                $telefone,
-                $instagram !== '' ? $instagram : null,
-                $servicesJson,
-                $totalPrice,
-                $totalMinutes,
-                $endsAtTime,
                 $dataObj->format('Y-m-d'),
                 $horaPost . ':00',
+                $selectedBarberId,
+                $telefone,
             ]);
+            $jaCliente = (int)$stmt->fetchColumn();
 
-            $appointmentId = (int)$pdo->lastInsertId();
-
-            $barberName = $barbersById[$selectedBarberId]['name'] ?? 'Barbeiro';
-            $servicesLabel = $serviceTotals['labels'] ? implode(', ', $serviceTotals['labels']) : '';
-            $message = "Agendamento confirmado na " . $company['nome_fantasia'] . ":\n";
-            $message .= "Data: " . $dataObj->format('d/m/Y') . "\n";
-            $message .= "Hora: " . $horaPost . "\n";
-            $message .= "Barbeiro: " . $barberName;
-            if ($servicesLabel !== '') {
-                $message .= "\nServicos: " . $servicesLabel;
+            if ($jaCliente > 0) {
+                $errors[] = 'Este telefone ja possui agendamento neste horario para o barbeiro escolhido.';
             }
-            if ($totalPrice > 0) {
-                $message .= "\nTotal: " . format_currency($totalPrice);
+        }
+
+        if (empty($errors) && $dataObj) {
+            if ($action === 'confirm') {
+                $servicesJson = json_encode($selectedServices, JSON_UNESCAPED_UNICODE);
+                $totalPrice = $serviceTotals['total_price'];
+                $totalMinutes = $serviceTotals['total_minutes'];
+                $endsAtTime = agenda_calculate_end_time($horaPost, $totalMinutes);
+
+                $stmt = $pdo->prepare('
+                    INSERT INTO appointments
+                        (company_id, barber_id, customer_name, phone, instagram, services_json, total_price,
+                         total_duration_minutes, ends_at_time, date, time, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "agendado", NOW())
+                ');
+                $stmt->execute([
+                    $companyId,
+                    $selectedBarberId,
+                    $nome,
+                    $telefone,
+                    $instagram !== '' ? $instagram : null,
+                    $servicesJson,
+                    $totalPrice,
+                    $totalMinutes,
+                    $endsAtTime,
+                    $dataObj->format('Y-m-d'),
+                    $horaPost . ':00',
+                ]);
+
+                $appointmentId = (int)$pdo->lastInsertId();
+
+                $barberName = $barbersById[$selectedBarberId]['name'] ?? 'Barbeiro';
+                $servicesLabel = $serviceTotals['labels'] ? implode(', ', $serviceTotals['labels']) : '';
+                $message = "Agendamento confirmado na " . $company['nome_fantasia'] . ":\n";
+                $message .= "Data: " . $dataObj->format('d/m/Y') . "\n";
+                $message .= "Hora: " . $horaPost . "\n";
+                $message .= "Barbeiro: " . $barberName;
+                if ($servicesLabel !== '') {
+                    $message .= "\nServicos: " . $servicesLabel;
+                }
+                if ($totalPrice > 0) {
+                    $message .= "\nTotal: " . format_currency($totalPrice);
+                }
+
+                if (send_whatsapp_message($telefone, $message)) {
+                    $update = $pdo->prepare('UPDATE appointments SET confirmed_message_sent_at = ? WHERE id = ?');
+                    $update->execute([now_utc_datetime(), $appointmentId]);
+                }
+
+                $success = 'Agendamento criado com sucesso! Voce sera atendido em '
+                    . $dataObj->format('d/m/Y')
+                    . ' as ' . $horaPost . 'h.';
+
+                // Atualiza data selecionada
+                $selectedDate = $dataObj;
+                $selectedDateStr = $selectedDate->format('Y-m-d');
+
+                // Limpa POST
+                $_POST = [];
+                $nome = '';
+                $telefone = '';
+                $instagram = '';
+                $horaPost = '';
+                $selectedBarberId = 0;
+                $selectedServices = [];
+                $serviceTotals = agenda_calculate_services([], $servicesCatalog);
+                $slotsNeeded = 0;
+                $slotsNeededForAvailability = 1;
+                $showConfirmation = false;
+            } else {
+                $showConfirmation = true;
             }
-
-            if (send_whatsapp_message($telefone, $message)) {
-                $update = $pdo->prepare('UPDATE appointments SET confirmed_message_sent_at = ? WHERE id = ?');
-                $update->execute([now_utc_datetime(), $appointmentId]);
-            }
-
-            $success = 'Agendamento criado com sucesso! Voce sera atendido em '
-                . $dataObj->format('d/m/Y')
-                . ' as ' . $horaPost . 'h.';
-
-            // Atualiza data selecionada para a data marcada
-            $selectedDate = $dataObj;
-            $selectedDateStr = $selectedDate->format('Y-m-d');
-
-            // Limpa POST pra nao repopular o formulario
-            $_POST = [];
-            $nome = '';
-            $telefone = '';
-            $instagram = '';
-            $horaPost = '';
-            $selectedBarberId = 0;
-            $selectedServices = [];
-            $serviceTotals = agenda_calculate_services([], $servicesCatalog);
-            $slotsNeeded = 0;
-            $slotsNeededForAvailability = 1;
-            $showConfirmation = false;
-        } else {
-            $showConfirmation = true;
         }
     }
 }
@@ -286,7 +303,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  * DISPONIBILIDADE PARA EXIBICAO
  * ==============================
  */
-
 $availableBarbersBySlot = [];
 foreach ($timeSlots as $slot) {
     if (in_array($slot, $blockedSlots, true)) {
@@ -331,7 +347,6 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Agenda - <?= sanitize($company['nome_fantasia']) ?></title>
 
-    <!-- Favicon -->
     <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -341,11 +356,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                 extend: {
                     fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
                     colors: {
-                        brand: {
-                            500: '#7c3aed',
-                            600: '#6d28d9',
-                            700: '#5b21b6',
-                        }
+                        brand: { 500: '#7c3aed', 600: '#6d28d9', 700: '#5b21b6' }
                     }
                 }
             }
@@ -371,12 +382,8 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                 </div>
             <?php endif; ?>
             <div>
-                <p class="text-xs uppercase tracking-[0.2em] text-emerald-200/80">
-                    Agenda online
-                </p>
-                <h1 class="text-2xl md:text-3xl font-bold tracking-tight">
-                    Agende seu horario
-                </h1>
+                <p class="text-xs uppercase tracking-[0.2em] text-emerald-200/80">Agenda online</p>
+                <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Agende seu horario</h1>
                 <p class="text-sm text-slate-300 mt-1">
                     Escolha o dia e o horario disponiveis para seu atendimento na barbearia.
                 </p>
@@ -408,16 +415,13 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
         </div>
     <?php endif; ?>
 
-    <!-- Layout principal: lado esquerdo horarios, lado direito formulario -->
     <div class="grid grid-cols-1 lg:grid-cols-[1.3fr,1fr] gap-6 items-start">
-        <!-- Coluna: selecao de data e lista de horarios -->
+        <!-- Coluna esquerda -->
         <section class="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 shadow-xl">
             <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
                     <h2 class="text-lg font-semibold">Escolha o dia</h2>
-                    <p class="text-xs text-slate-300">
-                        Selecione a data para ver os horarios disponiveis.
-                    </p>
+                    <p class="text-xs text-slate-300">Selecione a data para ver os horarios disponiveis.</p>
                 </div>
                 <form action="<?= sanitize($selfUrl) ?>" method="get" class="flex items-center gap-2">
                     <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
@@ -428,9 +432,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                         min="<?= $today->format('Y-m-d') ?>"
                         class="rounded-lg border border-white/20 bg-slate-900/60 text-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
                     >
-                    <button
-                        type="submit"
-                        class="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-sm font-semibold">
+                    <button type="submit" class="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-sm font-semibold">
                         Atualizar
                     </button>
                 </form>
@@ -439,20 +441,14 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
             <div class="border-t border-white/10 pt-4 space-y-3">
                 <div class="flex items-center justify-between">
                     <p class="text-sm text-slate-300">
-                        Horarios para <span class="font-semibold">
-                            <?= $selectedDate->format('d/m/Y') ?>
-                        </span>
+                        Horarios para <span class="font-semibold"><?= $selectedDate->format('d/m/Y') ?></span>
                     </p>
-                    <p class="text-xs text-slate-400">
-                        Max. <?= count($activeBarbers) ?> barbeiro(s) por horario
-                    </p>
+                    <p class="text-xs text-slate-400">Max. <?= count($activeBarbers) ?> barbeiro(s) por horario</p>
                 </div>
 
                 <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                     <?php if (empty($timeSlots)): ?>
-                        <p class="text-sm text-slate-300 col-span-full">
-                            Nenhum horario configurado.
-                        </p>
+                        <p class="text-sm text-slate-300 col-span-full">Nenhum horario configurado.</p>
                     <?php else: ?>
                         <?php foreach ($timeSlots as $slot): ?>
                             <?php
@@ -460,58 +456,41 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                             $isBlocked = in_array($slot, $blockedSlots, true);
                             $isFull = $availableCount <= 0;
                             ?>
-                            <div
-                                class="flex flex-col items-center justify-center px-3 py-2 rounded-xl border text-xs
-                                <?=
-                                    $isBlocked
-                                        ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-100'
-                                        : (
-                                            $isFull
-                                                ? 'border-red-500/40 bg-red-500/10 text-red-100'
-                                                : 'border-white/15 bg-white/5 text-slate-100'
-                                        )
+                            <div class="flex flex-col items-center justify-center px-3 py-2 rounded-xl border text-xs
+                                <?= $isBlocked
+                                    ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-100'
+                                    : ($isFull ? 'border-red-500/40 bg-red-500/10 text-red-100' : 'border-white/15 bg-white/5 text-slate-100')
                                 ?>">
                                 <span class="font-semibold"><?= sanitize($slot) ?></span>
                                 <?php if ($isBlocked): ?>
-                                    <span class="mt-1 text-[10px] uppercase tracking-wide">
-                                        Indisponivel
-                                    </span>
+                                    <span class="mt-1 text-[10px] uppercase tracking-wide">Indisponivel</span>
                                 <?php elseif ($isFull): ?>
-                                    <span class="mt-1 text-[10px] uppercase tracking-wide">
-                                        Lotado
-                                    </span>
+                                    <span class="mt-1 text-[10px] uppercase tracking-wide">Lotado</span>
                                 <?php else: ?>
-                                    <span class="mt-1 text-[10px] text-emerald-200">
-                                        <?= $availableCount ?> barbeiro(s) livre(s)
-                                    </span>
+                                    <span class="mt-1 text-[10px] text-emerald-200"><?= $availableCount ?> barbeiro(s) livre(s)</span>
                                 <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
 
-                <p class="text-[11px] text-slate-400">
-                    Para agendar, escolha o barbeiro e os servicos ao lado.
-                </p>
+                <p class="text-[11px] text-slate-400">Para agendar, escolha o barbeiro e os servicos ao lado.</p>
 
-                <a
-                    href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
-                    class="inline-flex mt-2 items-center justify-center px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-xs font-semibold text-white"
-                >
+                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+                   class="inline-flex mt-2 items-center justify-center px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-xs font-semibold text-white">
                     👉 Ver produtos da For Men Store
                 </a>
             </div>
         </section>
 
-        <!-- Coluna: formulario de agendamento -->
+        <!-- Coluna direita -->
         <section class="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 shadow-xl">
             <h2 class="text-lg font-semibold">Dados para agendamento</h2>
-            <p class="text-sm text-slate-300">
-                Escolha o barbeiro, selecione servicos e finalize seu horario.
-            </p>
+            <p class="text-sm text-slate-300">Escolha o barbeiro, selecione servicos e finalize seu horario.</p>
 
-            <form method="post" action="<?= sanitize($selfUrl) ?>" class="space-y-4">
+            <form id="bookingForm" method="post" action="<?= sanitize($selfUrl) ?>" class="space-y-4">
                 <input type="hidden" name="data" value="<?= sanitize($selectedDateStr) ?>">
+                <input type="hidden" name="action" id="actionField" value="preview">
 
                 <div>
                     <label class="block text-sm font-medium text-slate-200 mb-2">
@@ -519,9 +498,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     </label>
                     <div class="grid grid-cols-2 gap-2">
                         <?php if (empty($allBarbers)): ?>
-                            <p class="text-xs text-slate-400 col-span-full">
-                                Nenhum barbeiro cadastrado para esta empresa.
-                            </p>
+                            <p class="text-xs text-slate-400 col-span-full">Nenhum barbeiro cadastrado para esta empresa.</p>
                         <?php else: ?>
                             <?php foreach ($allBarbers as $barber): ?>
                                 <?php
@@ -530,7 +507,8 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                                 $isChecked = $selectedBarberId === $barberId;
                                 ?>
                                 <label class="barber-button flex flex-col items-start gap-1 px-3 py-2 rounded-xl border text-xs cursor-pointer
-                                    <?= $isActive ? 'border-white/15 bg-white/5 text-slate-100 hover:border-brand-500 hover:bg-brand-500/20' : 'border-white/10 bg-white/5 text-slate-500 opacity-60 cursor-not-allowed' ?>">
+                                    <?= $isActive ? 'border-white/15 bg-white/5 text-slate-100 hover:border-brand-500 hover:bg-brand-500/20'
+                                                  : 'border-white/10 bg-white/5 text-slate-500 opacity-60 cursor-not-allowed' ?>">
                                     <input
                                         type="radio"
                                         name="barbeiro"
@@ -541,9 +519,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                                     >
                                     <span class="font-semibold"><?= sanitize($barber['name']) ?></span>
                                     <?php if (!$isActive): ?>
-                                        <span class="text-[10px] uppercase tracking-wide text-yellow-200">
-                                            Em breve
-                                        </span>
+                                        <span class="text-[10px] uppercase tracking-wide text-yellow-200">Em breve</span>
                                     <?php endif; ?>
                                 </label>
                             <?php endforeach; ?>
@@ -588,9 +564,9 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                         Horario desejado <span class="text-red-400">*</span>
                     </label>
 
-                    <?php if ($selectedBarberId <= 0 || empty($selectedServices)): ?>
+                    <?php if ($selectedBarberId <= 0 || empty($selectedServices) || $slotsNeeded <= 0): ?>
                         <p class="text-[11px] text-slate-400">
-                            Selecione o barbeiro e os servicos para liberar os horarios disponiveis.
+                            Selecione o barbeiro e os servicos para carregar os horarios disponiveis.
                         </p>
                     <?php else: ?>
                         <?php if (empty($availableSlotsForBarber)): ?>
@@ -600,12 +576,9 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                         <?php else: ?>
                             <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-1">
                                 <?php foreach ($availableSlotsForBarber as $slot): ?>
-                                    <?php
-                                    $inputId = 'hora_' . str_replace(':', '', $slot);
-                                    ?>
-                                    <label for="<?= $inputId ?>"
-                                           class="slot-button flex flex-col items-center justify-center px-3 py-2 rounded-xl border text-xs cursor-pointer
-                                           border-white/15 bg-white/5 text-slate-100 hover:border-brand-500 hover:bg-brand-500/20">
+                                    <?php $inputId = 'hora_' . str_replace(':', '', $slot); ?>
+                                    <label class="slot-button flex flex-col items-center justify-center px-3 py-2 rounded-xl border text-xs cursor-pointer
+                                        border-white/15 bg-white/5 text-slate-100 hover:border-brand-500 hover:bg-brand-500/20">
                                         <input
                                             type="radio"
                                             id="<?= $inputId ?>"
@@ -615,9 +588,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                                             <?= ($horaPost === $slot) ? 'checked' : '' ?>
                                         >
                                         <span class="font-semibold"><?= sanitize($slot) ?></span>
-                                        <span class="mt-1 text-[10px] text-emerald-200">
-                                            Disponivel
-                                        </span>
+                                        <span class="mt-1 text-[10px] text-emerald-200">Disponivel</span>
                                     </label>
                                 <?php endforeach; ?>
                             </div>
@@ -632,7 +603,6 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     <input
                         type="text"
                         name="nome"
-                        required
                         class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
                         placeholder="Seu nome"
                         value="<?= sanitize($nome) ?>"
@@ -646,14 +616,11 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     <input
                         type="text"
                         name="telefone"
-                        required
                         class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
                         placeholder="(00) 00000-0000"
                         value="<?= sanitize($telefone) ?>"
                     >
-                    <p class="text-[11px] text-slate-400 mt-1">
-                        Usaremos esse numero apenas para contato sobre o seu horario.
-                    </p>
+                    <p class="text-[11px] text-slate-400 mt-1">Usaremos esse numero apenas para contato sobre o seu horario.</p>
                 </div>
 
                 <div>
@@ -683,16 +650,14 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     <?php if ($showConfirmation && empty($errors)): ?>
                         <button
                             type="submit"
-                            name="action"
-                            value="confirm"
+                            onclick="document.getElementById('actionField').value='confirm';"
                             class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 text-slate-900 font-semibold text-sm px-4 py-3 hover:bg-emerald-400 shadow-lg shadow-emerald-500/30">
                             Confirmar agendamento
                         </button>
                     <?php else: ?>
                         <button
                             type="submit"
-                            name="action"
-                            value="preview"
+                            onclick="document.getElementById('actionField').value='preview';"
                             class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 text-slate-900 font-semibold text-sm px-4 py-3 hover:bg-emerald-400 shadow-lg shadow-emerald-500/30">
                             Revisar agendamento
                         </button>
@@ -713,31 +678,41 @@ document.addEventListener('DOMContentLoaded', function () {
         const buttons = document.querySelectorAll('.' + className);
 
         function clearSelection() {
-            buttons.forEach(btn => {
-                btn.classList.remove('ring-2', 'ring-brand-500', 'bg-brand-500/20');
-            });
+            buttons.forEach(btn => btn.classList.remove('ring-2', 'ring-brand-500', 'bg-brand-500/20'));
         }
 
         radios.forEach(radio => {
             radio.addEventListener('change', function () {
                 clearSelection();
                 const label = radio.closest('label');
-                if (label) {
-                    label.classList.add('ring-2', 'ring-brand-500', 'bg-brand-500/20');
-                }
+                if (label) label.classList.add('ring-2', 'ring-brand-500', 'bg-brand-500/20');
             });
 
             if (radio.checked) {
                 const label = radio.closest('label');
-                if (label) {
-                    label.classList.add('ring-2', 'ring-brand-500', 'bg-brand-500/20');
-                }
+                if (label) label.classList.add('ring-2', 'ring-brand-500', 'bg-brand-500/20');
             }
         });
     }
 
     bindToggle('hora', 'slot-button');
     bindToggle('barbeiro', 'barber-button');
+
+    // ✅ Auto-refresh: ao escolher barbeiro ou serviços, recarrega para liberar horários
+    const form = document.getElementById('bookingForm');
+    const actionField = document.getElementById('actionField');
+
+    function doRefresh() {
+        // evita refresh quando já estiver confirmando
+        actionField.value = 'refresh';
+        form.submit();
+    }
+
+    const barberRadios = document.querySelectorAll('input[name="barbeiro"]');
+    barberRadios.forEach(r => r.addEventListener('change', doRefresh));
+
+    const serviceChecks = document.querySelectorAll('input[name="servicos[]"]');
+    serviceChecks.forEach(c => c.addEventListener('change', doRefresh));
 });
 </script>
 
