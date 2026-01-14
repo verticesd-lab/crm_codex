@@ -29,20 +29,16 @@ $company = $stmt->fetch();
  * ============================
  */
 
-// Duracao de cada atendimento em minutos (30, 45, 60...)
+// Duracao de cada atendimento em minutos
 $SLOT_INTERVAL_MINUTES = 30;
 
-// Horario de funcionamento da barbearia
+// Horario de funcionamento
 $OPEN_TIME  = '09:00';
 $CLOSE_TIME = '20:00';
 
-// Horarios bloqueados (fallback se nao houver bloqueios no banco)
-$BLOCKED_SLOTS = [
-    '11:00',
-    '11:30',
-    '12:00',
-    '12:30',
-];
+// ✅ Agora o padrão é: NADA bloqueado.
+// Bloqueios só vêm do banco (calendar_blocks).
+$BLOCKED_SLOTS_FALLBACK = [];
 
 /**
  * ============================
@@ -70,10 +66,11 @@ $timeSlots = agenda_generate_time_slots($OPEN_TIME, $CLOSE_TIME, $SLOT_INTERVAL_
  * BARBEIROS
  * ============================
  */
-agenda_seed_default_barbers($pdo, $companyId);
-$barbers = agenda_get_barbers($pdo, $companyId, false);
+agenda_seed_default_barbers($pdo, (int)$companyId);
+$barbers = agenda_get_barbers($pdo, (int)$companyId, false);
+
 $activeBarbers = array_values(array_filter($barbers, function ($barber) {
-    return (int)$barber['is_active'] === 1;
+    return (int)($barber['is_active'] ?? 0) === 1;
 }));
 $activeBarberCount = count($activeBarbers);
 
@@ -82,23 +79,26 @@ $activeBarberCount = count($activeBarbers);
  * BLOQUEIOS MANUAIS (POST)
  * ============================
  */
-$blockErrors = [];
+$blockErrors  = [];
 $blockSuccess = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     if (in_array($action, ['block', 'unblock'], true)) {
         $datePost = trim($_POST['data'] ?? $selectedDateStr);
-        $dateObj = DateTime::createFromFormat('Y-m-d', $datePost);
+        $dateObj  = DateTime::createFromFormat('Y-m-d', $datePost);
+
         if (!$dateObj) {
             $blockErrors[] = 'Data invalida para bloqueio.';
         } else {
-            $selectedDate = $dateObj;
+            $selectedDate    = $dateObj;
             $selectedDateStr = $dateObj->format('Y-m-d');
         }
 
         $slots = $_POST['slots'] ?? [];
         $slots = is_array($slots) ? $slots : [];
+
+        // valida contra os slots permitidos da agenda
         $slots = array_values(array_unique(array_filter($slots, function ($slot) use ($timeSlots) {
             return in_array($slot, $timeSlots, true);
         })));
@@ -112,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($action === 'block') {
                     $reason = trim($_POST['reason'] ?? '');
                     $userId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
-                    $now = now_utc_datetime();
+                    $now    = now_utc_datetime();
 
                     $insert = $pdo->prepare('
                         INSERT INTO calendar_blocks
@@ -140,13 +140,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         DELETE FROM calendar_blocks
                         WHERE company_id = ? AND date = ? AND time = ?
                     ');
+
                     foreach ($slots as $slot) {
                         $delete->execute([$companyId, $selectedDateStr, $slot . ':00']);
                     }
+
                     $blockSuccess = 'Horarios desbloqueados com sucesso.';
                 }
             } catch (Throwable $e) {
-                $blockErrors[] = 'Falha ao atualizar os bloqueios. Verifique a migracao.';
+                $blockErrors[] = 'Falha ao atualizar os bloqueios. Verifique se a migracao foi aplicada.';
             }
         }
     }
@@ -157,47 +159,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  * BLOQUEIOS E AGENDAMENTOS
  * ============================
  */
-$blockedSlots = agenda_get_calendar_blocks($pdo, $companyId, $selectedDateStr, $BLOCKED_SLOTS);
-$servicesCatalog = agenda_get_services_catalog();
-
-$appointments = agenda_get_appointments_for_date($pdo, $companyId, $selectedDateStr);
-$occupancy = agenda_build_occupancy_map($appointments, $timeSlots, $SLOT_INTERVAL_MINUTES);
+$blockedSlots     = agenda_get_calendar_blocks($pdo, (int)$companyId, $selectedDateStr, $BLOCKED_SLOTS_FALLBACK);
+$servicesCatalog  = agenda_get_services_catalog();
+$appointments     = agenda_get_appointments_for_date($pdo, (int)$companyId, $selectedDateStr);
+$occupancy        = agenda_build_occupancy_map($appointments, $timeSlots, $SLOT_INTERVAL_MINUTES);
 
 $selfUrl = BASE_URL . '/calendar_barbearia.php';
 
-// Importa so o header (ele ja cuida da estrutura + sidebar)
+// Importa so o header
 include __DIR__ . '/views/partials/header.php';
 ?>
 
 <main class="flex-1 bg-slate-100 min-h-screen">
     <div class="max-w-6xl mx-auto px-6 py-6 space-y-6">
-        <!-- Cabecalho da pagina -->
         <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-                <h1 class="text-2xl font-bold text-slate-900">
-                    Agenda da barbearia
-                </h1>
-                <p class="text-sm text-slate-500 mt-1">
-                    Visualize os horarios agendados e bloqueios da agenda online.
-                </p>
+                <h1 class="text-2xl font-bold text-slate-900">Agenda da barbearia</h1>
+                <p class="text-sm text-slate-500 mt-1">Visualize os horarios agendados e bloqueios da agenda online.</p>
             </div>
             <?php if ($company): ?>
                 <div class="text-right">
                     <p class="text-xs uppercase tracking-wide text-slate-400">Empresa</p>
-                    <p class="font-semibold text-slate-800">
-                        <?= sanitize($company['nome_fantasia']) ?>
-                    </p>
+                    <p class="font-semibold text-slate-800"><?= sanitize($company['nome_fantasia']) ?></p>
                 </div>
             <?php endif; ?>
         </header>
 
-        <!-- Filtro por data -->
         <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
             <form action="<?= sanitize($selfUrl) ?>" method="get" class="flex flex-col sm:flex-row sm:items-end gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">
-                        Data
-                    </label>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Data</label>
                     <input
                         type="date"
                         name="data"
@@ -241,9 +232,8 @@ include __DIR__ . '/views/partials/header.php';
                 <input type="hidden" name="data" value="<?= sanitize($selectedDateStr) ?>">
 
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-2">
-                        Horarios
-                    </label>
+                    <label class="block text-sm font-medium text-slate-700 mb-2">Horarios</label>
+
                     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         <?php foreach ($timeSlots as $slot): ?>
                             <?php $isBlocked = in_array($slot, $blockedSlots, true); ?>
@@ -254,6 +244,7 @@ include __DIR__ . '/views/partials/header.php';
                                     name="slots[]"
                                     value="<?= sanitize($slot) ?>"
                                     class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                    <?= $isBlocked ? 'checked' : '' ?>
                                 >
                                 <span class="font-semibold"><?= sanitize($slot) ?></span>
                                 <?php if ($isBlocked): ?>
@@ -262,12 +253,14 @@ include __DIR__ . '/views/partials/header.php';
                             </label>
                         <?php endforeach; ?>
                     </div>
+
+                    <p class="text-[11px] text-slate-500 mt-2">
+                        Dica: para <b>desbloquear</b>, deixe marcados os horários que estão como “Bloqueado” e clique em “Desbloquear selecionados”.
+                    </p>
                 </div>
 
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">
-                        Motivo (opcional)
-                    </label>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Motivo (opcional)</label>
                     <input
                         type="text"
                         name="reason"
@@ -325,9 +318,7 @@ include __DIR__ . '/views/partials/header.php';
 
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <?php if (empty($timeSlots)): ?>
-                    <p class="text-sm text-slate-500 col-span-full">
-                        Nenhum horario configurado para esta agenda.
-                    </p>
+                    <p class="text-sm text-slate-500 col-span-full">Nenhum horario configurado para esta agenda.</p>
                 <?php else: ?>
                     <?php foreach ($timeSlots as $slot): ?>
                         <?php
@@ -363,11 +354,10 @@ include __DIR__ . '/views/partials/header.php';
                             $label  = $occupiedCount . ' de ' . max(1, $activeBarberCount) . ' ocupados';
                         }
                         ?>
+
                         <div class="rounded-xl border <?= $border ?> <?= $bg ?> px-3 py-2.5 flex flex-col gap-2">
                             <div class="flex items-center justify-between gap-2">
-                                <span class="text-sm font-semibold text-slate-900">
-                                    <?= sanitize($slot) ?>
-                                </span>
+                                <span class="text-sm font-semibold text-slate-900"><?= sanitize($slot) ?></span>
                                 <span class="inline-flex items-center gap-1 text-[11px] text-slate-600">
                                     <span class="h-1.5 w-1.5 rounded-full <?= $dot ?>"></span>
                                     <?= sanitize($label) ?>
@@ -375,15 +365,13 @@ include __DIR__ . '/views/partials/header.php';
                             </div>
 
                             <?php if (empty($barbers)): ?>
-                                <p class="text-[11px] text-slate-500">
-                                    Nenhum barbeiro cadastrado.
-                                </p>
+                                <p class="text-[11px] text-slate-500">Nenhum barbeiro cadastrado.</p>
                             <?php else: ?>
                                 <div class="space-y-2">
                                     <?php foreach ($barbers as $barber): ?>
                                         <?php
                                         $barberId = (int)$barber['id'];
-                                        $entry = $occupancy[$barberId][$slot] ?? null;
+                                        $entry    = $occupancy[$barberId][$slot] ?? null;
                                         ?>
                                         <div class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-[11px] text-slate-700">
                                             <p class="text-xs font-semibold text-slate-800">
@@ -395,18 +383,18 @@ include __DIR__ . '/views/partials/header.php';
 
                                             <?php if ($entry): ?>
                                                 <?php
-                                                $appt = $entry['appointment'];
-                                                $isStart = $entry['is_start'];
+                                                $appt          = $entry['appointment'];
+                                                $isStart       = $entry['is_start'];
                                                 $servicesLabel = agenda_services_from_json($appt['services_json'] ?? '', $servicesCatalog);
-                                                $servicesText = $servicesLabel ? implode(', ', $servicesLabel) : 'Servicos nao informados';
+                                                $servicesText  = $servicesLabel ? implode(', ', $servicesLabel) : 'Servicos nao informados';
+
                                                 $endsAt = $appt['ends_at_time']
                                                     ? substr((string)$appt['ends_at_time'], 0, 5)
                                                     : substr(agenda_calculate_end_time($entry['start_time'], $entry['duration_minutes']), 0, 5);
                                                 ?>
+
                                                 <?php if ($isStart): ?>
-                                                    <p class="font-medium text-slate-900">
-                                                        <?= sanitize($appt['customer_name']) ?>
-                                                    </p>
+                                                    <p class="font-medium text-slate-900"><?= sanitize($appt['customer_name']) ?></p>
                                                     <p class="text-slate-500">
                                                         <?= sanitize($appt['phone']) ?>
                                                         <?php if (!empty($appt['instagram'])): ?>
@@ -419,9 +407,8 @@ include __DIR__ . '/views/partials/header.php';
                                                             · <?= format_currency($appt['total_price']) ?>
                                                         <?php endif; ?>
                                                     </p>
-                                                    <p class="text-slate-500">
-                                                        Ate <?= sanitize($endsAt) ?>
-                                                    </p>
+                                                    <p class="text-slate-500">Ate <?= sanitize($endsAt) ?></p>
+
                                                     <div class="text-[11px] mt-1">
                                                         <a
                                                             href="<?= BASE_URL ?>/cancel_appointment.php?id=<?= (int)$appt['id'] ?>&data=<?= urlencode($selectedDateStr) ?>"

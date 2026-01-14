@@ -1,6 +1,30 @@
 <?php
 require_once __DIR__ . '/helpers.php';
 
+/**
+ * Fallbacks seguros (caso seu helpers.php não tenha essas funções).
+ */
+if (!function_exists('now_utc_datetime')) {
+    function now_utc_datetime(): string {
+        try {
+            return (new DateTime('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        } catch (Throwable $e) {
+            return gmdate('Y-m-d H:i:s');
+        }
+    }
+}
+
+if (!function_exists('now_app_datetime')) {
+    function now_app_datetime(): string {
+        try {
+            $tz = function_exists('app_timezone') ? app_timezone() : 'America/Cuiaba';
+            return (new DateTime('now', new DateTimeZone($tz)))->format('Y-m-d H:i:s');
+        } catch (Throwable $e) {
+            return date('Y-m-d H:i:s');
+        }
+    }
+}
+
 function agenda_get_services_catalog(): array
 {
     return [
@@ -63,7 +87,7 @@ function agenda_calculate_services(array $serviceKeys, array $catalog): array
         $service = $catalog[$key];
         $totalPrice += (float)$service['price'];
         $totalMinutes += (int)$service['duration'];
-        $labels[] = $service['label'];
+        $labels[] = (string)$service['label'];
     }
 
     return [
@@ -146,7 +170,7 @@ function agenda_seed_default_barbers(PDO $pdo, int $companyId): void
             $insert->execute([$companyId, $row[0], $row[1], $now]);
         }
     } catch (Throwable $e) {
-        // Ignora se a tabela ainda nao existir.
+        // Ignora se a tabela ainda não existir
     }
 }
 
@@ -167,7 +191,14 @@ function agenda_get_barbers(PDO $pdo, int $companyId, bool $onlyActive = true): 
     }
 }
 
-function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, array $fallbackBlocks): array
+/**
+ * ✅ FIX PRINCIPAL:
+ * - Se a tabela existe e a query roda: retorna o que está no banco (mesmo vazio).
+ * - Só usa $fallbackBlocks se der erro (ex.: tabela não existe).
+ *
+ * Assim, "Desbloquear" realmente libera o horário.
+ */
+function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, array $fallbackBlocks = []): array
 {
     try {
         $stmt = $pdo->prepare('
@@ -183,14 +214,13 @@ function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, arra
             $blocks[] = substr((string)$row['time'], 0, 5);
         }
 
-        if (!empty($blocks)) {
-            return array_values(array_unique($blocks));
-        }
+        // ✅ retorna mesmo que esteja vazio
+        $blocks = array_values(array_unique($blocks));
+        return $blocks;
     } catch (Throwable $e) {
+        // Só cai aqui se a tabela/colunas não existirem ou outro erro SQL
         return $fallbackBlocks;
     }
-
-    return $fallbackBlocks;
 }
 
 function agenda_get_appointments_for_date(PDO $pdo, int $companyId, string $date): array
@@ -215,7 +245,7 @@ function agenda_build_occupancy_map(array $appointments, array $timeSlots, int $
 
     foreach ($appointments as $appt) {
         $barberId = (int)($appt['barber_id'] ?? 0);
-        $start = substr((string)$appt['time'], 0, 5);
+        $start = substr((string)($appt['time'] ?? ''), 0, 5);
 
         if (!isset($index[$start])) {
             continue;
@@ -320,7 +350,7 @@ function agenda_services_from_json(?string $servicesJson, array $catalog): array
     $labels = [];
     foreach ($decoded as $key) {
         if (isset($catalog[$key])) {
-            $labels[] = $catalog[$key]['label'];
+            $labels[] = (string)$catalog[$key]['label'];
         }
     }
 
@@ -366,7 +396,7 @@ function send_whatsapp_message(string $phone, string $message): bool
                 return true;
             }
 
-            agenda_log_whatsapp_fallback($phone, $message, $response);
+            agenda_log_whatsapp_fallback($phone, $message, is_string($response) ? $response : '');
             return false;
         }
 
