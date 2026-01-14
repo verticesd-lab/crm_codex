@@ -30,7 +30,7 @@ $company = $stmt->fetch();
  */
 
 // Duracao de cada atendimento em minutos
-$SLOT_INTERVAL_MINUTES = 60;
+$SLOT_INTERVAL_MINUTES = 30;
 
 // Horario de funcionamento
 $OPEN_TIME  = '09:00';
