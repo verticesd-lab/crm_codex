@@ -15,7 +15,7 @@ if (session_status() === PHP_SESSION_NONE) {
  */
 
 // Duracao de cada atendimento, em minutos
-$SLOT_INTERVAL_MINUTES = 60;
+$SLOT_INTERVAL_MINUTES = 30;
 
 // Horario de abertura e fechamento
 $OPEN_TIME  = '09:00';
