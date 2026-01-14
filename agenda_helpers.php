@@ -112,17 +112,19 @@ function agenda_generate_time_slots(string $start, string $end, int $intervalMin
     $current = DateTime::createFromFormat('H:i', $start);
     $endTime = DateTime::createFromFormat('H:i', $end);
 
-    if (!$current || !$endTime) {
+    if (!$current || !$endTime || $intervalMinutes <= 0) {
         return $slots;
     }
 
-    while ($current < $endTime) {
+    // ✅ Inclui o horário final (ex.: 20:00)
+    while ($current <= $endTime) {
         $slots[] = $current->format('H:i');
         $current->modify('+' . $intervalMinutes . ' minutes');
     }
 
     return $slots;
 }
+
 
 function agenda_build_time_slot_index(array $timeSlots): array
 {
