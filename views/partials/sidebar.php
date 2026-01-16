@@ -12,24 +12,28 @@ $currentBase   = basename($currentScript);
 
 // Links do menu
 $links = [
-    'Dashboard'             => $base . '/index.php',
-    'PDV'                   => $base . '/pos.php',
-    'Clientes'              => $base . '/clients.php',
-    'Funil / Oportunidades' => $base . '/opportunities.php',
-    'Produtos/Serviços'     => $base . '/products.php',
+    'Dashboard'              => $base . '/index.php',
+    'PDV'                    => $base . '/pos.php',
+    'Clientes'               => $base . '/clients.php',
+    'Funil / Oportunidades'  => $base . '/opportunities.php',
+    'Produtos/Serviços'      => $base . '/products.php',
 
-    // ✅ NOVO: Importador (nome certo do arquivo)
-    'Cadastro Inteligente'  => $base . '/products_imports.php',
+    // ✅ Importador
+    'Cadastro Inteligente'   => $base . '/products_imports.php',
 
-    'Pedidos'               => $base . '/orders.php',
-    'Promoções'             => $base . '/promotions.php',
-    'KPIs'                  => $base . '/analytics.php',
-    'Canais'                => $base . '/integrations.php',
-    'Insights IA'           => $base . '/insights.php',
-    'Agenda'                => $base . '/calendar.php',
-    'Agenda Barbearia'      => $base . '/calendar_barbearia.php',
-    'Equipe'                => $base . '/staff.php',
-    'Configurações'         => $base . '/settings.php',
+    'Pedidos'                => $base . '/orders.php',
+    'Promoções'              => $base . '/promotions.php',
+    'KPIs'                   => $base . '/analytics.php',
+    'Canais'                 => $base . '/integrations.php',
+    'Insights IA'            => $base . '/insights.php',
+    'Agenda'                 => $base . '/calendar.php',
+
+    // ✅ Barbearia
+    'Agenda Barbearia'       => $base . '/calendar_barbearia.php',
+    'Serviços Barbearia'     => $base . '/services_admin.php',   // <-- AQUI (logo abaixo)
+
+    'Equipe'                 => $base . '/staff.php',
+    'Configurações'          => $base . '/settings.php',
 ];
 
 ?>
