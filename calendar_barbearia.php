@@ -10,19 +10,19 @@ if (session_status() === PHP_SESSION_NONE) {
 
 require_login();
 
-$pdo = get_pdo();
+$pdo       = get_pdo();
 $companyId = current_company_id();
+
 if (!$companyId) {
-    echo 'Empresa nao encontrada.';
-    exit;
+    die('Empresa não encontrada.');
 }
 
 /**
  * ============================
- * CONFIG
+ * CONFIGURAÇÃO DA AGENDA
  * ============================
  */
-$SLOT_INTERVAL_MINUTES = 60;
+$SLOT_INTERVAL_MINUTES = 30;
 $OPEN_TIME  = '09:00';
 $CLOSE_TIME = '20:00';
 
@@ -32,173 +32,134 @@ $CLOSE_TIME = '20:00';
  * ============================
  */
 $today = new DateTimeImmutable('today');
-$selectedDateStr = $_GET['data'] ?? $_POST['data'] ?? $today->format('Y-m-d');
-$selectedDate = DateTime::createFromFormat('Y-m-d', $selectedDateStr) ?: new DateTime($today->format('Y-m-d'));
+$selectedDateStr = $_GET['data'] ?? $today->format('Y-m-d');
+$selectedDate = DateTime::createFromFormat('Y-m-d', $selectedDateStr) ?: new DateTime();
 
 /**
  * ============================
  * DADOS BASE
  * ============================
  */
-$stmt = $pdo->prepare('SELECT * FROM companies WHERE id = ?');
-$stmt->execute([$companyId]);
-$company = $stmt->fetch();
-
 $timeSlots = agenda_generate_time_slots($OPEN_TIME, $CLOSE_TIME, $SLOT_INTERVAL_MINUTES);
 
 agenda_seed_default_barbers($pdo, $companyId);
-$barbers = agenda_get_barbers($pdo, $companyId, false);
-$activeBarbers = array_filter($barbers, fn($b) => (int)$b['is_active'] === 1);
+$barbers = agenda_get_barbers($pdo, $companyId, true);
 
+$servicesCatalog = agenda_get_services_catalog();
 $appointments = agenda_get_appointments_for_date($pdo, $companyId, $selectedDateStr);
-$occupancy = agenda_build_occupancy_map($appointments, $timeSlots, $SLOT_INTERVAL_MINUTES);
+$blockedSlots = agenda_get_calendar_blocks($pdo, $companyId, $selectedDateStr);
 
-/**
- * ============================
- * BLOQUEIOS (POST)
- * ============================
- */
-$errors = [];
-$success = null;
+$occupancy = agenda_build_occupancy_map(
+    $appointments,
+    $timeSlots,
+    $SLOT_INTERVAL_MINUTES
+);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'block') {
-    $barberId = (int)($_POST['barber_id'] ?? 0);
-    $slots = $_POST['slots'] ?? [];
-    $reason = trim($_POST['reason'] ?? '');
-
-    if ($barberId <= 0) {
-        $errors[] = 'Barbeiro invalido.';
-    }
-    if (empty($slots)) {
-        $errors[] = 'Selecione ao menos um horario.';
-    }
-
-    if (!$errors) {
-        $stmt = $pdo->prepare('
-            INSERT INTO calendar_blocks
-                (company_id, barber_id, date, time, reason, created_by_user_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE reason = VALUES(reason)
-        ');
-        foreach ($slots as $slot) {
-            $stmt->execute([
-                $companyId,
-                $barberId,
-                $selectedDateStr,
-                $slot . ':00',
-                $reason ?: null,
-                $_SESSION['user_id'] ?? null,
-                now_utc_datetime()
-            ]);
-        }
-        $success = 'Bloqueio aplicado com sucesso.';
-    }
-}
-
-/**
- * ============================
- * BLOQUEIOS POR BARBEIRO
- * ============================
- */
-$blocksByBarber = [];
-foreach ($activeBarbers as $barber) {
-    $stmt = $pdo->prepare('
-        SELECT time FROM calendar_blocks
-        WHERE company_id = ? AND date = ? AND barber_id = ?
-    ');
-    $stmt->execute([$companyId, $selectedDateStr, $barber['id']]);
-    $blocksByBarber[$barber['id']] = array_map(
-        fn($r) => substr($r['time'], 0, 5),
-        $stmt->fetchAll(PDO::FETCH_ASSOC)
-    );
-}
+$selfUrl = BASE_URL . '/calendar_barbearia.php';
 
 include __DIR__ . '/views/partials/header.php';
 ?>
 
-<main class="flex-1 bg-slate-100 min-h-screen">
-<div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+<main class="bg-slate-100 min-h-screen p-6">
+    <div class="max-w-7xl mx-auto space-y-6">
 
-<header class="flex justify-between items-center">
-    <h1 class="text-2xl font-bold">Agenda Interna</h1>
-    <form method="get">
-        <input type="date" name="data" value="<?= sanitize($selectedDateStr) ?>"
-               class="border rounded px-3 py-2">
-        <button class="bg-indigo-600 text-white px-4 py-2 rounded">Atualizar</button>
-    </form>
-</header>
+        <!-- TOPO -->
+        <div class="flex items-center justify-between">
+            <h1 class="text-2xl font-bold text-slate-900">Agenda Interna</h1>
 
-<?php if ($errors): ?>
-<div class="bg-red-100 border border-red-300 p-3 rounded">
-    <?php foreach ($errors as $e): ?><p><?= sanitize($e) ?></p><?php endforeach; ?>
-</div>
-<?php endif; ?>
-
-<?php if ($success): ?>
-<div class="bg-green-100 border border-green-300 p-3 rounded">
-    <?= sanitize($success) ?>
-</div>
-<?php endif; ?>
-
-<div class="grid grid-cols-[120px_repeat(auto-fit,minmax(220px,1fr))] gap-2">
-
-<!-- COLUNA HORARIOS -->
-<div>
-    <div class="font-semibold text-center mb-2">Hora</div>
-    <?php foreach ($timeSlots as $slot): ?>
-        <div class="h-16 flex items-center justify-center border bg-white">
-            <?= sanitize($slot) ?>
+            <form method="get" class="flex items-center gap-2">
+                <input type="date" name="data" value="<?= $selectedDateStr ?>"
+                       class="border rounded px-3 py-2 text-sm">
+                <button class="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-semibold">
+                    Atualizar
+                </button>
+            </form>
         </div>
-    <?php endforeach; ?>
-</div>
 
-<!-- COLUNAS BARBEIROS -->
-<?php foreach ($activeBarbers as $barber): ?>
-<div>
-    <div class="font-semibold text-center mb-2"><?= sanitize($barber['name']) ?></div>
+        <!-- AGENDA -->
+        <div class="bg-white rounded-xl shadow border overflow-x-auto">
+            <div class="grid" style="grid-template-columns: 100px repeat(<?= count($barbers) ?>, 1fr);">
 
-    <?php foreach ($timeSlots as $slot): ?>
-        <?php
-        $isBlocked = in_array($slot, $blocksByBarber[$barber['id']] ?? [], true);
-        $isOccupied = isset($occupancy[$barber['id']][$slot]);
-        ?>
+                <!-- HEADER -->
+                <div class="border-b p-3 font-semibold">Hora</div>
+                <?php foreach ($barbers as $barber): ?>
+                    <div class="border-b p-3 font-semibold text-center">
+                        <?= sanitize($barber['name']) ?>
+                    </div>
+                <?php endforeach; ?>
 
-        <div class="h-16 border flex items-center justify-center text-xs
-            <?= $isBlocked ? 'bg-amber-200' : ($isOccupied ? 'bg-rose-200' : 'bg-emerald-100') ?>">
-            <?php if ($isBlocked): ?>
-                Bloqueado
-            <?php elseif ($isOccupied): ?>
-                Ocupado
-            <?php else: ?>
-                Livre
-            <?php endif; ?>
+                <!-- SLOTS -->
+                <?php foreach ($timeSlots as $slot): ?>
+                    <div class="border-t p-3 text-sm font-semibold text-slate-700">
+                        <?= $slot ?>
+                    </div>
+
+                    <?php foreach ($barbers as $barber): ?>
+                        <?php
+                        $barberId = (int)$barber['id'];
+                        $entry = $occupancy[$barberId][$slot] ?? null;
+                        $isBlocked = in_array($slot, $blockedSlots, true);
+
+                        $bg = 'bg-emerald-50';
+                        if ($isBlocked) $bg = 'bg-amber-100';
+                        if ($entry) $bg = 'bg-rose-100';
+                        ?>
+
+                        <div class="border-t p-2 <?= $bg ?> min-h-[80px] text-xs">
+
+                            <?php if ($isBlocked): ?>
+                                <p class="text-amber-700 font-semibold">Bloqueado</p>
+
+                            <?php elseif ($entry): ?>
+                                <?php
+                                $appt = $entry['appointment'];
+                                $services = agenda_services_from_json($appt['services_json'], $servicesCatalog);
+                                $endsAt = $appt['ends_at_time']
+                                    ? substr($appt['ends_at_time'], 0, 5)
+                                    : substr(
+                                        agenda_calculate_end_time(
+                                            substr($appt['time'], 0, 5),
+                                            $appt['total_duration_minutes']
+                                        ),
+                                        0,
+                                        5
+                                    );
+                                ?>
+
+                                <?php if ($entry['is_start']): ?>
+                                    <p class="font-semibold text-slate-900">
+                                        <?= sanitize($appt['customer_name']) ?>
+                                    </p>
+                                    <p class="text-slate-600">
+                                        <?= implode(', ', $services) ?>
+                                    </p>
+                                    <p class="text-slate-600">
+                                        <?= format_currency($appt['total_price']) ?> · até <?= $endsAt ?>
+                                    </p>
+                                    <a href="<?= BASE_URL ?>/cancel_appointment.php?id=<?= (int)$appt['id'] ?>&data=<?= $selectedDateStr ?>"
+                                       class="text-rose-600 text-[11px]"
+                                       onclick="return confirm('Cancelar agendamento?')">
+                                        Cancelar
+                                    </a>
+                                <?php else: ?>
+                                    <p class="text-slate-600">Em atendimento</p>
+                                <?php endif; ?>
+
+                            <?php else: ?>
+                                <p class="text-emerald-700">Livre</p>
+                            <?php endif; ?>
+
+                        </div>
+                    <?php endforeach; ?>
+                <?php endforeach; ?>
+
+            </div>
         </div>
-    <?php endforeach; ?>
 
-    <!-- FORM BLOQUEIO -->
-    <form method="post" class="mt-2 p-2 border rounded bg-white space-y-2">
-        <input type="hidden" name="action" value="block">
-        <input type="hidden" name="barber_id" value="<?= (int)$barber['id'] ?>">
-        <input type="hidden" name="data" value="<?= sanitize($selectedDateStr) ?>">
-
-        <select name="slots[]" multiple class="w-full border rounded text-xs">
-            <?php foreach ($timeSlots as $slot): ?>
-                <option value="<?= sanitize($slot) ?>"><?= sanitize($slot) ?></option>
-            <?php endforeach; ?>
-        </select>
-
-        <input type="text" name="reason" placeholder="Motivo (opcional)"
-               class="w-full border rounded px-2 py-1 text-xs">
-
-        <button class="w-full bg-indigo-600 text-white py-1 rounded text-xs">
-            Bloquear horários
-        </button>
-    </form>
-</div>
-<?php endforeach; ?>
-
-</div>
-</div>
+        <p class="text-xs text-slate-500">
+            Agenda interna baseada nos agendamentos reais. Bloqueios e ocupação são independentes por barbeiro.
+        </p>
+    </div>
 </main>
 
 <?php include __DIR__ . '/views/partials/footer.php'; ?>
