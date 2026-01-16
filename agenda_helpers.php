@@ -2,7 +2,9 @@
 require_once __DIR__ . '/helpers.php';
 
 /**
- * Fallbacks seguros (caso seu helpers.php não tenha essas funções).
+ * =========================
+ * Fallbacks seguros
+ * =========================
  */
 if (!function_exists('now_utc_datetime')) {
     function now_utc_datetime(): string {
@@ -25,7 +27,13 @@ if (!function_exists('now_app_datetime')) {
     }
 }
 
-function agenda_get_services_catalog(): array
+/**
+ * =========================
+ * Serviços (catálogo padrão)
+ * =========================
+ * Usado como fallback e também para seed inicial no banco.
+ */
+function agenda_default_services_catalog(): array
 {
     return [
         'corte' => [
@@ -56,6 +64,225 @@ function agenda_get_services_catalog(): array
     ];
 }
 
+/**
+ * =========================
+ * Serviços (catálogo) - NOVO
+ * =========================
+ * Compatível com o código atual:
+ * - Se você chamar agenda_get_services_catalog() sem parâmetros => volta o catálogo padrão fixo.
+ * - Se você passar ($pdo, $companyId) => lê do banco (services).
+ *
+ * Estrutura retornada:
+ * [
+ *   'service_key' => ['label'=>..., 'price'=>..., 'duration'=>...],
+ *   ...
+ * ]
+ */
+function agenda_get_services_catalog(PDO $pdo = null, int $companyId = 0, bool $onlyActive = true): array
+{
+    // Sem PDO/empresa => mantém o comportamento antigo
+    if (!$pdo || $companyId <= 0) {
+        return agenda_default_services_catalog();
+    }
+
+    // Tenta buscar do banco
+    try {
+        // Se quiser, faz seed automático se estiver vazio
+        agenda_seed_default_services_if_empty($pdo, $companyId);
+
+        $sql = 'SELECT service_key, label, price, duration_minutes, is_active
+                FROM services
+                WHERE company_id = ?';
+        if ($onlyActive) {
+            $sql .= ' AND is_active = 1';
+        }
+        $sql .= ' ORDER BY id ASC';
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$companyId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $catalog = [];
+        foreach ($rows as $r) {
+            $key = (string)($r['service_key'] ?? '');
+            if ($key === '') continue;
+
+            $catalog[$key] = [
+                'label' => (string)($r['label'] ?? $key),
+                'price' => (float)($r['price'] ?? 0),
+                'duration' => (int)($r['duration_minutes'] ?? 30),
+                'is_active' => (int)($r['is_active'] ?? 1),
+            ];
+        }
+
+        // Se tiver tabela mas não tiver nada cadastrado, cai pro default
+        if (empty($catalog)) {
+            return agenda_default_services_catalog();
+        }
+
+        return $catalog;
+    } catch (Throwable $e) {
+        // Se a tabela não existir / erro SQL => fallback
+        return agenda_default_services_catalog();
+    }
+}
+
+/**
+ * Seed inicial de serviços no banco (se não houver nenhum serviço pra empresa)
+ */
+function agenda_seed_default_services_if_empty(PDO $pdo, int $companyId): void
+{
+    try {
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM services WHERE company_id = ?');
+        $stmt->execute([$companyId]);
+        $count = (int)$stmt->fetchColumn();
+        if ($count > 0) return;
+
+        $defaults = agenda_default_services_catalog();
+        $now = now_utc_datetime();
+
+        $insert = $pdo->prepare('
+            INSERT INTO services (company_id, service_key, label, price, duration_minutes, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        ');
+
+        foreach ($defaults as $key => $svc) {
+            $insert->execute([
+                $companyId,
+                (string)$key,
+                (string)$svc['label'],
+                (float)$svc['price'],
+                (int)$svc['duration'],
+                $now,
+                $now,
+            ]);
+        }
+    } catch (Throwable $e) {
+        // ignora
+    }
+}
+
+/**
+ * CRUD básico de serviços (para a parte interna)
+ */
+function agenda_service_create_or_update(PDO $pdo, int $companyId, string $serviceKey, string $label, float $price, int $durationMinutes, bool $isActive = true): bool
+{
+    $serviceKey = trim($serviceKey);
+    $label = trim($label);
+    if ($companyId <= 0 || $serviceKey === '' || $label === '') return false;
+
+    $durationMinutes = max(5, (int)$durationMinutes);
+    $price = max(0, (float)$price);
+    $now = now_utc_datetime();
+    $activeInt = $isActive ? 1 : 0;
+
+    try {
+        $stmt = $pdo->prepare('
+            INSERT INTO services (company_id, service_key, label, price, duration_minutes, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                label = VALUES(label),
+                price = VALUES(price),
+                duration_minutes = VALUES(duration_minutes),
+                is_active = VALUES(is_active),
+                updated_at = VALUES(updated_at)
+        ');
+        $stmt->execute([$companyId, $serviceKey, $label, $price, $durationMinutes, $activeInt, $now, $now]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function agenda_service_delete(PDO $pdo, int $companyId, string $serviceKey): bool
+{
+    $serviceKey = trim($serviceKey);
+    if ($companyId <= 0 || $serviceKey === '') return false;
+
+    try {
+        $stmt = $pdo->prepare('DELETE FROM services WHERE company_id = ? AND service_key = ?');
+        $stmt->execute([$companyId, $serviceKey]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+/**
+ * =========================
+ * Clientes (customers)
+ * =========================
+ * Cria ou atualiza o cliente pelo telefone e retorna customer_id.
+ */
+function agenda_upsert_customer(PDO $pdo, int $companyId, string $name, string $phone, ?string $instagram = null): ?int
+{
+    $name = trim($name);
+    $phone = trim($phone);
+    $instagram = $instagram !== null ? trim($instagram) : null;
+
+    if ($companyId <= 0 || $name === '' || $phone === '') return null;
+
+    try {
+        $now = now_utc_datetime();
+
+        // Tenta inserir
+        $stmt = $pdo->prepare('
+            INSERT INTO customers (company_id, name, phone, instagram, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                instagram = VALUES(instagram),
+                updated_at = VALUES(updated_at)
+        ');
+        $stmt->execute([$companyId, $name, $phone, $instagram !== '' ? $instagram : null, $now, $now]);
+
+        // Busca id
+        $stmt2 = $pdo->prepare('SELECT id FROM customers WHERE company_id = ? AND phone = ? LIMIT 1');
+        $stmt2->execute([$companyId, $phone]);
+        $id = $stmt2->fetchColumn();
+        return $id ? (int)$id : null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+/**
+ * =========================
+ * Caixa (cash_movements)
+ * =========================
+ */
+function agenda_create_cash_income_for_appointment(
+    PDO $pdo,
+    int $companyId,
+    float $amount,
+    string $description,
+    int $appointmentId,
+    string $status = 'pending'
+): ?int {
+    $amount = max(0, (float)$amount);
+    $description = trim($description);
+    if ($companyId <= 0 || $amount <= 0 || $description === '' || $appointmentId <= 0) return null;
+
+    $allowed = ['pending', 'paid', 'canceled'];
+    if (!in_array($status, $allowed, true)) $status = 'pending';
+
+    try {
+        $stmt = $pdo->prepare('
+            INSERT INTO cash_movements (company_id, type, amount, description, status, reference_type, reference_id, created_at)
+            VALUES (?, "income", ?, ?, ?, "appointment", ?, NOW())
+        ');
+        $stmt->execute([$companyId, $amount, $description, $status, $appointmentId]);
+        return (int)$pdo->lastInsertId();
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+/**
+ * =========================
+ * Utilidades de serviços
+ * =========================
+ */
 function agenda_normalize_services($input, array $catalog): array
 {
     if (!is_array($input)) {
@@ -85,9 +312,9 @@ function agenda_calculate_services(array $serviceKeys, array $catalog): array
         }
 
         $service = $catalog[$key];
-        $totalPrice += (float)$service['price'];
-        $totalMinutes += (int)$service['duration'];
-        $labels[] = (string)$service['label'];
+        $totalPrice += (float)($service['price'] ?? 0);
+        $totalMinutes += (int)($service['duration'] ?? 0);
+        $labels[] = (string)($service['label'] ?? $key);
     }
 
     return [
@@ -97,6 +324,11 @@ function agenda_calculate_services(array $serviceKeys, array $catalog): array
     ];
 }
 
+/**
+ * =========================
+ * Slots / horários
+ * =========================
+ */
 function agenda_minutes_to_slots(int $minutes, int $intervalMinutes): int
 {
     if ($intervalMinutes <= 0) {
@@ -106,6 +338,10 @@ function agenda_minutes_to_slots(int $minutes, int $intervalMinutes): int
     return max(1, (int)ceil($minutes / $intervalMinutes));
 }
 
+/**
+ * ✅ Inclui o horário final (ex.: 20:00)
+ * Ex: start=09:00 end=20:00 interval=60 => 09:00 ... 20:00
+ */
 function agenda_generate_time_slots(string $start, string $end, int $intervalMinutes): array
 {
     $slots = [];
@@ -116,7 +352,6 @@ function agenda_generate_time_slots(string $start, string $end, int $intervalMin
         return $slots;
     }
 
-    // ✅ Inclui o horário final (ex.: 20:00)
     while ($current <= $endTime) {
         $slots[] = $current->format('H:i');
         $current->modify('+' . $intervalMinutes . ' minutes');
@@ -124,7 +359,6 @@ function agenda_generate_time_slots(string $start, string $end, int $intervalMin
 
     return $slots;
 }
-
 
 function agenda_build_time_slot_index(array $timeSlots): array
 {
@@ -146,6 +380,11 @@ function agenda_calculate_end_time(string $startTime, int $durationMinutes): str
     return $start->format('H:i:s');
 }
 
+/**
+ * =========================
+ * Barbeiros
+ * =========================
+ */
 function agenda_seed_default_barbers(PDO $pdo, int $companyId): void
 {
     try {
@@ -172,7 +411,7 @@ function agenda_seed_default_barbers(PDO $pdo, int $companyId): void
             $insert->execute([$companyId, $row[0], $row[1], $now]);
         }
     } catch (Throwable $e) {
-        // Ignora se a tabela ainda não existir
+        // ignora
     }
 }
 
@@ -196,9 +435,7 @@ function agenda_get_barbers(PDO $pdo, int $companyId, bool $onlyActive = true): 
 /**
  * ✅ FIX PRINCIPAL:
  * - Se a tabela existe e a query roda: retorna o que está no banco (mesmo vazio).
- * - Só usa $fallbackBlocks se der erro (ex.: tabela não existe).
- *
- * Assim, "Desbloquear" realmente libera o horário.
+ * - Só usa fallback se der erro SQL.
  */
 function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, array $fallbackBlocks = []): array
 {
@@ -216,19 +453,21 @@ function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, arra
             $blocks[] = substr((string)$row['time'], 0, 5);
         }
 
-        // ✅ retorna mesmo que esteja vazio
-        $blocks = array_values(array_unique($blocks));
-        return $blocks;
+        return array_values(array_unique($blocks));
     } catch (Throwable $e) {
-        // Só cai aqui se a tabela/colunas não existirem ou outro erro SQL
         return $fallbackBlocks;
     }
 }
 
+/**
+ * =========================
+ * Agendamentos / ocupação
+ * =========================
+ */
 function agenda_get_appointments_for_date(PDO $pdo, int $companyId, string $date): array
 {
     $stmt = $pdo->prepare('
-        SELECT a.id, a.customer_name, a.phone, a.instagram, a.date, a.time,
+        SELECT a.id, a.customer_id, a.customer_name, a.phone, a.instagram, a.date, a.time,
                a.barber_id, a.services_json, a.total_price, a.total_duration_minutes,
                a.ends_at_time, b.name AS barber_name
         FROM appointments a
@@ -352,13 +591,18 @@ function agenda_services_from_json(?string $servicesJson, array $catalog): array
     $labels = [];
     foreach ($decoded as $key) {
         if (isset($catalog[$key])) {
-            $labels[] = (string)$catalog[$key]['label'];
+            $labels[] = (string)($catalog[$key]['label'] ?? $key);
         }
     }
 
     return $labels;
 }
 
+/**
+ * =========================
+ * WhatsApp (env)
+ * =========================
+ */
 function send_whatsapp_message(string $phone, string $message): bool
 {
     $apiUrl = getenv('WHATSAPP_API_URL') ?: '';
@@ -438,4 +682,53 @@ function agenda_log_whatsapp_fallback(string $phone, string $message, string $ex
     $line .= PHP_EOL;
 
     @file_put_contents($dir . '/whatsapp.log', $line, FILE_APPEND);
+}
+function agenda_get_services_catalog_db(PDO $pdo, int $companyId, bool $onlyActive = true): array
+{
+    $sql = 'SELECT service_key, label, price, duration_minutes, is_active
+            FROM services WHERE company_id = ?';
+    if ($onlyActive) {
+        $sql .= ' AND is_active = 1';
+    }
+    $sql .= ' ORDER BY label ASC';
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$companyId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $catalog = [];
+    foreach ($rows as $r) {
+        $key = (string)$r['service_key'];
+        $catalog[$key] = [
+            'label' => (string)$r['label'],
+            'price' => (float)$r['price'],
+            'duration' => (int)$r['duration_minutes'],
+            'is_active' => (int)$r['is_active'],
+        ];
+    }
+    return $catalog;
+}
+
+function agenda_seed_services_if_empty(PDO $pdo, int $companyId): void
+{
+    $stmt = $pdo->prepare('SELECT COUNT(*) FROM services WHERE company_id = ?');
+    $stmt->execute([$companyId]);
+    $count = (int)$stmt->fetchColumn();
+    if ($count > 0) return;
+
+    $defaults = agenda_get_services_catalog(); // seu fallback atual
+    $ins = $pdo->prepare('
+        INSERT INTO services (company_id, service_key, label, price, duration_minutes, is_active)
+        VALUES (?, ?, ?, ?, ?, 1)
+    ');
+
+    foreach ($defaults as $key => $s) {
+        $ins->execute([
+            $companyId,
+            $key,
+            (string)$s['label'],
+            (float)$s['price'],
+            (int)$s['duration'],
+        ]);
+    }
 }
