@@ -17,35 +17,73 @@ if (!$companyId) {
     exit;
 }
 
-$errors = [];
+$errors  = [];
 $success = null;
 
-// Carrega empresa
-$stmt = $pdo->prepare('SELECT * FROM companies WHERE id = ?');
-$stmt->execute([$companyId]);
-$company = $stmt->fetch();
-
-function normalize_service_key(string $key): string {
-    $key = strtolower(trim($key));
-    $key = preg_replace('/[^a-z0-9_\-]/', '_', $key);
-    $key = preg_replace('/_+/', '_', $key);
-    return trim($key, '_');
+/** Carrega empresa */
+$company = null;
+try {
+    $stmt = $pdo->prepare('SELECT * FROM companies WHERE id = ?');
+    $stmt->execute([$companyId]);
+    $company = $stmt->fetch(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $company = null;
 }
 
+/** Sucesso via PRG */
+if (isset($_GET['ok'])) {
+    $ok = (string)$_GET['ok'];
+    if ($ok === 'created') $success = 'Servico criado com sucesso.';
+    if ($ok === 'updated') $success = 'Servico atualizado com sucesso.';
+    if ($ok === 'toggled') $success = 'Status do servico alterado.';
+}
+
+/** Helpers locais */
+function normalize_service_key(string $key): string {
+    $key = strtolower(trim($key));
+    $key = preg_replace('/\s+/', '_', $key);
+    $key = preg_replace('/[^a-z0-9_\-]/', '_', $key);
+    $key = preg_replace('/_+/', '_', $key);
+    $key = trim($key, '_');
+    return $key;
+}
+
+function to_price($v): float {
+    $s = trim((string)$v);
+    if ($s === '') return 0.0;
+    $s = str_replace(['R$', ' '], '', $s);
+    // suporta "45,00" e "45.00"
+    if (str_contains($s, ',') && str_contains($s, '.')) {
+        // se vier "1.234,56" -> remove milhar
+        $s = str_replace('.', '', $s);
+        $s = str_replace(',', '.', $s);
+    } else {
+        $s = str_replace(',', '.', $s);
+    }
+    return (float)$s;
+}
+
+function redirect_ok(string $code): void {
+    header('Location: ' . BASE_URL . '/services_admin.php?ok=' . urlencode($code));
+    exit;
+}
+
+/** POST actions */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
         if ($action === 'create') {
             $serviceKey = normalize_service_key($_POST['service_key'] ?? '');
-            $label = trim($_POST['label'] ?? '');
-            $price = (float)str_replace(',', '.', (string)($_POST['price'] ?? '0'));
-            $duration = (int)($_POST['duration_minutes'] ?? 30);
-            $isActive = isset($_POST['is_active']) ? 1 : 0;
+            $label      = trim($_POST['label'] ?? '');
+            $price      = to_price($_POST['price'] ?? '0');
+            $duration   = (int)($_POST['duration_minutes'] ?? 30);
+            $isActive   = isset($_POST['is_active']) ? 1 : 0;
 
             if ($serviceKey === '') $errors[] = 'Informe a chave (key) do servico.';
             if ($label === '') $errors[] = 'Informe o nome do servico.';
-            if ($duration <= 0) $errors[] = 'Duracao deve ser maior que zero.';
+            if ($price < 0) $errors[] = 'Valor nao pode ser negativo.';
+            if ($duration < 5) $errors[] = 'Duracao deve ser no minimo 5 minutos.';
 
             if (empty($errors)) {
                 $ins = $pdo->prepare('
@@ -53,20 +91,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     VALUES (?, ?, ?, ?, ?, ?, NOW())
                 ');
                 $ins->execute([$companyId, $serviceKey, $label, $price, $duration, $isActive]);
-                $success = 'Servico criado com sucesso.';
+                redirect_ok('created');
             }
         }
 
         if ($action === 'update') {
-            $id = (int)($_POST['id'] ?? 0);
-            $label = trim($_POST['label'] ?? '');
-            $price = (float)str_replace(',', '.', (string)($_POST['price'] ?? '0'));
+            $id       = (int)($_POST['id'] ?? 0);
+            $label    = trim($_POST['label'] ?? '');
+            $price    = to_price($_POST['price'] ?? '0');
             $duration = (int)($_POST['duration_minutes'] ?? 30);
             $isActive = isset($_POST['is_active']) ? 1 : 0;
 
             if ($id <= 0) $errors[] = 'Servico invalido.';
             if ($label === '') $errors[] = 'Informe o nome do servico.';
-            if ($duration <= 0) $errors[] = 'Duracao deve ser maior que zero.';
+            if ($price < 0) $errors[] = 'Valor nao pode ser negativo.';
+            if ($duration < 5) $errors[] = 'Duracao deve ser no minimo 5 minutos.';
 
             if (empty($errors)) {
                 $upd = $pdo->prepare('
@@ -75,28 +114,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     WHERE id = ? AND company_id = ?
                 ');
                 $upd->execute([$label, $price, $duration, $isActive, $id, $companyId]);
-                $success = 'Servico atualizado com sucesso.';
+                redirect_ok('updated');
             }
         }
 
         if ($action === 'toggle') {
             $id = (int)($_POST['id'] ?? 0);
             if ($id <= 0) $errors[] = 'Servico invalido.';
+
             if (empty($errors)) {
                 $pdo->prepare('
                     UPDATE services
                     SET is_active = IF(is_active=1,0,1), updated_at = NOW()
                     WHERE id = ? AND company_id = ?
                 ')->execute([$id, $companyId]);
-                $success = 'Status do servico alterado.';
+
+                redirect_ok('toggled');
             }
         }
     } catch (Throwable $e) {
-        $errors[] = 'Erro ao salvar. Verifique se a migration foi aplicada.';
+        $msg = $e->getMessage();
+
+        // erro de duplicidade da key (uniq_company_service_key)
+        if (stripos($msg, 'Duplicate') !== false || stripos($msg, 'uniq_company_service_key') !== false) {
+            $errors[] = 'Essa key ja existe. Use outra (ex: corte_2).';
+        } else {
+            $errors[] = 'Erro ao salvar. Verifique se a migration foi aplicada.';
+        }
     }
 }
 
-// Lista serviços
+/** Lista serviços */
 $services = [];
 try {
     $stmt = $pdo->prepare('
@@ -149,33 +197,40 @@ include __DIR__ . '/views/partials/header.php';
 
         <div class="md:col-span-1">
           <label class="block text-sm font-medium text-slate-700 mb-1">Key</label>
-          <input name="service_key" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="ex: corte" required>
+          <input name="service_key" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                 placeholder="ex: corte" required>
           <p class="text-[11px] text-slate-500 mt-1">Sem espaço. Usado internamente.</p>
         </div>
 
         <div class="md:col-span-2">
           <label class="block text-sm font-medium text-slate-700 mb-1">Nome</label>
-          <input name="label" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Corte" required>
+          <input name="label" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                 placeholder="Corte" required>
         </div>
 
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Valor (R$)</label>
-          <input name="price" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="45.00">
+          <input name="price" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                 placeholder="45,00">
         </div>
 
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Tempo (min)</label>
-          <input name="duration_minutes" type="number" min="5" step="5" value="30" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+          <input name="duration_minutes" type="number" min="5" step="5" value="30"
+                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
           <label class="mt-2 inline-flex items-center gap-2 text-sm text-slate-600">
             <input type="checkbox" name="is_active" checked class="h-4 w-4 rounded border-slate-300">
             Ativo
           </label>
         </div>
 
-        <div class="md:col-span-5">
+        <div class="md:col-span-5 flex items-center gap-3">
           <button class="inline-flex items-center justify-center rounded-lg bg-indigo-600 text-white text-sm font-semibold px-4 py-2 hover:bg-indigo-500">
             Salvar
           </button>
+          <a href="<?= BASE_URL ?>/calendar_barbearia.php" class="text-sm text-slate-600 underline">
+            Voltar para agenda
+          </a>
         </div>
       </form>
     </section>
@@ -189,47 +244,62 @@ include __DIR__ . '/views/partials/header.php';
       <?php else: ?>
         <div class="space-y-3">
           <?php foreach ($services as $s): ?>
-            <form method="post" class="grid grid-cols-1 md:grid-cols-7 gap-2 items-end border border-slate-200 rounded-xl p-3">
-              <input type="hidden" name="action" value="update">
-              <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
+            <div class="border border-slate-200 rounded-xl p-3">
+              <!-- UPDATE form -->
+              <form method="post" class="grid grid-cols-1 md:grid-cols-7 gap-2 items-end">
+                <input type="hidden" name="action" value="update">
+                <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
 
-              <div class="md:col-span-1">
-                <label class="block text-xs font-medium text-slate-600 mb-1">Key</label>
-                <div class="text-sm font-mono text-slate-700"><?= sanitize($s['service_key']) ?></div>
-              </div>
+                <div class="md:col-span-1">
+                  <label class="block text-xs font-medium text-slate-600 mb-1">Key</label>
+                  <div class="text-sm font-mono text-slate-700"><?= sanitize($s['service_key']) ?></div>
+                </div>
 
-              <div class="md:col-span-2">
-                <label class="block text-xs font-medium text-slate-600 mb-1">Nome</label>
-                <input name="label" value="<?= sanitize($s['label']) ?>" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" required>
-              </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs font-medium text-slate-600 mb-1">Nome</label>
+                  <input name="label" value="<?= sanitize($s['label']) ?>"
+                         class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" required>
+                </div>
 
-              <div class="md:col-span-1">
-                <label class="block text-xs font-medium text-slate-600 mb-1">Valor</label>
-                <input name="price" value="<?= sanitize((string)$s['price']) ?>" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-              </div>
+                <div class="md:col-span-1">
+                  <label class="block text-xs font-medium text-slate-600 mb-1">Valor</label>
+                  <input name="price" value="<?= sanitize((string)$s['price']) ?>"
+                         class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                </div>
 
-              <div class="md:col-span-1">
-                <label class="block text-xs font-medium text-slate-600 mb-1">Minutos</label>
-                <input name="duration_minutes" type="number" min="5" step="5" value="<?= (int)$s['duration_minutes'] ?>" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-              </div>
+                <div class="md:col-span-1">
+                  <label class="block text-xs font-medium text-slate-600 mb-1">Minutos</label>
+                  <input name="duration_minutes" type="number" min="5" step="5"
+                         value="<?= (int)$s['duration_minutes'] ?>"
+                         class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                </div>
 
-              <div class="md:col-span-1">
-                <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" name="is_active" <?= ((int)$s['is_active'] === 1) ? 'checked' : '' ?> class="h-4 w-4 rounded border-slate-300">
-                  Ativo
-                </label>
-              </div>
+                <div class="md:col-span-1">
+                  <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                    <input type="checkbox" name="is_active" <?= ((int)$s['is_active'] === 1) ? 'checked' : '' ?>
+                           class="h-4 w-4 rounded border-slate-300">
+                    Ativo
+                  </label>
+                </div>
 
-              <div class="md:col-span-1 flex gap-2">
-                <button class="flex-1 rounded-lg bg-indigo-600 text-white text-sm font-semibold px-3 py-2 hover:bg-indigo-500">
-                  Atualizar
-                </button>
-                <button formmethod="post" formaction="" name="action" value="toggle"
-                        class="rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold px-3 py-2 hover:border-slate-400">
-                  Ativar/Desativar
-                </button>
+                <div class="md:col-span-1 flex gap-2">
+                  <button class="flex-1 rounded-lg bg-indigo-600 text-white text-sm font-semibold px-3 py-2 hover:bg-indigo-500">
+                    Atualizar
+                  </button>
+                </div>
+              </form>
+
+              <!-- TOGGLE form (separado, sem bug) -->
+              <div class="mt-2 flex items-center justify-end">
+                <form method="post" class="m-0">
+                  <input type="hidden" name="action" value="toggle">
+                  <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
+                  <button class="rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold px-3 py-2 hover:border-slate-400">
+                    Ativar/Desativar
+                  </button>
+                </form>
               </div>
-            </form>
+            </div>
           <?php endforeach; ?>
         </div>
       <?php endif; ?>
