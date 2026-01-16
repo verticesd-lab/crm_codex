@@ -21,9 +21,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$date  = trim((string)($_POST['date'] ?? ''));
-$time  = trim((string)($_POST['time'] ?? ''));
-$scope = trim((string)($_POST['scope'] ?? 'barber')); // barber | general
+$date     = trim((string)($_POST['date'] ?? ''));
+$time     = trim((string)($_POST['time'] ?? ''));
+$scope    = trim((string)($_POST['scope'] ?? 'barber')); // barber | general
 $barberId = (int)($_POST['barber_id'] ?? 0);
 
 // valida date
@@ -33,7 +33,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
     exit;
 }
 
-// normaliza time (HH:MM -> HH:MM:SS)
+// valida time e normaliza (HH:MM -> HH:MM:SS)
 if (!preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $time)) {
     http_response_code(400);
     echo 'Hora inválida.';
@@ -53,8 +53,7 @@ if ($scope === 'general') {
 }
 
 try {
-    // Se for bloqueio geral, remove bloqueios por barbeiro no mesmo horário
-    // (assim o "geral" manda)
+    // Se for bloqueio geral, remove bloqueios por barbeiro no mesmo horário (opcional, mas evita “mistura”)
     if ($barberId === 0) {
         $del = $pdo->prepare('
             DELETE FROM calendar_blocks
@@ -63,8 +62,8 @@ try {
         $del->execute([$companyId, $date, $time]);
     }
 
-    // ✅ INSERÇÃO COMPATÍVEL (sem depender de created_at)
-    // ✅ Não quebra se já existir (duplicado) por causa do UNIQUE (company_id,date,time,barber_id)
+    // INSERT sem created_at (pra não quebrar em tabelas que não tenham essa coluna)
+    // Com UNIQUE (company_id,date,time,barber_id), duplicado vira "ok" e não dá erro.
     $ins = $pdo->prepare('
         INSERT INTO calendar_blocks (company_id, barber_id, date, time)
         VALUES (?, ?, ?, ?)
@@ -77,6 +76,8 @@ try {
 
 } catch (Throwable $e) {
     http_response_code(500);
+    // DICA rápida pra você ver o erro real (depois pode voltar pra mensagem curta):
+    // echo 'Erro: ' . $e->getMessage();
     echo 'Erro ao criar bloqueio.';
     exit;
 }

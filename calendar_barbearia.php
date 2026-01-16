@@ -35,7 +35,6 @@ $selectedDateStr = $_GET['data'] ?? $today->format('Y-m-d');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $selectedDateStr)) {
     $selectedDateStr = $today->format('Y-m-d');
 }
-$selectedDate = DateTime::createFromFormat('Y-m-d', $selectedDateStr) ?: new DateTime();
 
 /**
  * ============================
@@ -57,22 +56,22 @@ $servicesCatalog = agenda_get_services_catalog($pdo, $companyId, true);
 $services = [];
 foreach ($servicesCatalog as $key => $v) {
     $services[] = [
-        'service_key' => (string)$key,
-        'label' => (string)($v['label'] ?? $key),
-        'price' => (float)($v['price'] ?? 0),
-        'duration_minutes' => (int)($v['duration'] ?? 30),
+        'service_key'       => (string)$key,
+        'label'             => (string)($v['label'] ?? $key),
+        'price'             => (float)($v['price'] ?? 0),
+        'duration_minutes'  => (int)($v['duration'] ?? 30),
     ];
 }
 
 $appointments = agenda_get_appointments_for_date($pdo, $companyId, $selectedDateStr);
 
 /**
- * ✅ BLOQUEIOS (manual)
- * - Geral: barber_id NULL
- * - Por barbeiro: barber_id = X
+ * ✅ BLOQUEIOS (manual) - PADRÃO NOVO:
+ * - Geral: barber_id = 0
+ * - Por barbeiro: barber_id = X (>0)
  */
-$blockedGeneral = [];         // ['HH:MM' => true]
-$blockedByBarber = [];        // [barberId => ['HH:MM' => true]]
+$blockedGeneral  = [];         // ['HH:MM' => true]
+$blockedByBarber = [];         // [barberId => ['HH:MM' => true]]
 
 try {
     $st = $pdo->prepare('
@@ -87,15 +86,13 @@ try {
         $slot = substr((string)($r['time'] ?? ''), 0, 5);
         if ($slot === '') continue;
 
-        $bid = $r['barber_id'];
-        if ($bid === null) {
+        $bid = (int)($r['barber_id'] ?? 0);
+
+        if ($bid === 0) {
             $blockedGeneral[$slot] = true;
         } else {
-            $bid = (int)$bid;
-            if ($bid > 0) {
-                if (!isset($blockedByBarber[$bid])) $blockedByBarber[$bid] = [];
-                $blockedByBarber[$bid][$slot] = true;
-            }
+            if (!isset($blockedByBarber[$bid])) $blockedByBarber[$bid] = [];
+            $blockedByBarber[$bid][$slot] = true;
         }
     }
 } catch (Throwable $e) {
@@ -110,8 +107,6 @@ $occupancy = agenda_build_occupancy_map(
     $timeSlots,
     $SLOT_INTERVAL_MINUTES
 );
-
-$selfUrl = BASE_URL . '/calendar_barbearia.php';
 
 include __DIR__ . '/views/partials/header.php';
 ?>
@@ -129,8 +124,9 @@ include __DIR__ . '/views/partials/header.php';
             </div>
 
             <div class="flex items-center gap-3">
+                <!-- ✅ Botão padronizado igual ao Atualizar -->
                 <a href="<?= BASE_URL ?>/services_admin.php"
-                   class="text-sm font-semibold text-indigo-700 underline">
+                   class="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-semibold">
                     Administrar serviços
                 </a>
 
@@ -167,7 +163,9 @@ include __DIR__ . '/views/partials/header.php';
                         $barberId = (int)$barber['id'];
                         $entry = $occupancy[$barberId][$slot] ?? null;
 
-                        $isBlocked = isset($blockedGeneral[$slot]) || (isset($blockedByBarber[$barberId]) && isset($blockedByBarber[$barberId][$slot]));
+                        $isBlockedGeneral = isset($blockedGeneral[$slot]);
+                        $isBlockedBarber  = isset($blockedByBarber[$barberId]) && isset($blockedByBarber[$barberId][$slot]);
+                        $isBlocked        = $isBlockedGeneral || $isBlockedBarber;
 
                         $bg = 'bg-emerald-50';
                         if ($isBlocked) $bg = 'bg-amber-100';
@@ -179,15 +177,15 @@ include __DIR__ . '/views/partials/header.php';
                             <?php if ($isBlocked): ?>
                                 <p class="text-amber-700 font-semibold">Bloqueado</p>
                                 <p class="text-amber-700/80 text-[11px]">
-                                    <?= isset($blockedGeneral[$slot]) ? 'Geral' : 'Barbeiro' ?>
+                                    <?= $isBlockedGeneral ? 'Geral' : 'Barbeiro' ?>
                                 </p>
 
-                                <!-- remover bloqueio -->
+                                <!-- ✅ remover bloqueio (agora geral = barber_id 0) -->
                                 <form method="post" action="<?= BASE_URL ?>/delete_calendar_block.php" class="m-0 mt-2">
                                     <input type="hidden" name="date" value="<?= sanitize($selectedDateStr) ?>">
                                     <input type="hidden" name="time" value="<?= sanitize($slot) ?>">
-                                    <input type="hidden" name="barber_id" value="<?= isset($blockedGeneral[$slot]) ? '' : (int)$barberId ?>">
-                                    <input type="hidden" name="scope" value="<?= isset($blockedGeneral[$slot]) ? 'general' : 'barber' ?>">
+                                    <input type="hidden" name="scope" value="<?= $isBlockedGeneral ? 'general' : 'barber' ?>">
+                                    <input type="hidden" name="barber_id" value="<?= $isBlockedGeneral ? 0 : (int)$barberId ?>">
                                     <button class="text-[11px] text-amber-800 underline"
                                             onclick="return confirm('Remover bloqueio de <?= sanitize($slot) ?>?')">
                                         Remover bloqueio
@@ -212,7 +210,7 @@ include __DIR__ . '/views/partials/header.php';
                                     );
 
                                 $phone = trim((string)($appt['phone'] ?? ''));
-                                $ig = trim((string)($appt['instagram'] ?? ''));
+                                $ig    = trim((string)($appt['instagram'] ?? ''));
                                 ?>
 
                                 <?php if (!empty($entry['is_start'])): ?>
@@ -300,7 +298,7 @@ include __DIR__ . '/views/partials/header.php';
         </div>
 
         <p class="text-xs text-slate-500">
-            Agenda interna baseada nos agendamentos reais. Bloqueios podem ser gerais ou por barbeiro.
+            Agenda interna baseada nos agendamentos reais. Bloqueios podem ser gerais (barber_id=0) ou por barbeiro.
         </p>
     </div>
 </main>
@@ -435,11 +433,8 @@ include __DIR__ . '/views/partials/header.php';
     apptDate.value = btn.dataset.date;
     apptTime.value = btn.dataset.time;
     apptBarberId.value = btn.dataset.barberId;
-
     apptInfo.textContent = `${btn.dataset.date} às ${btn.dataset.time} — ${btn.dataset.barberName}`;
-
     resetServices();
-
     modal.classList.remove('hidden');
     modal.classList.add('flex');
   }

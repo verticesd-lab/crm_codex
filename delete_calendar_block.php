@@ -10,11 +10,7 @@ require_login();
 
 $pdo = get_pdo();
 $companyId = current_company_id();
-if (!$companyId) {
-    http_response_code(400);
-    echo 'Empresa não encontrada.';
-    exit;
-}
+if (!$companyId) die('Empresa não encontrada.');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: ' . BASE_URL . '/calendar_barbearia.php');
@@ -26,35 +22,16 @@ $time     = trim((string)($_POST['time'] ?? ''));
 $scope    = trim((string)($_POST['scope'] ?? 'barber')); // barber | general
 $barberId = (int)($_POST['barber_id'] ?? 0);
 
-// valida date
-if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-    http_response_code(400);
-    echo 'Data inválida.';
-    exit;
-}
-
-// normaliza time (aceita HH:MM ou HH:MM:SS)
-if (!preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $time)) {
-    http_response_code(400);
-    echo 'Hora inválida.';
-    exit;
-}
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) die('Data inválida.');
+if (!preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $time)) die('Hora inválida.');
 if (strlen($time) === 5) $time .= ':00';
 
-// regra: geral = barber_id 0
+$barberIdDb = 0;
 if ($scope === 'general') {
     $barberIdDb = 0;
-} elseif ($scope === 'barber') {
-    if ($barberId <= 0) {
-        http_response_code(400);
-        echo 'Barbeiro inválido.';
-        exit;
-    }
-    $barberIdDb = $barberId;
 } else {
-    http_response_code(400);
-    echo 'Escopo inválido.';
-    exit;
+    if ($barberId <= 0) die('Barbeiro inválido.');
+    $barberIdDb = $barberId;
 }
 
 try {
@@ -64,12 +41,9 @@ try {
         LIMIT 1
     ');
     $del->execute([$companyId, $date, $time, $barberIdDb]);
-
-    header('Location: ' . BASE_URL . '/calendar_barbearia.php?data=' . urlencode($date));
-    exit;
-
 } catch (Throwable $e) {
-    http_response_code(500);
-    echo 'Erro ao remover bloqueio.';
-    exit;
+    die('Erro ao remover bloqueio.');
 }
+
+header('Location: ' . BASE_URL . '/calendar_barbearia.php?data=' . urlencode($date));
+exit;
