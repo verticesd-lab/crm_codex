@@ -1,4 +1,6 @@
 <?php
+echo "<!-- DEPLOY CHECK services_admin: " . date('Y-m-d H:i:s') . " -->";
+
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
