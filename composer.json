@@ -1,6 +1,0 @@
-{
-  "name": "crm/codex",
-  "require": {
-    "php": "^8.2"
-  }
-}
