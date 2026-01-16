@@ -1,13 +1,7 @@
 <?php
-echo "<!-- DEPLOY CHECK services_admin: " . date('Y-m-d H:i:s') . " -->";
-
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
-
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
 
 require_login();
 
@@ -15,6 +9,7 @@ $pdo       = get_pdo();
 $companyId = current_company_id();
 
 if (!$companyId) {
+    http_response_code(400);
     echo 'Empresa nao encontrada na sessao.';
     exit;
 }
@@ -46,28 +41,32 @@ function normalize_service_key(string $key): string {
     $key = preg_replace('/\s+/', '_', $key);
     $key = preg_replace('/[^a-z0-9_\-]/', '_', $key);
     $key = preg_replace('/_+/', '_', $key);
-    $key = trim($key, '_');
-    return $key;
+    return trim((string)$key, '_');
 }
 
 function to_price($v): float {
     $s = trim((string)$v);
     if ($s === '') return 0.0;
+
     $s = str_replace(['R$', ' '], '', $s);
-    // suporta "45,00" e "45.00"
-    if (str_contains($s, ',') && str_contains($s, '.')) {
-        // se vier "1.234,56" -> remove milhar
-        $s = str_replace('.', '', $s);
-        $s = str_replace(',', '.', $s);
+
+    // suporta "1.234,56" e "1234.56" e "45,00"
+    $hasComma = (strpos($s, ',') !== false);
+    $hasDot   = (strpos($s, '.') !== false);
+
+    if ($hasComma && $hasDot) {
+        $s = str_replace('.', '', $s);  // remove milhar
+        $s = str_replace(',', '.', $s); // vírgula vira decimal
     } else {
         $s = str_replace(',', '.', $s);
     }
+
     return (float)$s;
 }
 
 function redirect_ok(string $code): void {
-    header('Location: ' . BASE_URL . '/services_admin.php?ok=' . urlencode($code));
-    exit;
+    // usa redirect() do helpers (já lida com headers_sent)
+    redirect('/services_admin.php?ok=' . urlencode($code));
 }
 
 /** POST actions */
@@ -137,7 +136,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (Throwable $e) {
         $msg = $e->getMessage();
 
-        // erro de duplicidade da key (uniq_company_service_key)
         if (stripos($msg, 'Duplicate') !== false || stripos($msg, 'uniq_company_service_key') !== false) {
             $errors[] = 'Essa key ja existe. Use outra (ex: corte_2).';
         } else {
@@ -163,6 +161,8 @@ try {
 
 include __DIR__ . '/views/partials/header.php';
 ?>
+
+<!-- DEPLOY CHECK services_admin: <?= date('Y-m-d H:i:s') ?> -->
 
 <main class="flex-1 bg-slate-100 min-h-screen">
   <div class="max-w-5xl mx-auto px-6 py-6 space-y-6">
@@ -291,7 +291,7 @@ include __DIR__ . '/views/partials/header.php';
                 </div>
               </form>
 
-              <!-- TOGGLE form (separado, sem bug) -->
+              <!-- TOGGLE form (separado) -->
               <div class="mt-2 flex items-center justify-end">
                 <form method="post" class="m-0">
                   <input type="hidden" name="action" value="toggle">

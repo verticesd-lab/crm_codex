@@ -1,7 +1,12 @@
 <?php
 require_once __DIR__ . '/config.php';
 
-if (session_status() === PHP_SESSION_NONE) {
+/**
+ * Inicia sessão com segurança:
+ * - só inicia se ainda não iniciou
+ * - e só inicia se ainda não enviou headers (pra evitar "headers already sent")
+ */
+if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
     session_start();
 }
 
@@ -127,6 +132,12 @@ function is_admin(): bool {
 
 function require_login(): void {
     if (!is_logged_in()) {
+        // se já enviou headers, não dá pra redirecionar
+        if (headers_sent()) {
+            http_response_code(401);
+            echo 'Sessão expirada. Faça login novamente.';
+            exit;
+        }
         header('Location: ' . BASE_URL . '/login.php');
         exit;
     }
@@ -191,8 +202,8 @@ function get_flash(string $key): ?string {
 /**
  * ========= UTILITÁRIOS BÁSICOS =========
  */
-function sanitize(string $value): string {
-    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+function sanitize($value): string {
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
 function format_currency($value): string {
@@ -202,7 +213,11 @@ function format_currency($value): string {
 function redirect(string $path): void {
     // Se for URL absoluta, redireciona direto
     if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
-        header('Location: ' . $path);
+        if (!headers_sent()) {
+            header('Location: ' . $path);
+        } else {
+            echo '<script>location.href=' . json_encode($path) . ';</script>';
+        }
         exit;
     }
 
@@ -211,7 +226,11 @@ function redirect(string $path): void {
         $path = rtrim(BASE_URL, '/') . '/' . ltrim($path, '/');
     }
 
-    header('Location: ' . $path);
+    if (!headers_sent()) {
+        header('Location: ' . $path);
+    } else {
+        echo '<script>location.href=' . json_encode($path) . ';</script>';
+    }
     exit;
 }
 
