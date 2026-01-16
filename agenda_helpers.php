@@ -3,7 +3,18 @@ require_once __DIR__ . '/helpers.php';
 
 /**
  * =========================
- * Fallbacks seguros
+ * Compat (PHP < 8)
+ * =========================
+ */
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool {
+        return $needle === '' || strpos($haystack, $needle) !== false;
+    }
+}
+
+/**
+ * =========================
+ * Fallbacks seguros de tempo
  * =========================
  */
 if (!function_exists('now_utc_datetime')) {
@@ -68,34 +79,33 @@ function agenda_default_services_catalog(): array
  * =========================
  * Serviços (catálogo) - NOVO
  * =========================
- * Compatível com o código atual:
- * - Se você chamar agenda_get_services_catalog() sem parâmetros => volta o catálogo padrão fixo.
- * - Se você passar ($pdo, $companyId) => lê do banco (services).
+ * - Sem PDO/empresa => retorna catálogo padrão fixo (compat)
+ * - Com ($pdo, $companyId) => lê do banco (services) e faz seed automático se vazio
  *
- * Estrutura retornada:
+ * Retorno:
  * [
- *   'service_key' => ['label'=>..., 'price'=>..., 'duration'=>...],
+ *   'service_key' => ['label'=>..., 'price'=>..., 'duration'=>..., 'is_active'=>1],
  *   ...
  * ]
  */
 function agenda_get_services_catalog(PDO $pdo = null, int $companyId = 0, bool $onlyActive = true): array
 {
-    // Sem PDO/empresa => mantém o comportamento antigo
     if (!$pdo || $companyId <= 0) {
         return agenda_default_services_catalog();
     }
 
-    // Tenta buscar do banco
     try {
-        // Se quiser, faz seed automático se estiver vazio
+        // Seed se não houver nenhum serviço
         agenda_seed_default_services_if_empty($pdo, $companyId);
 
         $sql = 'SELECT service_key, label, price, duration_minutes, is_active
                 FROM services
                 WHERE company_id = ?';
+
         if ($onlyActive) {
             $sql .= ' AND is_active = 1';
         }
+
         $sql .= ' ORDER BY id ASC';
 
         $stmt = $pdo->prepare($sql);
@@ -115,14 +125,12 @@ function agenda_get_services_catalog(PDO $pdo = null, int $companyId = 0, bool $
             ];
         }
 
-        // Se tiver tabela mas não tiver nada cadastrado, cai pro default
         if (empty($catalog)) {
             return agenda_default_services_catalog();
         }
 
         return $catalog;
     } catch (Throwable $e) {
-        // Se a tabela não existir / erro SQL => fallback
         return agenda_default_services_catalog();
     }
 }
@@ -150,9 +158,9 @@ function agenda_seed_default_services_if_empty(PDO $pdo, int $companyId): void
             $insert->execute([
                 $companyId,
                 (string)$key,
-                (string)$svc['label'],
-                (float)$svc['price'],
-                (int)$svc['duration'],
+                (string)($svc['label'] ?? $key),
+                (float)($svc['price'] ?? 0),
+                (int)($svc['duration'] ?? 30),
                 $now,
                 $now,
             ]);
@@ -163,7 +171,7 @@ function agenda_seed_default_services_if_empty(PDO $pdo, int $companyId): void
 }
 
 /**
- * CRUD básico de serviços (para a parte interna)
+ * CRUD básico de serviços (internal)
  */
 function agenda_service_create_or_update(PDO $pdo, int $companyId, string $serviceKey, string $label, float $price, int $durationMinutes, bool $isActive = true): bool
 {
@@ -212,7 +220,7 @@ function agenda_service_delete(PDO $pdo, int $companyId, string $serviceKey): bo
  * =========================
  * Clientes (customers)
  * =========================
- * Cria ou atualiza o cliente pelo telefone e retorna customer_id.
+ * Cria/atualiza pelo telefone e retorna customer_id.
  */
 function agenda_upsert_customer(PDO $pdo, int $companyId, string $name, string $phone, ?string $instagram = null): ?int
 {
@@ -225,7 +233,6 @@ function agenda_upsert_customer(PDO $pdo, int $companyId, string $name, string $
     try {
         $now = now_utc_datetime();
 
-        // Tenta inserir
         $stmt = $pdo->prepare('
             INSERT INTO customers (company_id, name, phone, instagram, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -234,9 +241,8 @@ function agenda_upsert_customer(PDO $pdo, int $companyId, string $name, string $
                 instagram = VALUES(instagram),
                 updated_at = VALUES(updated_at)
         ');
-        $stmt->execute([$companyId, $name, $phone, $instagram !== '' ? $instagram : null, $now, $now]);
+        $stmt->execute([$companyId, $name, $phone, ($instagram !== '' ? $instagram : null), $now, $now]);
 
-        // Busca id
         $stmt2 = $pdo->prepare('SELECT id FROM customers WHERE company_id = ? AND phone = ? LIMIT 1');
         $stmt2->execute([$companyId, $phone]);
         $id = $stmt2->fetchColumn();
@@ -285,9 +291,7 @@ function agenda_create_cash_income_for_appointment(
  */
 function agenda_normalize_services($input, array $catalog): array
 {
-    if (!is_array($input)) {
-        return [];
-    }
+    if (!is_array($input)) return [];
 
     $valid = [];
     foreach ($input as $key) {
@@ -307,9 +311,7 @@ function agenda_calculate_services(array $serviceKeys, array $catalog): array
     $labels = [];
 
     foreach ($serviceKeys as $key) {
-        if (!isset($catalog[$key])) {
-            continue;
-        }
+        if (!isset($catalog[$key])) continue;
 
         $service = $catalog[$key];
         $totalPrice += (float)($service['price'] ?? 0);
@@ -331,15 +333,13 @@ function agenda_calculate_services(array $serviceKeys, array $catalog): array
  */
 function agenda_minutes_to_slots(int $minutes, int $intervalMinutes): int
 {
-    if ($intervalMinutes <= 0) {
-        return 1;
-    }
+    if ($intervalMinutes <= 0) return 1;
     $minutes = max(0, $minutes);
     return max(1, (int)ceil($minutes / $intervalMinutes));
 }
 
 /**
- * ✅ Inclui o horário final (ex.: 20:00)
+ * Inclui o horário final (ex.: 20:00)
  * Ex: start=09:00 end=20:00 interval=60 => 09:00 ... 20:00
  */
 function agenda_generate_time_slots(string $start, string $end, int $intervalMinutes): array
@@ -348,9 +348,7 @@ function agenda_generate_time_slots(string $start, string $end, int $intervalMin
     $current = DateTime::createFromFormat('H:i', $start);
     $endTime = DateTime::createFromFormat('H:i', $end);
 
-    if (!$current || !$endTime || $intervalMinutes <= 0) {
-        return $slots;
-    }
+    if (!$current || !$endTime || $intervalMinutes <= 0) return $slots;
 
     while ($current <= $endTime) {
         $slots[] = $current->format('H:i');
@@ -363,18 +361,14 @@ function agenda_generate_time_slots(string $start, string $end, int $intervalMin
 function agenda_build_time_slot_index(array $timeSlots): array
 {
     $index = [];
-    foreach ($timeSlots as $i => $slot) {
-        $index[$slot] = $i;
-    }
+    foreach ($timeSlots as $i => $slot) $index[$slot] = $i;
     return $index;
 }
 
 function agenda_calculate_end_time(string $startTime, int $durationMinutes): string
 {
     $start = DateTime::createFromFormat('H:i', $startTime);
-    if (!$start) {
-        return $startTime . ':00';
-    }
+    if (!$start) return $startTime . ':00';
 
     $start->modify('+' . max(0, $durationMinutes) . ' minutes');
     return $start->format('H:i:s');
@@ -391,9 +385,7 @@ function agenda_seed_default_barbers(PDO $pdo, int $companyId): void
         $stmt = $pdo->prepare('SELECT COUNT(*) FROM barbers WHERE company_id = ?');
         $stmt->execute([$companyId]);
         $count = (int)$stmt->fetchColumn();
-        if ($count > 0) {
-            return;
-        }
+        if ($count > 0) return;
 
         $now = now_utc_datetime();
         $seed = [
@@ -418,9 +410,7 @@ function agenda_seed_default_barbers(PDO $pdo, int $companyId): void
 function agenda_get_barbers(PDO $pdo, int $companyId, bool $onlyActive = true): array
 {
     $sql = 'SELECT id, name, is_active FROM barbers WHERE company_id = ?';
-    if ($onlyActive) {
-        $sql .= ' AND is_active = 1';
-    }
+    if ($onlyActive) $sql .= ' AND is_active = 1';
     $sql .= ' ORDER BY id ASC';
 
     try {
@@ -433,9 +423,10 @@ function agenda_get_barbers(PDO $pdo, int $companyId, bool $onlyActive = true): 
 }
 
 /**
- * ✅ FIX PRINCIPAL:
- * - Se a tabela existe e a query roda: retorna o que está no banco (mesmo vazio).
- * - Só usa fallback se der erro SQL.
+ * =========================
+ * Bloqueios (calendar_blocks)
+ * =========================
+ * Retorna os horários bloqueados no formato "HH:ii"
  */
 function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, array $fallbackBlocks = []): array
 {
@@ -450,10 +441,10 @@ function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, arra
 
         $blocks = [];
         foreach ($rows as $row) {
-            $blocks[] = substr((string)$row['time'], 0, 5);
+            $blocks[] = substr((string)($row['time'] ?? ''), 0, 5);
         }
 
-        return array_values(array_unique($blocks));
+        return array_values(array_unique(array_filter($blocks)));
     } catch (Throwable $e) {
         return $fallbackBlocks;
     }
@@ -467,9 +458,22 @@ function agenda_get_calendar_blocks(PDO $pdo, int $companyId, string $date, arra
 function agenda_get_appointments_for_date(PDO $pdo, int $companyId, string $date): array
 {
     $stmt = $pdo->prepare('
-        SELECT a.id, a.customer_id, a.customer_name, a.phone, a.instagram, a.date, a.time,
-               a.barber_id, a.services_json, a.total_price, a.total_duration_minutes,
-               a.ends_at_time, b.name AS barber_name
+        SELECT
+            a.id,
+            a.company_id,
+            a.barber_id,
+            a.customer_id,
+            a.customer_name,
+            a.phone,
+            a.instagram,
+            a.date,
+            a.time,
+            a.ends_at_time,
+            a.services_json,
+            a.total_price,
+            a.total_duration_minutes,
+            a.status,
+            b.name AS barber_name
         FROM appointments a
         LEFT JOIN barbers b ON b.id = a.barber_id
         WHERE a.company_id = ? AND a.date = ? AND a.status = "agendado"
@@ -488,23 +492,17 @@ function agenda_build_occupancy_map(array $appointments, array $timeSlots, int $
         $barberId = (int)($appt['barber_id'] ?? 0);
         $start = substr((string)($appt['time'] ?? ''), 0, 5);
 
-        if (!isset($index[$start])) {
-            continue;
-        }
+        if (!isset($index[$start])) continue;
 
         $duration = (int)($appt['total_duration_minutes'] ?? 0);
-        if ($duration <= 0) {
-            $duration = $intervalMinutes;
-        }
+        if ($duration <= 0) $duration = $intervalMinutes;
 
         $slotsNeeded = agenda_minutes_to_slots($duration, $intervalMinutes);
         $startIndex = $index[$start];
 
         for ($i = 0; $i < $slotsNeeded; $i++) {
             $slotIndex = $startIndex + $i;
-            if (!isset($timeSlots[$slotIndex])) {
-                break;
-            }
+            if (!isset($timeSlots[$slotIndex])) break;
 
             $slot = $timeSlots[$slotIndex];
             $occupancy[$barberId][$slot] = [
@@ -529,30 +527,21 @@ function agenda_is_barber_available(
     array $occupancy,
     ?array $slotIndex = null
 ): bool {
-    if ($barberId <= 0) {
-        return false;
-    }
+    if ($barberId <= 0) return false;
 
     $slotIndex = $slotIndex ?? agenda_build_time_slot_index($timeSlots);
-    if (!isset($slotIndex[$slot])) {
-        return false;
-    }
+    if (!isset($slotIndex[$slot])) return false;
 
     $startIndex = $slotIndex[$slot];
+
     for ($i = 0; $i < $slotsNeeded; $i++) {
         $currentIndex = $startIndex + $i;
-        if (!isset($timeSlots[$currentIndex])) {
-            return false;
-        }
+        if (!isset($timeSlots[$currentIndex])) return false;
 
         $currentSlot = $timeSlots[$currentIndex];
-        if (in_array($currentSlot, $blockedSlots, true)) {
-            return false;
-        }
 
-        if (isset($occupancy[$barberId][$currentSlot])) {
-            return false;
-        }
+        if (in_array($currentSlot, $blockedSlots, true)) return false;
+        if (isset($occupancy[$barberId][$currentSlot])) return false;
     }
 
     return true;
@@ -569,7 +558,7 @@ function agenda_count_available_barbers(
 ): int {
     $count = 0;
     foreach ($barbers as $barber) {
-        $barberId = (int)$barber['id'];
+        $barberId = (int)($barber['id'] ?? 0);
         if (agenda_is_barber_available($barberId, $slot, $slotsNeeded, $timeSlots, $blockedSlots, $occupancy, $slotIndex)) {
             $count++;
         }
@@ -579,17 +568,14 @@ function agenda_count_available_barbers(
 
 function agenda_services_from_json(?string $servicesJson, array $catalog): array
 {
-    if (!$servicesJson) {
-        return [];
-    }
+    if (!$servicesJson) return [];
 
     $decoded = json_decode($servicesJson, true);
-    if (!is_array($decoded)) {
-        return [];
-    }
+    if (!is_array($decoded)) return [];
 
     $labels = [];
     foreach ($decoded as $key) {
+        $key = (string)$key;
         if (isset($catalog[$key])) {
             $labels[] = (string)($catalog[$key]['label'] ?? $key);
         }
@@ -638,9 +624,7 @@ function send_whatsapp_message(string $phone, string $message): bool
             $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
 
-            if ($status >= 200 && $status < 300) {
-                return true;
-            }
+            if ($status >= 200 && $status < 300) return true;
 
             agenda_log_whatsapp_fallback($phone, $message, is_string($response) ? $response : '');
             return false;
@@ -656,9 +640,8 @@ function send_whatsapp_message(string $phone, string $message): bool
         ];
         $context = stream_context_create($opts);
         $result = file_get_contents($apiUrl, false, $context);
-        if ($result !== false) {
-            return true;
-        }
+
+        if ($result !== false) return true;
 
         agenda_log_whatsapp_fallback($phone, $message);
     } catch (Throwable $e) {
@@ -671,64 +654,11 @@ function send_whatsapp_message(string $phone, string $message): bool
 function agenda_log_whatsapp_fallback(string $phone, string $message, string $extra = ''): void
 {
     $dir = __DIR__ . '/logs';
-    if (!is_dir($dir)) {
-        @mkdir($dir, 0777, true);
-    }
+    if (!is_dir($dir)) @mkdir($dir, 0777, true);
 
     $line = '[' . now_app_datetime() . '] ' . $phone . ' - ' . $message;
-    if ($extra !== '') {
-        $line .= ' | ' . $extra;
-    }
+    if ($extra !== '') $line .= ' | ' . $extra;
     $line .= PHP_EOL;
 
     @file_put_contents($dir . '/whatsapp.log', $line, FILE_APPEND);
-}
-function agenda_get_services_catalog_db(PDO $pdo, int $companyId, bool $onlyActive = true): array
-{
-    $sql = 'SELECT service_key, label, price, duration_minutes, is_active
-            FROM services WHERE company_id = ?';
-    if ($onlyActive) {
-        $sql .= ' AND is_active = 1';
-    }
-    $sql .= ' ORDER BY label ASC';
-
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$companyId]);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $catalog = [];
-    foreach ($rows as $r) {
-        $key = (string)$r['service_key'];
-        $catalog[$key] = [
-            'label' => (string)$r['label'],
-            'price' => (float)$r['price'],
-            'duration' => (int)$r['duration_minutes'],
-            'is_active' => (int)$r['is_active'],
-        ];
-    }
-    return $catalog;
-}
-
-function agenda_seed_services_if_empty(PDO $pdo, int $companyId): void
-{
-    $stmt = $pdo->prepare('SELECT COUNT(*) FROM services WHERE company_id = ?');
-    $stmt->execute([$companyId]);
-    $count = (int)$stmt->fetchColumn();
-    if ($count > 0) return;
-
-    $defaults = agenda_get_services_catalog(); // seu fallback atual
-    $ins = $pdo->prepare('
-        INSERT INTO services (company_id, service_key, label, price, duration_minutes, is_active)
-        VALUES (?, ?, ?, ?, ?, 1)
-    ');
-
-    foreach ($defaults as $key => $s) {
-        $ins->execute([
-            $companyId,
-            $key,
-            (string)$s['label'],
-            (float)$s['price'],
-            (int)$s['duration'],
-        ]);
-    }
 }
