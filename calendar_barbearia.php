@@ -57,6 +57,36 @@ $occupancy = agenda_build_occupancy_map(
 
 $selfUrl = BASE_URL . '/calendar_barbearia.php';
 
+/**
+ * ============================
+ * SERVIÇOS (BANCO) com fallback
+ * ============================
+ */
+$services = [];
+try {
+    $st = $pdo->prepare("
+        SELECT service_key, label, price, duration_minutes
+        FROM services
+        WHERE company_id = ? AND is_active = 1
+        ORDER BY id ASC
+    ");
+    $st->execute([$companyId]);
+    $services = $st->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $services = [];
+}
+
+if (!$services) {
+    foreach ($servicesCatalog as $k => $v) {
+        $services[] = [
+            'service_key' => $k,
+            'label' => $v['label'],
+            'price' => (float)$v['price'],
+            'duration_minutes' => (int)$v['duration'],
+        ];
+    }
+}
+
 include __DIR__ . '/views/partials/header.php';
 ?>
 
@@ -113,13 +143,14 @@ include __DIR__ . '/views/partials/header.php';
                             <?php elseif ($entry): ?>
                                 <?php
                                 $appt = $entry['appointment'];
-                                $services = agenda_services_from_json($appt['services_json'], $servicesCatalog);
+                                $servicesLabels = agenda_services_from_json($appt['services_json'], $servicesCatalog);
+
                                 $endsAt = $appt['ends_at_time']
                                     ? substr($appt['ends_at_time'], 0, 5)
                                     : substr(
                                         agenda_calculate_end_time(
                                             substr($appt['time'], 0, 5),
-                                            $appt['total_duration_minutes']
+                                            (int)$appt['total_duration_minutes']
                                         ),
                                         0,
                                         5
@@ -131,12 +162,12 @@ include __DIR__ . '/views/partials/header.php';
                                         <?= sanitize($appt['customer_name']) ?>
                                     </p>
                                     <p class="text-slate-600">
-                                        <?= implode(', ', $services) ?>
+                                        <?= sanitize(implode(', ', $servicesLabels)) ?>
                                     </p>
                                     <p class="text-slate-600">
-                                        <?= format_currency($appt['total_price']) ?> · até <?= $endsAt ?>
+                                        <?= format_currency($appt['total_price']) ?> · até <?= sanitize($endsAt) ?>
                                     </p>
-                                    <a href="<?= BASE_URL ?>/cancel_appointment.php?id=<?= (int)$appt['id'] ?>&data=<?= $selectedDateStr ?>"
+                                    <a href="<?= BASE_URL ?>/cancel_appointment.php?id=<?= (int)$appt['id'] ?>&data=<?= sanitize($selectedDateStr) ?>"
                                        class="text-rose-600 text-[11px]"
                                        onclick="return confirm('Cancelar agendamento?')">
                                         Cancelar
@@ -146,7 +177,17 @@ include __DIR__ . '/views/partials/header.php';
                                 <?php endif; ?>
 
                             <?php else: ?>
-                                <p class="text-emerald-700">Livre</p>
+                                <!-- ✅ LIVRE CLICÁVEL -->
+                                <button
+                                  type="button"
+                                  class="text-emerald-700 underline js-open-appt"
+                                  data-date="<?= sanitize($selectedDateStr) ?>"
+                                  data-time="<?= sanitize($slot) ?>"
+                                  data-barber-id="<?= (int)$barberId ?>"
+                                  data-barber-name="<?= sanitize($barber['name']) ?>"
+                                >
+                                  Livre (agendar)
+                                </button>
                             <?php endif; ?>
 
                         </div>
@@ -161,5 +202,94 @@ include __DIR__ . '/views/partials/header.php';
         </p>
     </div>
 </main>
+
+<!-- ===========================
+     MODAL: Agendamento interno
+     =========================== -->
+<div id="apptModal" class="fixed inset-0 hidden items-center justify-center bg-black/50 p-4">
+  <div class="w-full max-w-xl bg-white rounded-xl shadow border p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-bold">Agendar (interno)</h2>
+      <button type="button" id="apptClose" class="text-slate-500 text-xl leading-none">&times;</button>
+    </div>
+
+    <div class="text-sm text-slate-600 mb-3">
+      <span id="apptInfo"></span>
+    </div>
+
+    <form method="post" action="<?= BASE_URL ?>/create_appointment_internal.php" class="space-y-3">
+      <input type="hidden" name="date" id="apptDate">
+      <input type="hidden" name="time" id="apptTime">
+      <input type="hidden" name="barber_id" id="apptBarberId">
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-semibold text-slate-700">Nome</label>
+          <input name="customer_name" required class="w-full border rounded px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-700">Telefone</label>
+          <input name="phone" required class="w-full border rounded px-3 py-2 text-sm" />
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs font-semibold text-slate-700">Instagram (opcional)</label>
+        <input name="instagram" class="w-full border rounded px-3 py-2 text-sm" />
+      </div>
+
+      <div>
+        <div class="text-xs font-semibold text-slate-700 mb-2">Serviços</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <?php foreach ($services as $s): ?>
+            <label class="flex items-center gap-2 border rounded px-3 py-2 text-sm">
+              <input type="checkbox" name="services[]" value="<?= sanitize($s['service_key']) ?>">
+              <span class="font-medium"><?= sanitize($s['label']) ?></span>
+              <span class="ml-auto text-slate-500">
+                R$ <?= number_format((float)$s['price'], 2, ',', '.') ?> · <?= (int)$s['duration_minutes'] ?>min
+              </span>
+            </label>
+          <?php endforeach; ?>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button type="button" id="apptCancel" class="px-4 py-2 rounded border">Cancelar</button>
+        <button class="px-4 py-2 rounded bg-indigo-600 text-white font-semibold">
+          Salvar agendamento
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const modal = document.getElementById('apptModal');
+  const apptInfo = document.getElementById('apptInfo');
+  const apptDate = document.getElementById('apptDate');
+  const apptTime = document.getElementById('apptTime');
+  const apptBarberId = document.getElementById('apptBarberId');
+
+  function openModal(btn){
+    apptDate.value = btn.dataset.date;
+    apptTime.value = btn.dataset.time;
+    apptBarberId.value = btn.dataset.barberId;
+    apptInfo.textContent = `${btn.dataset.date} às ${btn.dataset.time} — ${btn.dataset.barberName}`;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+  }
+  function closeModal(){
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+  }
+
+  document.querySelectorAll('.js-open-appt').forEach(btn => {
+    btn.addEventListener('click', () => openModal(btn));
+  });
+
+  document.getElementById('apptClose').addEventListener('click', closeModal);
+  document.getElementById('apptCancel').addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+</script>
 
 <?php include __DIR__ . '/views/partials/footer.php'; ?>

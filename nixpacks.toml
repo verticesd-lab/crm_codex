@@ -1,7 +1,7 @@
 providers = ["php"]
 
-[variables]
-NIXPACKS_PHP_VERSION = "8.2"
+[phases.setup]
+nixPkgs = ["php82"]
 
 [start]
-cmd = "php -S 0.0.0.0:${PORT} -t ."
+cmd = "php -S 0.0.0.0:3000 -t ."
