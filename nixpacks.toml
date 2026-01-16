@@ -1,7 +1,7 @@
 providers = ["php"]
 
 [phases.setup]
-nixPkgs = ["php82", "composer"]
+nixPkgs = ["php82"]
 
 [start]
 cmd = "php -S 0.0.0.0:3000 -t ."
