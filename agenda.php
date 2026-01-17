@@ -82,8 +82,18 @@ $showConfirmation = false;
  * ==============================
  * DADOS BASICOS DO FORMULARIO
  * ==============================
+ *
+ * ✅ IMPORTANTE:
+ * Agora o catálogo de serviços vem do banco (services) via helper.
+ * Se o helper antigo não aceitar params, cai no fallback.
  */
-$servicesCatalog = agenda_get_services_catalog();
+try {
+    $servicesCatalog = agenda_get_services_catalog($pdo, $companyId, true);
+} catch (Throwable $e) {
+    $servicesCatalog = agenda_get_services_catalog();
+}
+
+// Barbeiros
 $allBarbers = agenda_get_barbers($pdo, $companyId, false);
 $activeBarbers = array_values(array_filter($allBarbers, function ($barber) {
     return (int)$barber['is_active'] === 1;
@@ -94,6 +104,7 @@ foreach ($allBarbers as $barber) {
     $barbersById[(int)$barber['id']] = $barber;
 }
 
+// Post fields
 $nome = trim($_POST['nome'] ?? '');
 $telefone = trim($_POST['telefone'] ?? '');
 $instagram = trim($_POST['instagram'] ?? '');
@@ -103,6 +114,7 @@ $horaPost = trim($_POST['hora'] ?? '');
 $selectedBarberId = (int)($_POST['barbeiro'] ?? 0);
 $selectedServices = agenda_normalize_services($_POST['servicos'] ?? [], $servicesCatalog);
 
+// Totais
 $serviceTotals = agenda_calculate_services($selectedServices, $servicesCatalog);
 $slotsNeeded = $serviceTotals['total_minutes'] > 0
     ? agenda_minutes_to_slots($serviceTotals['total_minutes'], $SLOT_INTERVAL_MINUTES)
@@ -120,6 +132,79 @@ $blockedSlots = agenda_get_calendar_blocks($pdo, $companyId, $selectedDateStr, $
 
 $appointments = agenda_get_appointments_for_date($pdo, $companyId, $selectedDateStr);
 $occupancy = agenda_build_occupancy_map($appointments, $timeSlots, $SLOT_INTERVAL_MINUTES);
+
+/**
+ * ==============================
+ * TOP 4 SERVIÇOS + "MAIS SERVIÇOS"
+ * ==============================
+ * Regra:
+ * - tenta ordenar por "mais utilizados" (contagem em services_json)
+ * - se falhar / vazio, mantém ordem do catálogo
+ */
+$serviceUsage = [];
+foreach ($servicesCatalog as $k => $svc) {
+    $serviceUsage[(string)$k] = 0;
+}
+
+try {
+    $since = (new DateTimeImmutable('now'))->modify('-120 days')->format('Y-m-d');
+    $st = $pdo->prepare("
+        SELECT services_json
+        FROM appointments
+        WHERE company_id = ?
+          AND date >= ?
+          AND status = 'agendado'
+        ORDER BY id DESC
+        LIMIT 1500
+    ");
+    $st->execute([$companyId, $since]);
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($rows as $r) {
+        $json = (string)($r['services_json'] ?? '');
+        if ($json === '') continue;
+
+        $arr = json_decode($json, true);
+        if (!is_array($arr)) continue;
+
+        foreach ($arr as $key) {
+            $key = (string)$key;
+            if (isset($serviceUsage[$key])) {
+                $serviceUsage[$key]++;
+            }
+        }
+    }
+} catch (Throwable $e) {
+    // sem métricas, segue ordem padrão
+}
+
+$serviceKeys = array_keys($servicesCatalog);
+
+// ordena por uso desc; se empate, mantém ordem original
+$originalPos = [];
+foreach ($serviceKeys as $i => $k) $originalPos[$k] = $i;
+
+usort($serviceKeys, function($a, $b) use ($serviceUsage, $originalPos) {
+    $ua = $serviceUsage[$a] ?? 0;
+    $ub = $serviceUsage[$b] ?? 0;
+    if ($ua === $ub) return ($originalPos[$a] ?? 0) <=> ($originalPos[$b] ?? 0);
+    return $ub <=> $ua;
+});
+
+$topKeys = array_slice($serviceKeys, 0, 4);
+$moreKeys = array_slice($serviceKeys, 4);
+
+// monta arrays para render
+$servicesTop = [];
+foreach ($topKeys as $k) {
+    if (!isset($servicesCatalog[$k])) continue;
+    $servicesTop[$k] = $servicesCatalog[$k];
+}
+$servicesMore = [];
+foreach ($moreKeys as $k) {
+    if (!isset($servicesCatalog[$k])) continue;
+    $servicesMore[$k] = $servicesCatalog[$k];
+}
 
 /**
  * ==============================
@@ -153,7 +238,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Duracao de servicos invalida.';
         }
 
-        // Nao mostra confirmacao no refresh
         $showConfirmation = false;
 
     } else {
@@ -508,7 +592,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                                 ?>
                                 <label class="barber-button flex flex-col items-start gap-1 px-3 py-2 rounded-xl border text-xs cursor-pointer
                                     <?= $isActive ? 'border-white/15 bg-white/5 text-slate-100 hover:border-brand-500 hover:bg-brand-500/20'
-                                                  : 'border-white/10 bg-white/5 text-slate-500 opacity-60 cursor-not-allowed' ?>">
+                                                 : 'border-white/10 bg-white/5 text-slate-500 opacity-60 cursor-not-allowed' ?>">
                                     <input
                                         type="radio"
                                         name="barbeiro"
@@ -527,13 +611,15 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     </div>
                 </div>
 
+                <!-- ✅ SERVIÇOS: Top 4 + botão "Mais Serviços" -->
                 <div>
                     <label class="block text-sm font-medium text-slate-200 mb-2">
                         Servicos desejados <span class="text-red-400">*</span>
                     </label>
+
                     <div class="space-y-2">
-                        <?php foreach ($servicesCatalog as $key => $service): ?>
-                            <?php $checked = in_array($key, $selectedServices, true); ?>
+                        <?php foreach ($servicesTop as $key => $service): ?>
+                            <?php $checked = in_array((string)$key, $selectedServices, true); ?>
                             <label class="flex items-start gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
                                 <input
                                     type="checkbox"
@@ -545,12 +631,44 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                                 <div class="flex flex-col">
                                     <span class="font-medium text-slate-100"><?= sanitize($service['label']) ?></span>
                                     <span class="text-[11px] text-slate-400">
-                                        <?= format_currency($service['price']) ?> · <?= (int)$service['duration'] ?> min
+                                        <?= format_currency((float)($service['price'] ?? 0)) ?> · <?= (int)($service['duration'] ?? 30) ?> min
                                     </span>
                                 </div>
                             </label>
                         <?php endforeach; ?>
                     </div>
+
+                    <?php if (!empty($servicesMore)): ?>
+                        <button
+                            type="button"
+                            id="btnMoreServices"
+                            class="mt-3 w-full inline-flex items-center justify-center px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-sm font-semibold"
+                        >
+                            Mais Serviços
+                        </button>
+
+                        <div id="moreServicesWrap" class="hidden mt-3 space-y-2">
+                            <?php foreach ($servicesMore as $key => $service): ?>
+                                <?php $checked = in_array((string)$key, $selectedServices, true); ?>
+                                <label class="flex items-start gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                                    <input
+                                        type="checkbox"
+                                        name="servicos[]"
+                                        value="<?= sanitize($key) ?>"
+                                        class="mt-1 h-4 w-4 rounded border-white/30 bg-slate-900 text-brand-500 focus:ring-brand-500"
+                                        <?= $checked ? 'checked' : '' ?>
+                                    >
+                                    <div class="flex flex-col">
+                                        <span class="font-medium text-slate-100"><?= sanitize($service['label']) ?></span>
+                                        <span class="text-[11px] text-slate-400">
+                                            <?= format_currency((float)($service['price'] ?? 0)) ?> · <?= (int)($service['duration'] ?? 30) ?> min
+                                        </span>
+                                    </div>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
                     <?php if ($serviceTotals['total_minutes'] > 0): ?>
                         <p class="text-[11px] text-emerald-200 mt-2">
                             Duracao total: <?= (int)$serviceTotals['total_minutes'] ?> min
@@ -698,12 +816,27 @@ document.addEventListener('DOMContentLoaded', function () {
     bindToggle('hora', 'slot-button');
     bindToggle('barbeiro', 'barber-button');
 
+    // ✅ Botão "Mais Serviços" (sem mudar layout dos cards)
+    const btnMore = document.getElementById('btnMoreServices');
+    const moreWrap = document.getElementById('moreServicesWrap');
+    if (btnMore && moreWrap) {
+        btnMore.addEventListener('click', () => {
+            const isHidden = moreWrap.classList.contains('hidden');
+            if (isHidden) {
+                moreWrap.classList.remove('hidden');
+                btnMore.textContent = 'Menos Serviços';
+            } else {
+                moreWrap.classList.add('hidden');
+                btnMore.textContent = 'Mais Serviços';
+            }
+        });
+    }
+
     // ✅ Auto-refresh: ao escolher barbeiro ou serviços, recarrega para liberar horários
     const form = document.getElementById('bookingForm');
     const actionField = document.getElementById('actionField');
 
     function doRefresh() {
-        // evita refresh quando já estiver confirmando
         actionField.value = 'refresh';
         form.submit();
     }
