@@ -24,14 +24,17 @@ $barberId = (int)($_POST['barber_id'] ?? 0);
 
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) die('Data inválida.');
 if (!preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $time)) die('Hora inválida.');
+
 if (strlen($time) === 5) $time .= ':00';
 
 $barberIdDb = 0;
 if ($scope === 'general') {
     $barberIdDb = 0;
-} else {
+} elseif ($scope === 'barber') {
     if ($barberId <= 0) die('Barbeiro inválido.');
     $barberIdDb = $barberId;
+} else {
+    die('Escopo inválido.');
 }
 
 try {

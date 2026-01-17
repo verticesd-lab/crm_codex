@@ -33,7 +33,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
     exit;
 }
 
-// valida time e normaliza (HH:MM -> HH:MM:SS)
+// normaliza time (HH:MM -> HH:MM:SS)
 if (!preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $time)) {
     http_response_code(400);
     echo 'Hora inválida.';
@@ -53,7 +53,7 @@ if ($scope === 'general') {
 }
 
 try {
-    // Se for bloqueio geral, remove bloqueios por barbeiro no mesmo horário (opcional, mas evita “mistura”)
+    // se for bloqueio geral, remove bloqueios por barbeiro nesse mesmo horário (pra não ficar duplicado/confuso)
     if ($barberId === 0) {
         $del = $pdo->prepare('
             DELETE FROM calendar_blocks
@@ -62,22 +62,29 @@ try {
         $del->execute([$companyId, $date, $time]);
     }
 
-    // INSERT sem created_at (pra não quebrar em tabelas que não tenham essa coluna)
-    // Com UNIQUE (company_id,date,time,barber_id), duplicado vira "ok" e não dá erro.
-    $ins = $pdo->prepare('
-        INSERT INTO calendar_blocks (company_id, barber_id, date, time)
-        VALUES (?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE barber_id = barber_id
-    ');
-    $ins->execute([$companyId, $barberId, $date, $time]);
+    // 1) tenta com created_at (se existir)
+    try {
+        $ins = $pdo->prepare('
+            INSERT INTO calendar_blocks (company_id, barber_id, date, time, created_at)
+            VALUES (?, ?, ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE barber_id = barber_id
+        ');
+        $ins->execute([$companyId, $barberId, $date, $time]);
+    } catch (Throwable $e) {
+        // 2) fallback sem created_at (mais compatível)
+        $ins2 = $pdo->prepare('
+            INSERT INTO calendar_blocks (company_id, barber_id, date, time)
+            VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE barber_id = barber_id
+        ');
+        $ins2->execute([$companyId, $barberId, $date, $time]);
+    }
 
     header('Location: ' . BASE_URL . '/calendar_barbearia.php?data=' . urlencode($date));
     exit;
 
 } catch (Throwable $e) {
     http_response_code(500);
-    // DICA rápida pra você ver o erro real (depois pode voltar pra mensagem curta):
-    // echo 'Erro: ' . $e->getMessage();
     echo 'Erro ao criar bloqueio.';
     exit;
 }
