@@ -67,8 +67,8 @@ $appointments = agenda_get_appointments_for_date($pdo, $companyId, $selectedDate
  * - Geral: barber_id = 0
  * - Por barbeiro: barber_id = X
  */
-$blockedGeneral = [];         // ['HH:MM' => true]
-$blockedByBarber = [];        // [barberId => ['HH:MM' => true]]
+$blockedGeneral = [];        // ['HH:MM' => true]
+$blockedByBarber = [];       // [barberId => ['HH:MM' => true]]
 
 try {
     $st = $pdo->prepare('
@@ -276,86 +276,98 @@ include __DIR__ . '/views/partials/header.php';
 
 <!-- MODAL -->
 <div id="apptModal" class="fixed inset-0 hidden items-center justify-center bg-black/50 p-4 z-50">
-  <div class="w-full max-w-xl bg-white rounded-xl shadow border p-4">
-    <div class="flex items-center justify-between mb-3">
-      <h2 class="text-lg font-bold">Agendar (interno)</h2>
-      <button type="button" id="apptClose" class="text-slate-500 text-xl leading-none">&times;</button>
-    </div>
+  <!-- ✅ max-h + overflow-hidden + flex-col para footer sempre visível -->
+  <div class="w-full max-w-xl bg-white rounded-xl shadow border max-h-[90vh] overflow-hidden flex flex-col">
 
-    <div class="text-sm text-slate-600 mb-3">
-      <span id="apptInfo"></span>
-    </div>
-
-    <div class="rounded-lg border border-slate-200 p-3 bg-slate-50 mb-3">
-      <div class="flex items-center justify-between text-sm">
-        <div class="font-semibold text-slate-800">
-          Total: <span id="apptTotalPrice">R$ 0,00</span>
-        </div>
-        <div class="font-semibold text-slate-800">
-          Minutos: <span id="apptTotalMinutes">0</span> min
-        </div>
+    <div class="p-4 border-b">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold">Agendar (interno)</h2>
+        <button type="button" id="apptClose" class="text-slate-500 text-xl leading-none">&times;</button>
       </div>
-      <p class="text-[11px] text-slate-500 mt-1">
-        Atualiza automaticamente conforme seleciona os serviços.
-      </p>
+
+      <div class="text-sm text-slate-600 mt-2">
+        <span id="apptInfo"></span>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 p-3 bg-slate-50 mt-3">
+        <div class="flex items-center justify-between text-sm">
+          <div class="font-semibold text-slate-800">
+            Total: <span id="apptTotalPrice">R$ 0,00</span>
+          </div>
+          <div class="font-semibold text-slate-800">
+            Minutos: <span id="apptTotalMinutes">0</span> min
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-1">
+          Atualiza automaticamente conforme seleciona os serviços.
+        </p>
+      </div>
     </div>
 
-    <form method="post" action="<?= BASE_URL ?>/create_appointment_internal.php" class="space-y-3">
+    <!-- ✅ Form ocupa altura e cria área rolável interna -->
+    <form method="post" action="<?= BASE_URL ?>/create_appointment_internal.php" class="flex flex-col flex-1 min-h-0">
       <input type="hidden" name="date" id="apptDate">
       <input type="hidden" name="time" id="apptTime">
       <input type="hidden" name="barber_id" id="apptBarberId">
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <!-- ✅ Conteúdo rolável -->
+      <div class="p-4 space-y-3 flex-1 min-h-0 overflow-y-auto">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold text-slate-700">Nome</label>
+            <input name="customer_name" required class="w-full border rounded px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-slate-700">Telefone</label>
+            <input name="phone" required class="w-full border rounded px-3 py-2 text-sm" placeholder="(65) 99999-9999" />
+          </div>
+        </div>
+
         <div>
-          <label class="text-xs font-semibold text-slate-700">Nome</label>
-          <input name="customer_name" required class="w-full border rounded px-3 py-2 text-sm" />
+          <label class="text-xs font-semibold text-slate-700">Instagram (opcional)</label>
+          <input name="instagram" class="w-full border rounded px-3 py-2 text-sm" placeholder="@cliente" />
         </div>
+
         <div>
-          <label class="text-xs font-semibold text-slate-700">Telefone</label>
-          <input name="phone" required class="w-full border rounded px-3 py-2 text-sm" placeholder="(65) 99999-9999" />
+          <div class="text-xs font-semibold text-slate-700 mb-2">Serviços</div>
+
+          <!-- ✅ Se quiser rolar só a lista de serviços (além do scroll geral), mantenha este bloco -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[45vh] overflow-y-auto pr-1">
+            <?php foreach ($services as $s): ?>
+              <?php
+                $k = (string)($s['service_key'] ?? '');
+                $label = (string)($s['label'] ?? $k);
+                $price = (float)($s['price'] ?? 0);
+                $mins  = (int)($s['duration_minutes'] ?? 0);
+              ?>
+              <label class="flex items-center gap-2 border rounded px-3 py-2 text-sm bg-white">
+                <input
+                  type="checkbox"
+                  class="js-svc"
+                  name="services[]"
+                  value="<?= sanitize($k) ?>"
+                  data-price="<?= htmlspecialchars((string)$price, ENT_QUOTES, 'UTF-8') ?>"
+                  data-minutes="<?= (int)$mins ?>"
+                >
+                <span class="font-medium"><?= sanitize($label) ?></span>
+                <span class="ml-auto text-slate-500">
+                  R$ <?= number_format($price, 2, ',', '.') ?> · <?= (int)$mins ?>min
+                </span>
+              </label>
+            <?php endforeach; ?>
+          </div>
         </div>
       </div>
 
-      <div>
-        <label class="text-xs font-semibold text-slate-700">Instagram (opcional)</label>
-        <input name="instagram" class="w-full border rounded px-3 py-2 text-sm" placeholder="@cliente" />
-      </div>
-
-      <div>
-        <div class="text-xs font-semibold text-slate-700 mb-2">Serviços</div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-          <?php foreach ($services as $s): ?>
-            <?php
-              $k = (string)($s['service_key'] ?? '');
-              $label = (string)($s['label'] ?? $k);
-              $price = (float)($s['price'] ?? 0);
-              $mins  = (int)($s['duration_minutes'] ?? 0);
-            ?>
-            <label class="flex items-center gap-2 border rounded px-3 py-2 text-sm bg-white">
-              <input
-                type="checkbox"
-                class="js-svc"
-                name="services[]"
-                value="<?= sanitize($k) ?>"
-                data-price="<?= htmlspecialchars((string)$price, ENT_QUOTES, 'UTF-8') ?>"
-                data-minutes="<?= (int)$mins ?>"
-              >
-              <span class="font-medium"><?= sanitize($label) ?></span>
-              <span class="ml-auto text-slate-500">
-                R$ <?= number_format($price, 2, ',', '.') ?> · <?= (int)$mins ?>min
-              </span>
-            </label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-
-      <div class="flex items-center justify-end gap-2 pt-2">
+      <!-- ✅ Footer fixo (fora do scroll) -->
+      <div class="p-4 border-t bg-white flex items-center justify-end gap-2">
         <button type="button" id="apptCancel" class="px-4 py-2 rounded border">Cancelar</button>
         <button class="px-4 py-2 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-500">
           Salvar agendamento
         </button>
       </div>
     </form>
+
   </div>
 </div>
 
@@ -403,7 +415,9 @@ include __DIR__ . '/views/partials/header.php';
     apptTime.value = btn.dataset.time;
     apptBarberId.value = btn.dataset.barberId;
     apptInfo.textContent = `${btn.dataset.date} às ${btn.dataset.time} — ${btn.dataset.barberName}`;
+
     resetServices();
+
     modal.classList.remove('hidden');
     modal.classList.add('flex');
   }
