@@ -79,28 +79,96 @@ define('ALLOWED_IMAGE_MIMES', [
 // VALIDAÇÃO DE TOKEN PARA API
 // =========================
 
-function checkApiToken(): void
+/**
+ * Retorna headers normalizados (minúsculo).
+ */
+function apiGetHeaders(): array
 {
-    // Tenta GET / POST primeiro
-    $token = $_GET['token'] ?? ($_POST['token'] ?? '');
+    $headers = [];
+    foreach ($_SERVER as $k => $v) {
+        if (strpos($k, 'HTTP_') === 0) {
+            $name = strtolower(str_replace('_', '-', substr($k, 5)));
+            $headers[$name] = $v;
+        }
+    }
+    // Alguns servidores colocam Authorization fora do HTTP_AUTHORIZATION
+    if (!empty($_SERVER['AUTHORIZATION']) && empty($headers['authorization'])) {
+        $headers['authorization'] = $_SERVER['AUTHORIZATION'];
+    }
+    if (!empty($_SERVER['HTTP_AUTHORIZATION']) && empty($headers['authorization'])) {
+        $headers['authorization'] = $_SERVER['HTTP_AUTHORIZATION'];
+    }
+    return $headers;
+}
 
-    // Se não vier, tenta ler do corpo RAW (JSON)
-    if ($token === '') {
-        $raw = $GLOBALS['__RAW_INPUT__'] ?? file_get_contents('php://input');
+/**
+ * Lê o RAW apenas uma vez e guarda em cache.
+ */
+function apiGetRawBody(): string
+{
+    if (isset($GLOBALS['__RAW_INPUT__']) && is_string($GLOBALS['__RAW_INPUT__'])) {
+        return $GLOBALS['__RAW_INPUT__'];
+    }
+    $raw = file_get_contents('php://input');
+    $GLOBALS['__RAW_INPUT__'] = is_string($raw) ? $raw : '';
+    return $GLOBALS['__RAW_INPUT__'];
+}
 
-        if ($raw !== false && $raw !== null && $raw !== '') {
-            // Cache do RAW pra não ler duas vezes
-            $GLOBALS['__RAW_INPUT__'] = $raw;
-            $decoded = json_decode($raw, true);
+/**
+ * Tenta extrair token de vários lugares.
+ */
+function apiExtractToken(): string
+{
+    // 1) GET/POST
+    $token = (string)($_GET['token'] ?? ($_POST['token'] ?? ''));
+    if ($token !== '') return $token;
 
-            if (is_array($decoded) && isset($decoded['token'])) {
-                $token = (string)$decoded['token'];
-            }
+    // 2) Headers (Activepieces/Waha costuma mandar em header)
+    $headers = apiGetHeaders();
+
+    // 2.1) Authorization: Bearer xxx
+    if (!empty($headers['authorization'])) {
+        $auth = trim((string)$headers['authorization']);
+        if (preg_match('/^Bearer\s+(.+)$/i', $auth, $m)) {
+            $t = trim($m[1]);
+            if ($t !== '') return $t;
+        }
+        // também aceita Authorization: <token>
+        if ($auth !== '') return $auth;
+    }
+
+    // 2.2) X-API-Token: xxx (ou x-api-key)
+    if (!empty($headers['x-api-token'])) {
+        $t = trim((string)$headers['x-api-token']);
+        if ($t !== '') return $t;
+    }
+    if (!empty($headers['x-api-key'])) {
+        $t = trim((string)$headers['x-api-key']);
+        if ($t !== '') return $t;
+    }
+
+    // 3) JSON body: { "token": "xxx" }
+    $raw = apiGetRawBody();
+    if ($raw !== '') {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded) && isset($decoded['token'])) {
+            $t = trim((string)$decoded['token']);
+            if ($t !== '') return $t;
         }
     }
 
-    // Valida token
-    if ($token === API_TOKEN_IA) {
+    return '';
+}
+
+/**
+ * Valida token da API.
+ * Use no começo dos endpoints que precisam de proteção.
+ */
+function checkApiToken(): void
+{
+    $token = apiExtractToken();
+
+    if ($token !== '' && hash_equals((string)API_TOKEN_IA, (string)$token)) {
         return;
     }
 
@@ -111,6 +179,5 @@ function checkApiToken(): void
         'data'    => null,
         'error'   => 'Token ausente ou inválido',
     ], JSON_UNESCAPED_UNICODE);
-
     exit;
 }
