@@ -22,7 +22,7 @@ if ($envBaseUrl === false) {
     $envBaseUrl = '';
 }
 // remove barra no final pra evitar "//uploads"
-$envBaseUrl = rtrim($envBaseUrl, '/');
+$envBaseUrl = rtrim((string)$envBaseUrl, '/');
 define('BASE_URL', $envBaseUrl);
 
 // =========================
@@ -34,19 +34,21 @@ $dbName = getenv('DB_NAME');
 $dbUser = getenv('DB_USER');
 $dbPass = getenv('DB_PASS');
 
-define('DB_HOST', $dbHost !== false && $dbHost !== '' ? $dbHost : 'localhost');
-define('DB_NAME', $dbName !== false && $dbName !== '' ? $dbName : 'crm_codex');
-define('DB_USER', $dbUser !== false && $dbUser !== '' ? $dbUser : 'root');
-define('DB_PASS', $dbPass !== false && $dbPass !== '' ? $dbPass : '');
+define('DB_HOST', $dbHost !== false && $dbHost !== '' ? (string)$dbHost : 'localhost');
+define('DB_NAME', $dbName !== false && $dbName !== '' ? (string)$dbName : 'crm_codex');
+define('DB_USER', $dbUser !== false && $dbUser !== '' ? (string)$dbUser : 'root');
+define('DB_PASS', $dbPass !== false && $dbPass !== '' ? (string)$dbPass : '');
 
 // =========================
 // TOKEN PARA AGENTES DE IA
 // =========================
 
 $envTokenIa = getenv('API_TOKEN_IA');
+$envTokenIa = $envTokenIa !== false ? trim((string)$envTokenIa) : '';
+
 define(
     'API_TOKEN_IA',
-    $envTokenIa !== false && $envTokenIa !== ''
+    $envTokenIa !== ''
         ? $envTokenIa
         : 'minha_chave_super_secreta_local_dev'
 );
@@ -76,99 +78,80 @@ define('ALLOWED_IMAGE_MIMES', [
 ]);
 
 // =========================
-// VALIDAÇÃO DE TOKEN PARA API
+// HELPERS DE HEADER
 // =========================
 
-/**
- * Retorna headers normalizados (minúsculo).
- */
-function apiGetHeaders(): array
+function getRequestHeader(string $name): string
 {
-    $headers = [];
-    foreach ($_SERVER as $k => $v) {
-        if (strpos($k, 'HTTP_') === 0) {
-            $name = strtolower(str_replace('_', '-', substr($k, 5)));
-            $headers[$name] = $v;
+    $nameLower = strtolower($name);
+
+    // Tenta getallheaders() se existir
+    if (function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            foreach ($headers as $k => $v) {
+                if (strtolower((string)$k) === $nameLower) {
+                    return trim((string)$v);
+                }
+            }
         }
     }
-    // Alguns servidores colocam Authorization fora do HTTP_AUTHORIZATION
-    if (!empty($_SERVER['AUTHORIZATION']) && empty($headers['authorization'])) {
-        $headers['authorization'] = $_SERVER['AUTHORIZATION'];
-    }
-    if (!empty($_SERVER['HTTP_AUTHORIZATION']) && empty($headers['authorization'])) {
-        $headers['authorization'] = $_SERVER['HTTP_AUTHORIZATION'];
-    }
-    return $headers;
-}
 
-/**
- * Lê o RAW apenas uma vez e guarda em cache.
- */
-function apiGetRawBody(): string
-{
-    if (isset($GLOBALS['__RAW_INPUT__']) && is_string($GLOBALS['__RAW_INPUT__'])) {
-        return $GLOBALS['__RAW_INPUT__'];
-    }
-    $raw = file_get_contents('php://input');
-    $GLOBALS['__RAW_INPUT__'] = is_string($raw) ? $raw : '';
-    return $GLOBALS['__RAW_INPUT__'];
-}
-
-/**
- * Tenta extrair token de vários lugares.
- */
-function apiExtractToken(): string
-{
-    // 1) GET/POST
-    $token = (string)($_GET['token'] ?? ($_POST['token'] ?? ''));
-    if ($token !== '') return $token;
-
-    // 2) Headers (Activepieces/Waha costuma mandar em header)
-    $headers = apiGetHeaders();
-
-    // 2.1) Authorization: Bearer xxx
-    if (!empty($headers['authorization'])) {
-        $auth = trim((string)$headers['authorization']);
-        if (preg_match('/^Bearer\s+(.+)$/i', $auth, $m)) {
-            $t = trim($m[1]);
-            if ($t !== '') return $t;
-        }
-        // também aceita Authorization: <token>
-        if ($auth !== '') return $auth;
+    // Fallback via $_SERVER
+    $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
+    if (isset($_SERVER[$key])) {
+        return trim((string)$_SERVER[$key]);
     }
 
-    // 2.2) X-API-Token: xxx (ou x-api-key)
-    if (!empty($headers['x-api-token'])) {
-        $t = trim((string)$headers['x-api-token']);
-        if ($t !== '') return $t;
-    }
-    if (!empty($headers['x-api-key'])) {
-        $t = trim((string)$headers['x-api-key']);
-        if ($t !== '') return $t;
-    }
-
-    // 3) JSON body: { "token": "xxx" }
-    $raw = apiGetRawBody();
-    if ($raw !== '') {
-        $decoded = json_decode($raw, true);
-        if (is_array($decoded) && isset($decoded['token'])) {
-            $t = trim((string)$decoded['token']);
-            if ($t !== '') return $t;
-        }
+    // Alguns servers colocam Authorization aqui:
+    if ($nameLower === 'authorization' && isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+        return trim((string)$_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
     }
 
     return '';
 }
 
-/**
- * Valida token da API.
- * Use no começo dos endpoints que precisam de proteção.
- */
+// =========================
+// VALIDAÇÃO DE TOKEN PARA API
+// =========================
+
 function checkApiToken(): void
 {
-    $token = apiExtractToken();
+    $token = '';
 
-    if ($token !== '' && hash_equals((string)API_TOKEN_IA, (string)$token)) {
+    // 1) Header preferencial: X-API-Token
+    $token = getRequestHeader('X-API-Token');
+
+    // 2) Header Authorization: Bearer <token>
+    if ($token === '') {
+        $auth = getRequestHeader('Authorization');
+        if ($auth !== '' && preg_match('/Bearer\s+(.+)/i', $auth, $m)) {
+            $token = trim((string)$m[1]);
+        }
+    }
+
+    // 3) GET / POST
+    if ($token === '') {
+        $token = (string)($_GET['token'] ?? ($_POST['token'] ?? ''));
+        $token = trim($token);
+    }
+
+    // 4) JSON body
+    if ($token === '') {
+        $raw = $GLOBALS['__RAW_INPUT__'] ?? file_get_contents('php://input');
+        if ($raw !== false && $raw !== null && $raw !== '') {
+            $GLOBALS['__RAW_INPUT__'] = $raw; // cache
+            $decoded = json_decode((string)$raw, true);
+            if (is_array($decoded) && isset($decoded['token'])) {
+                $token = trim((string)$decoded['token']);
+            }
+        }
+    }
+
+    // compara (sempre trimmed)
+    $expected = trim((string)API_TOKEN_IA);
+
+    if ($token !== '' && hash_equals($expected, $token)) {
         return;
     }
 
