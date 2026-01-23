@@ -9,7 +9,6 @@ if (session_status() === PHP_SESSION_NONE) {
 
 // slug da empresa: via GET ou sessão
 $slug = $_GET['empresa'] ?? ($_SESSION['company_slug'] ?? '');
-
 if (!$slug) {
     echo 'Empresa não informada.';
     exit;
@@ -31,13 +30,34 @@ if (!$company) {
 $cartKey = 'cart_' . $company['slug'];
 $cart = $_SESSION[$cartKey] ?? [];
 
+/**
+ * ============================
+ * AÇÃO: REMOVER ITEM DO CARRINHO
+ * ============================
+ */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['cart_action'] ?? '') === 'remove_item') {
+    $pid = (int)($_POST['product_id'] ?? 0);
+
+    if ($pid > 0 && isset($cart[$pid])) {
+        unset($cart[$pid]);
+        $_SESSION[$cartKey] = $cart;
+
+        // se ficou vazio, limpa a chave
+        if (empty($_SESSION[$cartKey])) {
+            unset($_SESSION[$cartKey]);
+        }
+    }
+
+    header('Location: ' . BASE_URL . '/checkout.php?empresa=' . urlencode($slug));
+    exit;
+}
+
 $items = [];
 $total = 0.0;
 
 if (!empty($cart)) {
     $ids = array_keys($cart);
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
-
     $params = array_map('intval', $ids);
     array_unshift($params, (int)$company['id']);
 
@@ -48,21 +68,25 @@ if (!empty($cart)) {
 
     $map = [];
     foreach ($products as $p) {
-        $map[$p['id']] = $p;
+        $map[(int)$p['id']] = $p;
     }
 
     foreach ($cart as $productId => $qty) {
+        $productId = (int)$productId;
         if (!isset($map[$productId])) {
             continue;
         }
+
         $produto  = $map[$productId];
         $qty      = (int)$qty;
+        if ($qty <= 0) continue;
+
         $subtotal = $qty * (float)$produto['preco'];
         $total   += $subtotal;
 
         $items[] = [
-            'id'         => $produto['id'],
-            'nome'       => $produto['nome'],
+            'id'         => (int)$produto['id'],
+            'nome'       => (string)$produto['nome'],
             'preco'      => (float)$produto['preco'],
             'quantidade' => $qty,
             'subtotal'   => $subtotal,
@@ -71,7 +95,7 @@ if (!empty($cart)) {
 }
 
 // Se enviou o formulário, montar mensagem e redirecionar pro WhatsApp
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['cart_action']) && !empty($items)) {
     $nome = trim($_POST['nome'] ?? '');
     $tel  = trim($_POST['telefone'] ?? '');
     $obs  = trim($_POST['observacoes'] ?? '');
@@ -117,10 +141,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
         }
     }
 
-    // Deixa só dígitos (remove +, espaço, parênteses, etc)
+    // Deixa só dígitos
     $whatsapp = preg_replace('/\D+/', '', $whatsapp);
 
-    // DEBUG OPCIONAL: ver o texto que vai pro Whats na tela
+    // DEBUG OPCIONAL
     if (isset($_GET['debug'])) {
         echo '<pre>' . htmlspecialchars($mensagem) . '</pre>';
         echo '<hr>';
@@ -149,7 +173,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
     <meta charset="UTF-8">
     <title>Checkout - <?= sanitize($company['nome_fantasia']) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -159,17 +182,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
                 extend: {
                     fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
                     colors: {
-                        brand: {
-                            500: '#7c3aed',
-                            600: '#6d28d9',
-                            700: '#5b21b6',
-                        }
+                        brand: { 500: '#7c3aed', 600: '#6d28d9', 700: '#5b21b6' }
                     }
                 }
             }
         }
     </script>
 </head>
+
 <body class="bg-slate-950 text-white min-h-screen">
 <div class="absolute inset-0 -z-10 overflow-hidden">
     <div class="absolute -top-24 -left-10 h-80 w-80 bg-brand-600/30 rounded-full blur-3xl"></div>
@@ -177,17 +197,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
 </div>
 
 <div class="max-w-5xl mx-auto px-4 py-8 space-y-6">
+
     <!-- Cabeçalho -->
     <header class="flex items-center justify-between gap-4">
         <div>
             <p class="text-xs uppercase tracking-[0.2em] text-emerald-200/80">Checkout</p>
-            <h1 class="text-3xl font-bold tracking-tight">
-                Finalizar pedido
-            </h1>
+            <h1 class="text-3xl font-bold tracking-tight">Finalizar pedido</h1>
             <p class="text-sm text-slate-300 mt-1">
                 Revise seus itens e envie o pedido para o WhatsApp da loja.
             </p>
         </div>
+
         <div class="text-right">
             <p class="text-xs text-slate-400">Loja</p>
             <p class="font-semibold"><?= sanitize($company['nome_fantasia']) ?></p>
@@ -216,7 +236,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
             </a>
         </div>
     <?php else: ?>
+
         <div class="grid grid-cols-1 lg:grid-cols-[1.4fr,1fr] gap-6 items-start">
+
             <!-- Resumo do pedido -->
             <section class="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 shadow-xl">
                 <div class="flex items-center justify-between">
@@ -229,14 +251,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
                 <div class="divide-y divide-white/10">
                     <?php foreach ($items as $item): ?>
                         <div class="py-3 flex items-start justify-between gap-3">
-                            <div>
-                                <p class="font-medium">
+                            <div class="min-w-0">
+                                <p class="font-medium break-words">
                                     <?= sanitize($item['nome']) ?>
                                 </p>
                                 <p class="text-xs text-slate-300 mt-1">
                                     <?= (int)$item['quantidade'] ?> x <?= format_currency($item['preco']) ?>
                                 </p>
+
+                                <!-- ✅ Remover item -->
+                                <form method="POST" class="mt-2">
+                                    <input type="hidden" name="cart_action" value="remove_item">
+                                    <input type="hidden" name="product_id" value="<?= (int)$item['id'] ?>">
+                                    <button
+                                        type="submit"
+                                        class="text-[11px] text-red-300 hover:text-red-200 underline"
+                                        onclick="return confirm('Remover este produto do carrinho?')"
+                                    >
+                                        Remover
+                                    </button>
+                                </form>
                             </div>
+
                             <p class="font-semibold text-emerald-300 whitespace-nowrap">
                                 <?= format_currency($item['subtotal']) ?>
                             </p>
@@ -266,18 +302,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
 
                 <form method="POST" class="space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-slate-200 mb-1">
-                            Nome
-                        </label>
+                        <label class="block text-sm font-medium text-slate-200 mb-1">Nome</label>
                         <input type="text" name="nome"
                                class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
                                placeholder="Seu nome completo">
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-slate-200 mb-1">
-                            Telefone / WhatsApp
-                        </label>
+                        <label class="block text-sm font-medium text-slate-200 mb-1">Telefone / WhatsApp</label>
                         <input type="text" name="telefone"
                                class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
                                placeholder="(00) 00000-0000">
@@ -287,9 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-slate-200 mb-1">
-                            Observações
-                        </label>
+                        <label class="block text-sm font-medium text-slate-200 mb-1">Observações</label>
                         <textarea name="observacoes" rows="3"
                                   class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
                                   placeholder="Ex.: tamanho, cor, ajuste de barra, forma de entrega, etc."></textarea>
@@ -306,8 +336,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($items)) {
                     </div>
                 </form>
             </section>
+
         </div>
     <?php endif; ?>
 </div>
+
 </body>
 </html>
