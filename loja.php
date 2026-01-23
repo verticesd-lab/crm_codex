@@ -28,6 +28,80 @@ if (!$company) {
     exit;
 }
 
+/**
+ * =====================================================
+ * ✅ TRACKING (Analytics) - salva 1 visita por página/dia
+ * Tabela esperada: site_visits
+ * - visitor_hash: cookie + company_id (sha256)
+ * - page: nome da página (ex: loja.php)
+ * - origin: utm_source / origem / source (se existir)
+ * - referrer: HTTP_REFERER (se existir)
+ * =====================================================
+ */
+function analytics_track_visit(PDO $pdo, int $companyId, string $page): void
+{
+    // 1) Cookie do visitante (1 ano)
+    $cookieName = 'visitor_id';
+    $visitorId = $_COOKIE[$cookieName] ?? '';
+
+    if ($visitorId === '' || strlen($visitorId) < 16) {
+        try {
+            $visitorId = bin2hex(random_bytes(16));
+        } catch (Throwable $e) {
+            $visitorId = uniqid('v_', true);
+        }
+
+        // setcookie precisa rodar antes de qualquer output
+        setcookie($cookieName, $visitorId, [
+            'expires'  => time() + (365 * 24 * 60 * 60),
+            'path'     => '/',
+            'secure'   => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+
+        // também coloca no $_COOKIE para uso imediato na mesma request
+        $_COOKIE[$cookieName] = $visitorId;
+    }
+
+    $visitorHash = hash('sha256', $companyId . '|' . $visitorId);
+
+    // 2) De-dup: 1 visita por página por dia por sessão (leve e confiável)
+    $dayKey = gmdate('Ymd'); // UTC
+    $sessionKey = "visit_logged_{$companyId}_" . preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $page) . "_{$dayKey}";
+    if (!empty($_SESSION[$sessionKey])) {
+        return;
+    }
+
+    // 3) Origin (opcional)
+    $origin = '';
+    foreach (['utm_source', 'origem', 'source'] as $k) {
+        if (!empty($_GET[$k])) { $origin = (string)$_GET[$k]; break; }
+        if (!empty($_POST[$k])) { $origin = (string)$_POST[$k]; break; }
+    }
+    $origin = $origin !== '' ? substr($origin, 0, 50) : null;
+
+    // 4) Referrer (opcional)
+    $referrer = $_SERVER['HTTP_REFERER'] ?? '';
+    $referrer = $referrer !== '' ? substr($referrer, 0, 255) : null;
+
+    // 5) Insere
+    try {
+        $ins = $pdo->prepare('
+            INSERT INTO site_visits (company_id, visitor_hash, page, origin, referrer, created_at)
+            VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())
+        ');
+        $ins->execute([$companyId, $visitorHash, $page, $origin, $referrer]);
+
+        $_SESSION[$sessionKey] = 1;
+    } catch (Throwable $e) {
+        // não quebra a página por causa do tracking
+    }
+}
+
+// chama tracking (página atual)
+analytics_track_visit($pdo, (int)$company['id'], basename(__FILE__));
+
 // Filtros
 $search    = trim($_GET['q'] ?? '');
 $categoria = trim($_GET['categoria'] ?? '');
