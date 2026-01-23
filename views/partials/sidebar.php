@@ -12,34 +12,29 @@ $currentBase   = basename($currentScript);
 
 // Links do menu
 $links = [
-    'Dashboard'              => $base . '/index.php',
-    'PDV'                    => $base . '/pos.php',
-    'Clientes'               => $base . '/clients.php',
-    'Funil / Oportunidades'  => $base . '/opportunities.php',
-    'Produtos/Serviços'      => $base . '/products.php',
+    'Dashboard'             => $base . '/index.php',
+    'PDV'                   => $base . '/pos.php',
+    'Clientes'              => $base . '/clients.php',
+    'Funil / Oportunidades' => $base . '/opportunities.php',
+    'Produtos/Serviços'     => $base . '/products.php',
 
-    // ✅ Importador
-    'Cadastro Inteligente'   => $base . '/products_imports.php',
+    'Cadastro Inteligente'  => $base . '/products_imports.php',
 
-    'Pedidos'                => $base . '/orders.php',
-    'Promoções'              => $base . '/promotions.php',
+    'Pedidos'               => $base . '/orders.php',
+    'Promoções'             => $base . '/promotions.php',
 
-    // ✅ KPIs (página antiga atual)
-    'KPIs'                   => $base . '/analytics.php',
+    'KPIs'                  => $base . '/kpis.php',
+    'Analytics'             => $base . '/analytics.php',
 
-    // ✅ NOVO Analytics do site (tracking)
-    'Analytics'              => $base . '/site_analytics.php',
+    'Canais'                => $base . '/integrations.php',
+    'Insights IA'           => $base . '/insights.php',
+    'Agenda'                => $base . '/calendar.php',
 
-    'Canais'                 => $base . '/integrations.php',
-    'Insights IA'            => $base . '/insights.php',
-    'Agenda'                 => $base . '/calendar.php',
+    'Agenda Barbearia'      => $base . '/calendar_barbearia.php',
+    'Serviços Barbearia'    => $base . '/services_admin.php',
 
-    // ✅ Barbearia
-    'Agenda Barbearia'       => $base . '/calendar_barbearia.php',
-    'Serviços Barbearia'     => $base . '/services_admin.php',
-
-    'Equipe'                 => $base . '/staff.php',
-    'Configurações'          => $base . '/settings.php',
+    'Equipe'                => $base . '/staff.php',
+    'Configurações'         => $base . '/settings.php',
 ];
 ?>
 <aside class="w-64 min-h-screen sticky top-0 <?= $theme === 'dark'
@@ -58,7 +53,7 @@ $links = [
                 $hrefBase = basename($hrefPath);
                 $active   = ($hrefBase !== '' && $hrefBase === $currentBase);
             ?>
-            <a href="<?= $href ?>"
+            <a href="<?= sanitize($href) ?>"
                class="block px-3 py-2 rounded transition <?= $active ? 'bg-indigo-600' : 'hover:bg-slate-800' ?>">
                 <?= sanitize($label) ?>
             </a>
