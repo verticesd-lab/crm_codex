@@ -10,45 +10,42 @@ $base = defined('BASE_URL') ? rtrim(BASE_URL, '/') : '';
 $currentScript = $_SERVER['SCRIPT_NAME'] ?? '';
 $currentBase   = basename($currentScript);
 
-// ⚠️ Ajuste aqui se sua página de KPIs tiver outro nome (ex: analytics_kpis.php etc.)
-$kpisUrl = $base . '/kpis.php';
-
 // Links do menu
 $links = [
-    'Dashboard'             => $base . '/index.php',
-    'PDV'                   => $base . '/pos.php',
-    'Clientes'              => $base . '/clients.php',
-    'Funil / Oportunidades' => $base . '/opportunities.php',
-    'Produtos/Serviços'     => $base . '/products.php',
+    'Dashboard'              => $base . '/index.php',
+    'PDV'                    => $base . '/pos.php',
+    'Clientes'               => $base . '/clients.php',
+    'Funil / Oportunidades'  => $base . '/opportunities.php',
+    'Produtos/Serviços'      => $base . '/products.php',
 
     // ✅ Importador
-    'Cadastro Inteligente'  => $base . '/products_imports.php',
+    'Cadastro Inteligente'   => $base . '/products_imports.php',
 
-    'Pedidos'               => $base . '/orders.php',
-    'Promoções'             => $base . '/promotions.php',
+    'Pedidos'                => $base . '/orders.php',
+    'Promoções'              => $base . '/promotions.php',
 
-    // ✅ Métricas
-    'KPIs'                  => $kpisUrl,
-    'Analytics'             => $base . '/analytics.php',
+    // ✅ KPIs (página antiga atual)
+    'KPIs'                   => $base . '/analytics.php',
 
-    'Canais'                => $base . '/integrations.php',
-    'Insights IA'           => $base . '/insights.php',
-    'Agenda'                => $base . '/calendar.php',
+    // ✅ NOVO Analytics do site (tracking)
+    'Analytics'              => $base . '/site_analytics.php',
+
+    'Canais'                 => $base . '/integrations.php',
+    'Insights IA'            => $base . '/insights.php',
+    'Agenda'                 => $base . '/calendar.php',
 
     // ✅ Barbearia
-    'Agenda Barbearia'      => $base . '/calendar_barbearia.php',
-    'Serviços Barbearia'    => $base . '/services_admin.php',
+    'Agenda Barbearia'       => $base . '/calendar_barbearia.php',
+    'Serviços Barbearia'     => $base . '/services_admin.php',
 
-    'Equipe'                => $base . '/staff.php',
-    'Configurações'         => $base . '/settings.php',
+    'Equipe'                 => $base . '/staff.php',
+    'Configurações'          => $base . '/settings.php',
 ];
-
 ?>
-<aside class="w-64 min-h-screen sticky top-0
-    <?= $theme === 'dark'
-        ? 'bg-slate-900 text-white border-r border-slate-800'
-        : 'bg-slate-900 text-white border-r border-slate-800'
-    ?>">
+<aside class="w-64 min-h-screen sticky top-0 <?= $theme === 'dark'
+    ? 'bg-slate-900 text-white border-r border-slate-800'
+    : 'bg-slate-900 text-white border-r border-slate-800'
+?>">
     <div class="p-4 border-b border-slate-800">
         <p class="text-xs uppercase tracking-wide text-slate-400">Empresa</p>
         <p class="font-semibold text-lg"><?= sanitize($_SESSION['company_name'] ?? 'Minha Empresa') ?></p>
@@ -61,9 +58,8 @@ $links = [
                 $hrefBase = basename($hrefPath);
                 $active   = ($hrefBase !== '' && $hrefBase === $currentBase);
             ?>
-            <a href="<?= sanitize($href) ?>"
-               class="block px-3 py-2 rounded transition
-               <?= $active ? 'bg-indigo-600' : 'hover:bg-slate-800' ?>">
+            <a href="<?= $href ?>"
+               class="block px-3 py-2 rounded transition <?= $active ? 'bg-indigo-600' : 'hover:bg-slate-800' ?>">
                 <?= sanitize($label) ?>
             </a>
         <?php endforeach; ?>
