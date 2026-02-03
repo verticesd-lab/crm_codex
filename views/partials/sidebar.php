@@ -16,8 +16,9 @@ $links = [
     'PDV'                   => $base . '/pos.php',
     'Clientes'              => $base . '/clients.php',
     'Funil / Oportunidades' => $base . '/opportunities.php',
-    'Produtos/Serviços'     => $base . '/products.php',
+    'Atendimento'           => $base . '/atendimento.php', // <-- Nova funcionalidade adicionada aqui
 
+    'Produtos/Serviços'     => $base . '/products.php',
     'Cadastro Inteligente'  => $base . '/products_imports.php',
 
     'Pedidos'               => $base . '/orders.php',
