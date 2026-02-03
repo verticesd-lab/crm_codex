@@ -43,6 +43,13 @@ define(
 );
 
 // =========================
+// CONFIGURAÇÕES CHATWOOT
+// =========================
+define('CHATWOOT_BASE_URL', 'https://chat.formenstore.com.br');
+define('CHATWOOT_ACCOUNT_ID', 1);
+define('CHATWOOT_API_TOKEN', 'phFniTSrc4gRW7GZMALwygZU');
+
+// =========================
 // CONFIGURAÇÕES DE UPLOADS
 // =========================
 define('UPLOAD_DIR', __DIR__ . '/uploads');
