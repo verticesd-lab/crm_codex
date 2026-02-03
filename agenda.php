@@ -8,6 +8,12 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+// ✅ TRACKER (não quebra se o arquivo ainda não existir)
+$trackerPath = __DIR__ . '/analytics_tracker.php';
+if (file_exists($trackerPath)) {
+    require_once $trackerPath;
+}
+
 /**
  * ==============================
  * CONFIGURACAO DA AGENDA
@@ -56,6 +62,41 @@ if (!$company) {
 }
 
 $companyId = (int)$company['id'];
+
+// ✅ TRACKER: registra pageview (depois de ter $companyId)
+$pagePath = parse_url($_SERVER['REQUEST_URI'] ?? '/agenda.php', PHP_URL_PATH) ?: '/agenda.php';
+
+// tenta capturar origem por parâmetros comuns
+$origin = null;
+foreach (['origin', 'origem', 'utm_source'] as $k) {
+    if (isset($_GET[$k])) {
+        $v = trim((string)$_GET[$k]);
+        if ($v !== '') {
+            $origin = $v;
+            break;
+        }
+    }
+}
+
+/**
+ * Compatibilidade:
+ * - Se existir analytics_track_visit(PDO $pdo, int $companyId, string $pagePath, ?string $origin)
+ *   usa ela.
+ * - Senão, se existir track_page_view(PDO $pdo, int $companyId, string $pageKey)
+ *   usa ela (sem origin).
+ */
+try {
+    if (function_exists('analytics_track_visit')) {
+        analytics_track_visit($pdo, $companyId, $pagePath, $origin);
+    } elseif (function_exists('track_page_view')) {
+        // pageKey compacto (sem querystring)
+        $pageKey = ltrim($pagePath, '/');
+        if ($pageKey === '') $pageKey = 'agenda.php';
+        track_page_view($pdo, $companyId, $pageKey);
+    }
+} catch (Throwable $e) {
+    // tracking nunca pode derrubar a página
+}
 
 // Data selecionada
 $today = new DateTimeImmutable('today');
@@ -816,7 +857,7 @@ document.addEventListener('DOMContentLoaded', function () {
     bindToggle('hora', 'slot-button');
     bindToggle('barbeiro', 'barber-button');
 
-    // ✅ Botão "Mais Serviços" (sem mudar layout dos cards)
+    // ✅ Botão "Mais Serviços"
     const btnMore = document.getElementById('btnMoreServices');
     const moreWrap = document.getElementById('moreServicesWrap');
     if (btnMore && moreWrap) {

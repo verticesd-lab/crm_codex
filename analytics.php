@@ -6,121 +6,148 @@ require_login();
 $pdo = get_pdo();
 $companyId = current_company_id();
 
-$period = $_GET['period'] ?? 'mes';
-$dateFilter = '';
+$period = $_GET['period'] ?? '7d'; // hoje | 7d | mes | ano
+
+$where = 'company_id = ?';
+$params = [$companyId];
+
 if ($period === 'hoje') {
-    $dateFilter = 'AND DATE(o.created_at) = CURDATE()';
+    $where .= ' AND DATE(created_at) = CURDATE()';
 } elseif ($period === '7d') {
-    $dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-} else {
-    $dateFilter = 'AND DATE_FORMAT(o.created_at,"%Y-%m")=DATE_FORMAT(NOW(),"%Y-%m")';
+    $where .= ' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+} elseif ($period === 'ano') {
+    $where .= ' AND YEAR(created_at) = YEAR(NOW())';
+} else { // mes
+    $where .= ' AND DATE_FORMAT(created_at,"%Y-%m") = DATE_FORMAT(NOW(),"%Y-%m")';
 }
 
-$ordersByOrigem = $pdo->prepare("SELECT origem, COUNT(*) as total, SUM(total) as soma FROM orders o WHERE o.company_id=? $dateFilter GROUP BY origem");
-$ordersByOrigem->execute([$companyId]);
-$ordersByOrigem = $ordersByOrigem->fetchAll();
+/** Cards principais */
+$st = $pdo->prepare("SELECT COUNT(*) FROM site_visits WHERE $where");
+$st->execute($params);
+$pageviews = (int)$st->fetchColumn();
 
-$tags = $pdo->prepare("SELECT tags FROM clients WHERE company_id=? AND tags IS NOT NULL AND tags <> ''");
-$tags->execute([$companyId]);
-$tagCounts = [];
-foreach ($tags->fetchAll() as $row) {
-    $parts = array_map('trim', explode(',', $row['tags']));
-    foreach ($parts as $tag) {
-        if ($tag) {
-            $tagCounts[$tag] = ($tagCounts[$tag] ?? 0) + 1;
-        }
-    }
-}
-arsort($tagCounts);
+$st = $pdo->prepare("SELECT COUNT(DISTINCT visitor_hash) FROM site_visits WHERE $where");
+$st->execute($params);
+$uniqueVisitors = (int)$st->fetchColumn();
 
-$topProducts = $pdo->prepare("SELECT p.nome, SUM(oi.quantidade) as qtd, SUM(oi.subtotal) as valor FROM order_items oi JOIN orders o ON o.id=oi.order_id JOIN products p ON p.id=oi.product_id WHERE o.company_id=? $dateFilter GROUP BY p.id ORDER BY valor DESC LIMIT 5");
-$topProducts->execute([$companyId]);
-$topProducts = $topProducts->fetchAll();
+/** Gráfico por dia (últimos 30 dias do filtro) */
+$daily = [];
+$st = $pdo->prepare("
+    SELECT DATE(created_at) as d,
+           COUNT(*) as views,
+           COUNT(DISTINCT visitor_hash) as uniques
+    FROM site_visits
+    WHERE $where
+    GROUP BY DATE(created_at)
+    ORDER BY d DESC
+    LIMIT 30
+");
+$st->execute($params);
+$daily = array_reverse($st->fetchAll(PDO::FETCH_ASSOC) ?: []);
 
-$recentLogs = $pdo->prepare("SELECT l.*, u.nome FROM action_logs l JOIN users u ON u.id=l.user_id WHERE l.company_id=? ORDER BY l.created_at DESC LIMIT 10");
-$recentLogs->execute([$companyId]);
-$recentLogs = $recentLogs->fetchAll();
+/** Top páginas */
+$st = $pdo->prepare("
+    SELECT page, COUNT(*) as views, COUNT(DISTINCT visitor_hash) as uniques
+    FROM site_visits
+    WHERE $where
+    GROUP BY page
+    ORDER BY views DESC
+    LIMIT 10
+");
+$st->execute($params);
+$topPages = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+/** Origens */
+$st = $pdo->prepare("
+    SELECT COALESCE(origin,'(sem origem)') as origin, COUNT(*) as views
+    FROM site_visits
+    WHERE $where
+    GROUP BY origin
+    ORDER BY views DESC
+    LIMIT 10
+");
+$st->execute($params);
+$origins = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 include __DIR__ . '/views/partials/header.php';
 ?>
-<div class="flex items-center justify-between mb-3">
-    <h1 class="text-2xl font-semibold">KPIs</h1>
-    <form class="flex gap-2 items-center">
-        <input type="hidden" name="period" value="<?= sanitize($period) ?>">
-        <select name="period" onchange="this.form.submit()" class="rounded border-slate-300 dark:bg-slate-800 dark:border-slate-700 text-sm">
-            <option value="mes" <?= $period === 'mes' ? 'selected' : '' ?>>Mês atual</option>
-            <option value="hoje" <?= $period === 'hoje' ? 'selected' : '' ?>>Hoje</option>
-            <option value="7d" <?= $period === '7d' ? 'selected' : '' ?>>Últimos 7 dias</option>
+
+<div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-semibold">Analytics do site</h1>
+
+    <form class="flex items-center gap-2">
+        <select name="period" onchange="this.form.submit()"
+                class="rounded border-slate-300 dark:bg-slate-800 dark:border-slate-700 text-sm">
+            <option value="hoje" <?= $period==='hoje'?'selected':'' ?>>Hoje</option>
+            <option value="7d" <?= $period==='7d'?'selected':'' ?>>Últimos 7 dias</option>
+            <option value="mes" <?= $period==='mes'?'selected':'' ?>>Mês atual</option>
+            <option value="ano" <?= $period==='ano'?'selected':'' ?>>Ano atual</option>
         </select>
     </form>
 </div>
+
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
     <div class="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl p-4 shadow-sm">
-        <div class="flex items-center justify-between">
-            <h1 class="text-xl font-semibold">KPIs por origem</h1>
-            <span class="text-xs text-slate-500">Mês atual</span>
-        </div>
-        <div class="mt-3 space-y-2 text-sm">
-            <?php if ($ordersByOrigem): foreach ($ordersByOrigem as $row): ?>
-                <div class="flex items-center justify-between">
-                    <span class="font-medium"><?= sanitize($row['origem']) ?></span>
-                    <span><?= (int)$row['total'] ?> • <?= format_currency($row['soma']) ?></span>
-                </div>
-            <?php endforeach; else: ?>
-                <p class="text-slate-500 text-sm">Sem dados.</p>
-            <?php endif; ?>
-        </div>
+        <p class="text-sm text-slate-500">Visitantes únicos</p>
+        <p class="text-3xl font-bold"><?= (int)$uniqueVisitors ?></p>
     </div>
+
     <div class="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl p-4 shadow-sm">
-        <div class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold">Tags recorrentes</h2>
-            <span class="text-xs text-slate-500">Clientes</span>
-        </div>
-        <div class="mt-3 flex flex-wrap gap-2 text-sm">
-            <?php if ($tagCounts): foreach (array_slice($tagCounts,0,10) as $tag => $count): ?>
-                <span class="px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200"><?= sanitize($tag) ?> (<?= $count ?>)</span>
-            <?php endforeach; else: ?>
-                <p class="text-slate-500 text-sm">Sem tags.</p>
-            <?php endif; ?>
-        </div>
+        <p class="text-sm text-slate-500">Visualizações (pageviews)</p>
+        <p class="text-3xl font-bold"><?= (int)$pageviews ?></p>
     </div>
 </div>
 
 <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
     <div class="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl p-4 shadow-sm">
-        <div class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold">Top produtos/serviços</h2>
-            <span class="text-xs text-slate-500">Mês atual</span>
-        </div>
-        <div class="mt-3 space-y-2 text-sm">
-            <?php if ($topProducts): foreach ($topProducts as $row): ?>
-                <div class="flex items-center justify-between">
-                    <span class="font-medium"><?= sanitize($row['nome']) ?></span>
-                    <span><?= (int)$row['qtd'] ?> • <?= format_currency($row['valor']) ?></span>
-                </div>
-            <?php endforeach; else: ?>
-                <p class="text-slate-500 text-sm">Sem vendas no mês.</p>
-            <?php endif; ?>
-        </div>
-    </div>
-    <div class="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl p-4 shadow-sm">
-        <div class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold">Log de ações</h2>
-            <span class="text-xs text-slate-500">10 mais recentes</span>
-        </div>
-        <div class="mt-3 space-y-2 text-sm">
-            <?php if ($recentLogs): foreach ($recentLogs as $log): ?>
-                <div class="flex items-center justify-between">
-                    <div>
-                        <p class="font-medium"><?= sanitize($log['action']) ?></p>
-                        <p class="text-slate-500 text-xs"><?= sanitize($log['nome']) ?> • <?= date('d/m H:i', strtotime($log['created_at'])) ?></p>
+        <h2 class="text-lg font-semibold mb-3">Top páginas</h2>
+        <?php if (!$topPages): ?>
+            <p class="text-slate-500 text-sm">Sem dados ainda.</p>
+        <?php else: ?>
+            <div class="space-y-2 text-sm">
+                <?php foreach ($topPages as $r): ?>
+                    <div class="flex items-center justify-between gap-4">
+                        <span class="truncate max-w-[70%]"><?= sanitize($r['page']) ?></span>
+                        <span class="text-right whitespace-nowrap">
+                            <?= (int)$r['views'] ?> views • <?= (int)$r['uniques'] ?> únicos
+                        </span>
                     </div>
-                    <p class="text-slate-600 dark:text-slate-400 text-xs"><?= sanitize(mb_strimwidth($log['details'],0,40,'...')) ?></p>
-                </div>
-            <?php endforeach; else: ?>
-                <p class="text-slate-500 text-sm">Sem eventos.</p>
-            <?php endif; ?>
-        </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl p-4 shadow-sm">
+        <h2 class="text-lg font-semibold mb-3">Origens</h2>
+        <?php if (!$origins): ?>
+            <p class="text-slate-500 text-sm">Sem dados ainda.</p>
+        <?php else: ?>
+            <div class="space-y-2 text-sm">
+                <?php foreach ($origins as $r): ?>
+                    <div class="flex items-center justify-between">
+                        <span class="font-medium"><?= sanitize($r['origin']) ?></span>
+                        <span><?= (int)$r['views'] ?></span>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
     </div>
 </div>
+
+<div class="mt-6 bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl p-4 shadow-sm">
+    <h2 class="text-lg font-semibold mb-3">Evolução (até 30 dias)</h2>
+    <?php if (!$daily): ?>
+        <p class="text-slate-500 text-sm">Sem dados ainda.</p>
+    <?php else: ?>
+        <div class="space-y-2 text-sm">
+            <?php foreach ($daily as $r): ?>
+                <div class="flex items-center justify-between">
+                    <span><?= date('d/m/Y', strtotime($r['d'])) ?></span>
+                    <span><?= (int)$r['views'] ?> views • <?= (int)$r['uniques'] ?> únicos</span>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
+</div>
+
 <?php include __DIR__ . '/views/partials/footer.php'; ?>
