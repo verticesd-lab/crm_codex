@@ -8,6 +8,9 @@ require_login(); // <-- usa user_id + company_id (certo)
 
 // CONFIG: coloque seu link do inbox
 $CHATWOOT_INBOX_URL = 'https://chat.formenstore.com.br/app/accounts/1/inbox/1';
+
+// Se quiser abrir automaticamente ao entrar na página, descomente:
+// redirect($CHATWOOT_INBOX_URL);
 ?>
 <!doctype html>
 <html lang="pt-BR" class="dark">
@@ -17,11 +20,6 @@ $CHATWOOT_INBOX_URL = 'https://chat.formenstore.com.br/app/accounts/1/inbox/1';
   <title>Atendimento | CRM</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
-
-  <style>
-    /* ocupa a tela toda com aparência "nativa" */
-    .cw-frame { width: 100%; height: calc(100vh - 64px); border: 0; }
-  </style>
 </head>
 
 <body class="bg-slate-950 text-slate-100">
@@ -38,15 +36,37 @@ $CHATWOOT_INBOX_URL = 'https://chat.formenstore.com.br/app/accounts/1/inbox/1';
         </div>
       </div>
 
-      <div class="rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
-        <iframe
-          src="<?= htmlspecialchars($CHATWOOT_INBOX_URL, ENT_QUOTES, 'UTF-8'); ?>"
-          class="cw-frame"
-          allow="clipboard-read; clipboard-write; microphone"
-        ></iframe>
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-6">
+        <p class="text-sm text-slate-300">
+          Para segurança do navegador, o Chatwoot não pode ser embutido dentro do CRM via iframe.
+          Clique no botão abaixo para abrir a central em nova aba.
+        </p>
+
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <a
+            href="<?= sanitize($CHATWOOT_INBOX_URL) ?>"
+            target="_blank"
+            rel="noopener"
+            class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"
+          >
+            Abrir Central de Atendimento
+          </a>
+
+          <a
+            href="<?= sanitize($CHATWOOT_INBOX_URL) ?>"
+            class="inline-flex items-center justify-center rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 transition"
+          >
+            Abrir nesta aba
+          </a>
+        </div>
+
+        <div class="mt-4 text-xs text-slate-400">
+          Dica: se você quiser abrir automaticamente ao entrar nesta tela, descomente a linha:
+          <code class="px-1 py-0.5 bg-slate-950 border border-slate-800 rounded">redirect($CHATWOOT_INBOX_URL);</code>
+        </div>
       </div>
 
-      <!-- Próximo passo (painel do cliente) virá aqui -->
+      <!-- Próximo passo (integração com WhatsApp + automações) virá aqui -->
     </main>
   </div>
 
