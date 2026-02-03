@@ -16,25 +16,21 @@ $links = [
     'PDV'                   => $base . '/pos.php',
     'Clientes'              => $base . '/clients.php',
     'Funil / Oportunidades' => $base . '/opportunities.php',
-    'Atendimento'           => $base . '/atendimento.php', 
-    'Produtos/Serviços'     => $base . '/products.php',
+
+    // ✅ NOVO: Atendimento
+    'Atendimento'           => $base . '/atendimento.php',
 
     'Produtos/Serviços'     => $base . '/products.php',
     'Cadastro Inteligente'  => $base . '/products_imports.php',
-
     'Pedidos'               => $base . '/orders.php',
     'Promoções'             => $base . '/promotions.php',
-
     'KPIs'                  => $base . '/kpis.php',
     'Analytics'             => $base . '/analytics.php',
-
     'Canais'                => $base . '/integrations.php',
     'Insights IA'           => $base . '/insights.php',
     'Agenda'                => $base . '/calendar.php',
-
     'Agenda Barbearia'      => $base . '/calendar_barbearia.php',
     'Serviços Barbearia'    => $base . '/services_admin.php',
-
     'Equipe'                => $base . '/staff.php',
     'Configurações'         => $base . '/settings.php',
 ];
@@ -43,6 +39,7 @@ $links = [
     ? 'bg-slate-900 text-white border-r border-slate-800'
     : 'bg-slate-900 text-white border-r border-slate-800'
 ?>">
+
     <div class="p-4 border-b border-slate-800">
         <p class="text-xs uppercase tracking-wide text-slate-400">Empresa</p>
         <p class="font-semibold text-lg"><?= sanitize($_SESSION['company_name'] ?? 'Minha Empresa') ?></p>
