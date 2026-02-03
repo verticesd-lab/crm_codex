@@ -1,12 +1,10 @@
 <?php
+declare(strict_types=1);
+
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 
-// Proteção básica (ajuste conforme seu auth)
-if (empty($_SESSION['admin_logged_in'])) {
-  header('Location: /login.php');
-  exit;
-}
+require_login(); // <-- usa user_id + company_id (certo)
 
 // CONFIG: coloque seu link do inbox
 $CHATWOOT_INBOX_URL = 'https://chat.formenstore.com.br/app/accounts/1/inbox/1';
