@@ -6,15 +6,12 @@ declare(strict_types=1);
  * Rota: /api/chatwoot-webhook.php
  *
  * Segurança (opcional, recomendado):
- * - Preferir assinatura HMAC: ENV CHATWOOT_WEBHOOK_SECRET
- *   Header: X-Chatwoot-Signature
+ * - Se CHATWOOT_WEBHOOK_TOKEN estiver definido, valida:
+ *   - Authorization: Bearer TOKEN  (se você conseguir mandar header)
+ *   - OU token via querystring: ?token=TOKEN (recomendado, porque no Chatwoot UI geralmente não dá header)
  *
- * Segurança alternativa (opcional):
- * - Bearer token: ENV CHATWOOT_WEBHOOK_TOKEN
- *   Header: Authorization: Bearer SEU_TOKEN
- *
- * Log (opcional):
- * - ENV CHATWOOT_WEBHOOK_LOG=1 salva payload em /logs/chatwoot-webhook.log
+ * Log opcional:
+ * - CHATWOOT_WEBHOOK_LOG=1 grava em /logs/chatwoot-webhook.log
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -35,57 +32,11 @@ function envv(string $key, ?string $default = null): ?string {
   return $v;
 }
 
-function get_header(string $name): string {
-  $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
-  return (string)($_SERVER[$key] ?? '');
-}
-
 function get_bearer_token(): ?string {
   $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
   if (!$h) return null;
   if (stripos($h, 'Bearer ') === 0) return trim(substr($h, 7));
   return null;
-}
-
-function log_payload(string $raw): void {
-  if (envv('CHATWOOT_WEBHOOK_LOG', '0') !== '1') return;
-  $dir = __DIR__ . '/../logs';
-  if (!is_dir($dir)) @mkdir($dir, 0775, true);
-  $file = $dir . '/chatwoot-webhook.log';
-  $line = '[' . date('Y-m-d H:i:s') . '] ' . $raw . PHP_EOL;
-  @file_put_contents($file, $line, FILE_APPEND);
-}
-
-/**
- * Carrega PDO do seu projeto
- */
-function load_pdo(): PDO {
-  $candidates = [
-    __DIR__ . '/../db.php',
-    __DIR__ . '/../includes/db.php',
-  ];
-
-  foreach ($candidates as $path) {
-    if (!file_exists($path)) continue;
-    require_once $path;
-
-    if (function_exists('get_pdo')) {
-      $p = get_pdo();
-      if ($p instanceof PDO) {
-        $p->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $p->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-        return $p;
-      }
-    }
-
-    if (isset($pdo) && $pdo instanceof PDO) {
-      $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-      $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-      return $pdo;
-    }
-  }
-
-  throw new RuntimeException('Não encontrei PDO. Ajuste load_pdo() para apontar para seu arquivo db.php/get_pdo().');
 }
 
 function safe_str($v): ?string {
@@ -101,32 +52,77 @@ function normalize_phone(?string $phone): ?string {
   return $digits ?: null;
 }
 
-/**
- * Chatwoot message_type normalmente:
- * 0 = incoming
- * 1 = outgoing
- * 2/3 = activity/template (podemos ignorar se quiser)
- */
-function chatwoot_direction($message): string {
-  $mt = $message['message_type'] ?? null;
+function log_payload(array $payload): void {
+  if (envv('CHATWOOT_WEBHOOK_LOG', '0') !== '1') return;
+  $dir = __DIR__ . '/../logs';
+  if (!is_dir($dir)) @mkdir($dir, 0775, true);
+  $file = $dir . '/chatwoot-webhook.log';
+  $line = '[' . date('Y-m-d H:i:s') . '] ' . json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+  @file_put_contents($file, $line, FILE_APPEND);
+}
 
-  // vem numérico
-  if (is_numeric($mt)) {
-    $mt = (int)$mt;
-    if ($mt === 1) return 'outgoing';
-    if ($mt === 0) return 'incoming';
-    return 'activity';
+/**
+ * PDO do seu projeto
+ * No seu container existe /app/db.php com get_pdo()
+ */
+function load_pdo(): PDO {
+  $path = __DIR__ . '/../db.php';
+  if (!file_exists($path)) {
+    throw new RuntimeException('db.php não encontrado em ' . $path);
   }
 
-  // vem string (fallback)
-  $mt = safe_str($mt);
-  if ($mt === 'outgoing') return 'outgoing';
-  if ($mt === 'incoming') return 'incoming';
+  require_once $path;
 
-  $dir = safe_str($message['direction'] ?? null);
-  if ($dir) return $dir;
+  if (!function_exists('get_pdo')) {
+    throw new RuntimeException('Função get_pdo() não existe em db.php');
+  }
 
-  return 'incoming';
+  $pdo = get_pdo();
+  if (!$pdo instanceof PDO) {
+    throw new RuntimeException('get_pdo() não retornou PDO');
+  }
+
+  $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+  $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+  return $pdo;
+}
+
+function find_client_id(PDO $pdo, ?string $phoneDigits, ?string $email): ?int {
+  $email = $email ? strtolower(trim($email)) : null;
+
+  $tries = [
+    ['clients', ['phone', 'whatsapp', 'telefone', 'celular']],
+    ['client',  ['phone', 'whatsapp', 'telefone', 'celular']],
+  ];
+
+  foreach ($tries as [$table, $phoneCols]) {
+    if ($email) {
+      try {
+        $sql = "SELECT id FROM {$table} WHERE LOWER(email)=:email LIMIT 1";
+        $st = $pdo->prepare($sql);
+        $st->execute([':email' => $email]);
+        $row = $st->fetch();
+        if ($row && isset($row['id'])) return (int)$row['id'];
+      } catch (Throwable $e) {}
+    }
+
+    if ($phoneDigits) {
+      foreach ($phoneCols as $col) {
+        try {
+          $sql = "SELECT id FROM {$table}
+                  WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({$col},'(',''),')',''),'-',''),' ',''),'+',''),'.','') LIKE :p
+                  LIMIT 1";
+          $st = $pdo->prepare($sql);
+          $st->execute([':p' => '%' . $phoneDigits]);
+          $row = $st->fetch();
+          if ($row && isset($row['id'])) return (int)$row['id'];
+        } catch (Throwable $e) {}
+      }
+    }
+  }
+
+  return null;
 }
 
 function upsert_inbox(PDO $pdo, int $accountId, int $inboxId, ?string $name, ?string $channelType): void {
@@ -141,6 +137,23 @@ function upsert_inbox(PDO $pdo, int $accountId, int $inboxId, ?string $name, ?st
     ':inbox' => $inboxId,
     ':name' => $name,
     ':ctype' => $channelType,
+  ]);
+}
+
+function upsert_contact_map(PDO $pdo, int $accountId, int $contactId, ?int $clientId, ?string $phoneDigits, ?string $email): void {
+  $sql = "INSERT INTO chatwoot_contact_map (client_id, chatwoot_contact_id, chatwoot_account_id, phone, email)
+          VALUES (:client_id, :contact_id, :acc, :phone, :email)
+          ON DUPLICATE KEY UPDATE
+            client_id = COALESCE(VALUES(client_id), client_id),
+            phone = COALESCE(VALUES(phone), phone),
+            email = COALESCE(VALUES(email), email)";
+  $st = $pdo->prepare($sql);
+  $st->execute([
+    ':client_id' => $clientId,
+    ':contact_id' => $contactId,
+    ':acc' => $accountId,
+    ':phone' => $phoneDigits,
+    ':email' => $email ? strtolower(trim($email)) : null,
   ]);
 }
 
@@ -169,6 +182,7 @@ function upsert_message(PDO $pdo, int $accountId, int $conversationId, int $mess
           VALUES
             (:acc, :conv, :msg, :dir, :content, :ctype, :sname, :stype, :created_at_cw)
           ON DUPLICATE KEY UPDATE
+            direction = VALUES(direction),
             content = COALESCE(VALUES(content), content),
             content_type = COALESCE(VALUES(content_type), content_type),
             sender_name = COALESCE(VALUES(sender_name), sender_name),
@@ -188,30 +202,40 @@ function upsert_message(PDO $pdo, int $accountId, int $conversationId, int $mess
   ]);
 }
 
-// ---------------- MAIN ----------------
+/* ================= MAIN ================= */
 
+// Healthcheck via GET (pra você abrir no navegador sem confundir)
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+  json_response(true, ['status' => 'ok', 'hint' => 'use POST from Chatwoot'], null, 200);
+}
+
+// Só POST
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
   json_response(false, null, 'Method not allowed', 405);
 }
 
-$raw = (string)file_get_contents('php://input');
-if ($raw === '') {
-  json_response(false, null, 'Empty body', 400);
+// Auth opcional (se tiver token definido)
+$expectedToken = envv('CHATWOOT_WEBHOOK_TOKEN');
+if ($expectedToken) {
+  $gotBearer = get_bearer_token();
+  $gotQuery  = safe_str($_GET['token'] ?? null);
+
+  $ok = false;
+  if ($gotBearer && hash_equals($expectedToken, $gotBearer)) $ok = true;
+  if ($gotQuery  && hash_equals($expectedToken, $gotQuery))  $ok = true;
+
+  if (!$ok) {
+    json_response(false, null, 'Unauthorized', 401);
+  }
 }
 
-log_payload($raw);
-
-$payload = json_decode($raw, true);
+$raw = file_get_contents('php://input');
+$payload = json_decode((string)$raw, true);
 if (!is_array($payload)) {
   json_response(false, null, 'Invalid JSON payload', 400);
 }
 
-// ✅ Chatwoot às vezes manda tudo dentro de payload: { event: "...", payload: { conversation, message, inbox... } }
-$root = $payload;
-if (isset($payload['payload']) && is_array($payload['payload'])) {
-  // mantém "event" no root
-  $root = array_merge($payload['payload'], ['event' => $payload['event'] ?? $payload['event_name'] ?? null]);
-}
+log_payload($payload);
 
 try {
   $pdo = load_pdo();
@@ -219,18 +243,20 @@ try {
   json_response(false, null, $e->getMessage(), 500);
 }
 
-$event = safe_str($root['event'] ?? $root['event_name'] ?? null) ?? 'unknown';
+$event = safe_str($payload['event'] ?? $payload['event_name'] ?? null) ?? 'unknown';
 
-$accountId = (int)($root['account']['id']
-  ?? $root['account_id']
-  ?? $root['conversation']['account_id']
-  ?? $root['message']['account_id']
+// account_id
+$accountId = (int)($payload['account']['id']
+  ?? $payload['account_id']
+  ?? $payload['conversation']['account_id']
+  ?? $payload['message']['account_id']
   ?? 1);
+if ($accountId <= 0) $accountId = 1;
 
-$conversation = $root['conversation'] ?? null;
-$message      = $root['message'] ?? null;
-$inbox        = $root['inbox'] ?? ($conversation['inbox'] ?? null);
-$contact      = $root['contact'] ?? ($conversation['contact'] ?? null);
+$conversation = $payload['conversation'] ?? null;
+$message      = $payload['message'] ?? null;
+$contact      = $payload['contact'] ?? ($conversation['contact'] ?? null);
+$inbox        = $payload['inbox'] ?? ($conversation['inbox'] ?? null);
 
 // Inbox
 $inboxId = null;
@@ -241,15 +267,23 @@ if (is_array($inbox) && isset($inbox['id'])) {
   try { upsert_inbox($pdo, $accountId, $inboxId, $inboxName, $channelType); } catch (Throwable $e) {}
 }
 
-// (Opcional) se quiser usar depois: telefone/email normalizados
+// Contact + client
+$contactId   = null;
 $phoneDigits = null;
-$email = null;
-if (is_array($contact)) {
+$email       = null;
+$clientId    = null;
+
+if (is_array($contact) && isset($contact['id'])) {
+  $contactId = (int)$contact['id'];
   $phoneDigits = normalize_phone(safe_str($contact['phone_number'] ?? $contact['phone'] ?? null));
   $email = safe_str($contact['email'] ?? null);
+
+  try { $clientId = find_client_id($pdo, $phoneDigits, $email); } catch (Throwable $e) { $clientId = null; }
+
+  try { upsert_contact_map($pdo, $accountId, $contactId, $clientId, $phoneDigits, $email); } catch (Throwable $e) {}
 }
 
-// Conversation map (salva status/last_message_at)
+// Conversation map
 $conversationId = null;
 if (is_array($conversation) && isset($conversation['id'])) {
   $conversationId = (int)$conversation['id'];
@@ -265,7 +299,15 @@ if (is_array($conversation) && isset($conversation['id'])) {
   }
 
   try {
-    upsert_conversation_map($pdo, $accountId, $conversationId, $inboxId ? (int)$inboxId : null, null, $status, $lastMessageAt);
+    upsert_conversation_map(
+      $pdo,
+      $accountId,
+      $conversationId,
+      $inboxId ? (int)$inboxId : null,
+      $clientId ? (int)$clientId : null,
+      $status,
+      $lastMessageAt
+    );
   } catch (Throwable $e) {}
 }
 
@@ -273,18 +315,16 @@ if (is_array($conversation) && isset($conversation['id'])) {
 if (is_array($message) && isset($message['id'])) {
   $msgId = (int)$message['id'];
 
-  // conversa pode vir dentro da message
-  if (!$conversationId && isset($message['conversation_id'])) {
-    $conversationId = (int)$message['conversation_id'];
-  }
-  if (!$conversationId) {
-    json_response(true, ['event' => $event, 'saved' => false, 'reason' => 'message sem conversation_id'], null, 200);
-  }
+  // Chatwoot: message_type pode vir NUMÉRICO (0 incoming, 1 outgoing)
+  $mt = $message['message_type'] ?? null;
+  $direction = 'incoming';
 
-  $direction = chatwoot_direction($message);
-
-  // ignora activity/template se quiser (opcional)
-  // if ($direction === 'activity') { json_response(true, ['event'=>$event,'saved'=>false,'reason'=>'activity'], null, 200); }
+  if (is_numeric($mt)) {
+    $direction = ((int)$mt === 1) ? 'outgoing' : 'incoming';
+  } else {
+    $s = safe_str($mt) ?? safe_str($message['direction'] ?? null) ?? 'incoming';
+    $direction = in_array($s, ['incoming','outgoing'], true) ? $s : 'incoming';
+  }
 
   $content = safe_str($message['content'] ?? null);
   $contentType = safe_str($message['content_type'] ?? null);
@@ -296,8 +336,16 @@ if (is_array($message) && isset($message['id'])) {
   $createdAtChatwoot = null;
   if (isset($message['created_at']) && is_numeric($message['created_at'])) {
     $createdAtChatwoot = date('Y-m-d H:i:s', (int)$message['created_at']);
-  } else {
-    $createdAtChatwoot = safe_str($message['created_at'] ?? null);
+  } elseif (isset($message['created_at'])) {
+    $createdAtChatwoot = safe_str($message['created_at']);
+  }
+
+  if (!$conversationId && isset($message['conversation_id'])) {
+    $conversationId = (int)$message['conversation_id'];
+  }
+
+  if (!$conversationId) {
+    json_response(true, ['event' => $event, 'saved' => false, 'reason' => 'message sem conversation_id'], null, 200);
   }
 
   try {
@@ -311,7 +359,7 @@ json_response(true, [
   'event' => $event,
   'account_id' => $accountId,
   'inbox_id' => $inboxId,
+  'contact_id' => $contactId,
   'conversation_id' => $conversationId,
-  'phone' => $phoneDigits,
-  'email' => $email,
+  'client_id' => $clientId,
 ], null, 200);
