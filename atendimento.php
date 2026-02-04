@@ -111,11 +111,15 @@ async function fetchJSON(url, opt){
 }
 
 function convLabel(c){
-  const phone = (c.phone || '').trim();
-  const email = (c.email || '').trim();
+  const phone = (c.contact_phone || '').trim();
+  const email = (c.contact_email || '').trim();
+  const name  = (c.contact_name || '').trim();
+
+  if (name)  return name;
   if (phone) return phone;
   if (email) return email;
-  return 'Conversa #' + (c.chatwoot_conversation_id || '');
+
+  return 'Conversa #' + (c.conversation_id || c.id);
 }
 
 function renderList(rows){
@@ -166,7 +170,7 @@ async function loadConversations(){
 }
 
 async function openConversation(c){
-  selectedConversationId = parseInt(c.chatwoot_conversation_id, 10);
+  selectedConversationId = parseInt(c.conversation_id || c.id, 10);
 
   el('convTitle').textContent = convLabel(c);
   el('convMeta').textContent = `Conversa #${selectedConversationId} • Inbox ${c.chatwoot_inbox_id || '-'}`;
