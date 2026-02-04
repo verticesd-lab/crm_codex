@@ -141,8 +141,13 @@ function renderList(rows){
         <div class="font-semibold">${title}</div>
         <div class="text-xs text-slate-400">${status}</div>
       </div>
+      const preview = (c.last_content || '').slice(0, 80);
       <div class="text-xs text-slate-400 mt-1">${meta}</div>
     `;
+    <div class="text-xs text-slate-400 mt-1">
+     ${escapeHtml((c.last_sender_name ? (c.last_sender_name + ': ') : '') + preview)}
+    </div>
+
 
     item.onclick = () => openConversation(c);
     list.appendChild(item);

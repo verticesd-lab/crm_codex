@@ -6,36 +6,78 @@ require_once __DIR__ . '/../db.php';
 
 require_login();
 
-$pdo = get_pdo();
+header('Content-Type: application/json; charset=utf-8');
 
-$convId = (int)($_GET['conversation_id'] ?? 0);
-if ($convId <= 0) {
-  http_response_code(400);
-  echo json_encode(['ok'=>false,'error'=>'conversation_id inválido']);
+function out(bool $ok, $data = null, ?string $error = null, int $http = 200): void {
+  http_response_code($http);
+  echo json_encode([
+    'ok' => $ok,
+    'data' => $data,
+    'error' => $error,
+  ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   exit;
 }
 
-$limit = (int)($_GET['limit'] ?? 200);
-if ($limit < 1 || $limit > 500) $limit = 200;
+$conversationId = isset($_GET['conversation_id']) ? (int)$_GET['conversation_id'] : 0;
+if ($conversationId <= 0) out(false, null, 'conversation_id inválido', 400);
 
-$stmt = $pdo->prepare("
-  SELECT
-    chatwoot_message_id,
-    direction,
-    content,
-    content_type,
-    sender_name,
-    sender_type,
-    created_at_chatwoot,
-    created_at
-  FROM chatwoot_messages
-  WHERE chatwoot_account_id = ?
-    AND chatwoot_conversation_id = ?
-  ORDER BY COALESCE(created_at_chatwoot, created_at) ASC
-  LIMIT {$limit}
-");
-$stmt->execute([(int)CHATWOOT_ACCOUNT_ID, $convId]);
-$rows = $stmt->fetchAll();
+$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 400;
+if ($limit <= 0) $limit = 400;
+if ($limit > 1000) $limit = 1000;
 
-header('Content-Type: application/json; charset=utf-8');
-echo json_encode(['ok' => true, 'data' => $rows], JSON_UNESCAPED_UNICODE);
+try {
+  $pdo = get_pdo();
+  $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+  $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+  out(false, null, 'DB error: ' . $e->getMessage(), 500);
+}
+
+/**
+ * Fonte da verdade da timeline:
+ * chatwoot_messages.chatwoot_conversation_id = :conversation_id
+ *
+ * Importante:
+ * - ordenação ASC para renderizar como chat
+ * - created_at_chatwoot pode vir null em alguns casos, então usa id como fallback
+ */
+$sql = "
+SELECT
+  id,
+  chatwoot_message_id,
+  direction,
+  content,
+  content_type,
+  sender_name,
+  sender_type,
+  created_at_chatwoot
+FROM chatwoot_messages
+WHERE chatwoot_conversation_id = :cid
+ORDER BY
+  COALESCE(created_at_chatwoot, '1970-01-01 00:00:00') ASC,
+  id ASC
+LIMIT {$limit}
+";
+
+try {
+  $st = $pdo->prepare($sql);
+  $st->execute([':cid' => $conversationId]);
+  $rows = $st->fetchAll();
+
+  $data = array_map(function(array $r) {
+    return [
+      'id'                 => (int)$r['id'],
+      'chatwoot_message_id' => isset($r['chatwoot_message_id']) ? (int)$r['chatwoot_message_id'] : null,
+      'direction'          => (string)($r['direction'] ?? 'incoming'), // incoming|outgoing
+      'content'            => (string)($r['content'] ?? ''),
+      'content_type'       => (string)($r['content_type'] ?? ''),
+      'sender_name'        => (string)($r['sender_name'] ?? ''),
+      'sender_type'        => (string)($r['sender_type'] ?? ''),
+      'created_at'         => (string)($r['created_at_chatwoot'] ?? ''),
+    ];
+  }, $rows);
+
+  out(true, $data, null, 200);
+} catch (Throwable $e) {
+  out(false, null, 'Query error: ' . $e->getMessage(), 500);
+}
