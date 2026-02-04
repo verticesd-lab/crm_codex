@@ -214,21 +214,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
   json_response(false, null, 'Method not allowed', 405);
 }
 
-// Auth opcional (se tiver token definido)
-$expectedToken = envv('CHATWOOT_WEBHOOK_TOKEN');
-if ($expectedToken) {
-  $gotBearer = get_bearer_token();
-  $gotQuery  = safe_str($_GET['token'] ?? null);
-
-  $ok = false;
-  if ($gotBearer && hash_equals($expectedToken, $gotBearer)) $ok = true;
-  if ($gotQuery  && hash_equals($expectedToken, $gotQuery))  $ok = true;
-
-  if (!$ok) {
-    json_response(false, null, 'Unauthorized', 401);
-  }
-}
-
 $raw = file_get_contents('php://input');
 $payload = json_decode((string)$raw, true);
 if (!is_array($payload)) {
