@@ -1,83 +1,59 @@
 <?php
 declare(strict_types=1);
 
+header('Content-Type: application/json; charset=utf-8');
 require_once __DIR__ . '/../helpers.php';
 require_once __DIR__ . '/../db.php';
 
 require_login();
 
-header('Content-Type: application/json; charset=utf-8');
-
-function out(bool $ok, $data = null, ?string $error = null, int $http = 200): void {
+function json_response(bool $ok, $data=null, ?string $error=null, int $http=200): void {
   http_response_code($http);
-  echo json_encode([
-    'ok' => $ok,
-    'data' => $data,
-    'error' => $error,
-  ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  echo json_encode(['ok'=>$ok,'data'=>$data,'error'=>$error], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
   exit;
 }
 
-$conversationId = isset($_GET['conversation_id']) ? (int)$_GET['conversation_id'] : 0;
-if ($conversationId <= 0) out(false, null, 'conversation_id inválido', 400);
+$convId = (int)($_GET['conversation_id'] ?? 0);
+$limit  = max(1, min(800, (int)($_GET['limit'] ?? 400)));
 
-$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 400;
-if ($limit <= 0) $limit = 400;
-if ($limit > 1000) $limit = 1000;
+if ($convId <= 0) json_response(false, null, 'conversation_id inválido', 400);
 
 try {
   $pdo = get_pdo();
   $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-  $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-} catch (Throwable $e) {
-  out(false, null, 'DB error: ' . $e->getMessage(), 500);
-}
 
-/**
- * Fonte da verdade da timeline:
- * chatwoot_messages.chatwoot_conversation_id = :conversation_id
- *
- * Importante:
- * - ordenação ASC para renderizar como chat
- * - created_at_chatwoot pode vir null em alguns casos, então usa id como fallback
- */
-$sql = "
-SELECT
-  id,
-  chatwoot_message_id,
-  direction,
-  content,
-  content_type,
-  sender_name,
-  sender_type,
-  created_at_chatwoot
-FROM chatwoot_messages
-WHERE chatwoot_conversation_id = :cid
-ORDER BY
-  COALESCE(created_at_chatwoot, '1970-01-01 00:00:00') ASC,
-  id ASC
-LIMIT {$limit}
-";
+  $st = $pdo->prepare("
+    SELECT
+      id,
+      source,
+      direction,
+      sender_name,
+      content,
+      content_type,
+      created_at,
+      created_at_external
+    FROM atd_messages
+    WHERE conversation_id = :cid
+    ORDER BY COALESCE(created_at_external, created_at) ASC
+    LIMIT {$limit}
+  ");
+  $st->execute([':cid'=>$convId]);
+  $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
-try {
-  $st = $pdo->prepare($sql);
-  $st->execute([':cid' => $conversationId]);
-  $rows = $st->fetchAll();
-
-  $data = array_map(function(array $r) {
+  // adapta pro seu JS atual
+  $out = array_map(function($m){
     return [
-      'id'                 => (int)$r['id'],
-      'chatwoot_message_id' => isset($r['chatwoot_message_id']) ? (int)$r['chatwoot_message_id'] : null,
-      'direction'          => (string)($r['direction'] ?? 'incoming'), // incoming|outgoing
-      'content'            => (string)($r['content'] ?? ''),
-      'content_type'       => (string)($r['content_type'] ?? ''),
-      'sender_name'        => (string)($r['sender_name'] ?? ''),
-      'sender_type'        => (string)($r['sender_type'] ?? ''),
-      'created_at'         => (string)($r['created_at_chatwoot'] ?? ''),
+      'id' => (int)$m['id'],
+      'direction' => $m['direction'],
+      'sender_name' => $m['sender_name'],
+      'content' => $m['content'],
+      'content_type' => $m['content_type'],
+      'source' => $m['source'],
+      'created_at' => $m['created_at_external'] ?? $m['created_at'],
     ];
   }, $rows);
 
-  out(true, $data, null, 200);
+  json_response(true, $out);
 } catch (Throwable $e) {
-  out(false, null, 'Query error: ' . $e->getMessage(), 500);
+  json_response(false, null, 'Erro: '.$e->getMessage(), 500);
 }
