@@ -4,64 +4,97 @@ declare(strict_types=1);
 require_once __DIR__ . '/../helpers.php';
 require_once __DIR__ . '/../db.php';
 
+header('Content-Type: application/json; charset=utf-8');
+
+function json_response(bool $ok, $data = null, ?string $error = null, int $http = 200): void {
+  http_response_code($http);
+  echo json_encode(['ok' => $ok, 'data' => $data, 'error' => $error], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  exit;
+}
+
 require_login();
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-  http_response_code(405);
-  echo json_encode(['ok'=>false,'error'=>'Method not allowed']);
-  exit;
-}
-
 $raw = file_get_contents('php://input');
-$in = json_decode($raw, true);
-if (!is_array($in)) $in = $_POST;
+$body = json_decode((string)$raw, true);
+if (!is_array($body)) $body = $_POST;
 
-$convId = (int)($in['conversation_id'] ?? 0);
-$content = trim((string)($in['content'] ?? ''));
+$conversationId = (int)($body['conversation_id'] ?? 0);
+$content = trim((string)($body['content'] ?? ''));
 
-if ($convId <= 0 || $content === '') {
-  http_response_code(400);
-  echo json_encode(['ok'=>false,'error'=>'conversation_id/content inválidos']);
-  exit;
+if ($conversationId <= 0) json_response(false, null, 'conversation_id é obrigatório', 400);
+if ($content === '') json_response(false, null, 'content é obrigatório', 400);
+
+try {
+  $pdo = get_pdo();
+
+  // Pega telefone/email da conversa
+  $stc = $pdo->prepare("SELECT id, contact_phone, contact_email, contact_name FROM atd_conversations WHERE id = :id LIMIT 1");
+  $stc->execute([':id' => $conversationId]);
+  $conv = $stc->fetch(PDO::FETCH_ASSOC);
+
+  if (!$conv) json_response(false, null, 'Conversa não encontrada', 404);
+
+  $senderName = (string)($_SESSION['nome'] ?? 'CRM');
+
+  // Salva no banco
+  $stm = $pdo->prepare("
+    INSERT INTO atd_messages
+      (conversation_id, source, direction, external_message_id, external_conversation_id, sender_name, content, content_type, created_at_external)
+    VALUES
+      (:cid, 'crm', 'outgoing', NULL, NULL, :sender, :content, 'text', NULL)
+  ");
+  $stm->execute([
+    ':cid' => $conversationId,
+    ':sender' => $senderName,
+    ':content' => $content,
+  ]);
+
+  // Atualiza last_message_at
+  $pdo->prepare("UPDATE atd_conversations SET last_message_at = NOW() WHERE id = :id")->execute([':id' => $conversationId]);
+
+  // Dispara pro ActivePieces (opcional, mas recomendado)
+  $webhook = getenv('ATD_OUTGOING_WEBHOOK_URL') ?: '';
+  $dispatched = false;
+  $dispatchError = null;
+
+  if ($webhook) {
+    $payload = [
+      'conversation_id' => (int)$conversationId,
+      'to_phone' => (string)($conv['contact_phone'] ?? ''),
+      'to_email' => (string)($conv['contact_email'] ?? ''),
+      'contact_name' => (string)($conv['contact_name'] ?? ''),
+      'content' => $content,
+      'sender_name' => $senderName,
+    ];
+
+    $ch = curl_init($webhook);
+    curl_setopt_array($ch, [
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_POST => true,
+      CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+      CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+      CURLOPT_TIMEOUT => 12,
+    ]);
+    $resp = curl_exec($ch);
+    $err  = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($err) {
+      $dispatchError = $err;
+    } elseif ($code >= 200 && $code < 300) {
+      $dispatched = true;
+    } else {
+      $dispatchError = "HTTP $code: " . (string)$resp;
+    }
+  }
+
+  json_response(true, [
+    'saved' => true,
+    'conversation_id' => $conversationId,
+    'dispatched' => $dispatched,
+    'dispatch_error' => $dispatchError,
+  ]);
+} catch (Throwable $e) {
+  json_response(false, null, 'Erro ao enviar: ' . $e->getMessage(), 500);
 }
-
-$base = rtrim((string)CHATWOOT_BASE_URL, '/');
-$url  = $base . '/api/v1/accounts/' . (int)CHATWOOT_ACCOUNT_ID . '/conversations/' . $convId . '/messages';
-
-$payload = json_encode([
-  'content' => $content,
-  'message_type' => 'outgoing',
-  // 'private' => false, // se quiser nota interna, true
-], JSON_UNESCAPED_UNICODE);
-
-$ch = curl_init($url);
-curl_setopt_array($ch, [
-  CURLOPT_RETURNTRANSFER => true,
-  CURLOPT_POST => true,
-  CURLOPT_HTTPHEADER => [
-    'Content-Type: application/json',
-    'api_access_token: ' . (string)CHATWOOT_API_TOKEN,
-  ],
-  CURLOPT_POSTFIELDS => $payload,
-  CURLOPT_TIMEOUT => 20,
-]);
-
-$res = curl_exec($ch);
-$err = curl_error($ch);
-$code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
-
-if ($res === false) {
-  http_response_code(500);
-  echo json_encode(['ok'=>false,'error'=>'curl error: '.$err]);
-  exit;
-}
-
-if ($code < 200 || $code >= 300) {
-  http_response_code(502);
-  echo json_encode(['ok'=>false,'error'=>'Chatwoot API HTTP '.$code, 'details'=>$res]);
-  exit;
-}
-
-header('Content-Type: application/json; charset=utf-8');
-echo json_encode(['ok'=>true,'data'=>json_decode($res, true)], JSON_UNESCAPED_UNICODE);

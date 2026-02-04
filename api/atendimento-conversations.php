@@ -1,64 +1,58 @@
 <?php
 declare(strict_types=1);
 
-header('Content-Type: application/json; charset=utf-8');
 require_once __DIR__ . '/../helpers.php';
 require_once __DIR__ . '/../db.php';
 
-require_login();
+header('Content-Type: application/json; charset=utf-8');
 
-function json_response(bool $ok, $data=null, ?string $error=null, int $http=200): void {
+function json_response(bool $ok, $data = null, ?string $error = null, int $http = 200): void {
   http_response_code($http);
-  echo json_encode(['ok'=>$ok,'data'=>$data,'error'=>$error], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+  echo json_encode(['ok' => $ok, 'data' => $data, 'error' => $error], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   exit;
 }
 
-$limit = max(1, min(200, (int)($_GET['limit'] ?? 80)));
-$q = trim((string)($_GET['q'] ?? ''));
+require_login();
 
-$companyId = (int)($_SESSION['company_id'] ?? 0);
+$q = trim((string)($_GET['q'] ?? ''));
+$limit = (int)($_GET['limit'] ?? 80);
+if ($limit < 1) $limit = 80;
+if ($limit > 200) $limit = 200;
 
 try {
   $pdo = get_pdo();
-  $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-  $where = [];
+  $where = '';
   $params = [];
 
-  if ($companyId > 0) {
-    $where[] = '(company_id = :company_id OR company_id IS NULL)'; // tolerante
-    $params[':company_id'] = $companyId;
-  }
-
   if ($q !== '') {
-    $where[] = '(contact_phone LIKE :q OR contact_email LIKE :q OR contact_name LIKE :q)';
-    $params[':q'] = '%'.$q.'%';
+    $where = "WHERE (contact_phone LIKE :q OR contact_email LIKE :q OR contact_name LIKE :q)";
+    $params[':q'] = '%' . $q . '%';
   }
 
-  $sql = "SELECT id, inbox_id, contact_phone AS phone, contact_email AS email, contact_name, status, last_message_at
-          FROM atd_conversations
-          ".($where ? "WHERE ".implode(' AND ', $where) : "")."
-          ORDER BY COALESCE(last_message_at, created_at) DESC
-          LIMIT {$limit}";
+  $sql = "
+    SELECT
+      c.*,
+      (
+        SELECT m.content
+        FROM atd_messages m
+        WHERE m.conversation_id = c.id
+        ORDER BY m.created_at DESC, m.id DESC
+        LIMIT 1
+      ) AS last_content
+    FROM atd_conversations c
+    $where
+    ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC, c.id DESC
+    LIMIT :lim
+  ";
+
   $st = $pdo->prepare($sql);
-  $st->execute($params);
+  foreach ($params as $k => $v) $st->bindValue($k, $v, PDO::PARAM_STR);
+  $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+  $st->execute();
+
   $rows = $st->fetchAll(PDO::FETCH_ASSOC);
-
-  // adapta pro seu JS atual (que espera chatwoot_conversation_id etc)
-  $out = array_map(function($r){
-    return [
-      'id' => (int)$r['id'],
-      'chatwoot_conversation_id' => (int)$r['id'], // usa interno como “id da conversa”
-      'chatwoot_inbox_id' => $r['inbox_id'] ? (int)$r['inbox_id'] : null,
-      'phone' => $r['phone'],
-      'email' => $r['email'],
-      'status' => $r['status'] ?? 'open',
-      'contact_name' => $r['contact_name'],
-      'last_message_at' => $r['last_message_at'],
-    ];
-  }, $rows);
-
-  json_response(true, $out);
+  json_response(true, $rows, null, 200);
 } catch (Throwable $e) {
-  json_response(false, null, 'Erro: '.$e->getMessage(), 500);
+  json_response(false, null, 'Erro ao listar conversas: ' . $e->getMessage(), 500);
 }

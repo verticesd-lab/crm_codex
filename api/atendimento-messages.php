@@ -1,32 +1,39 @@
 <?php
 declare(strict_types=1);
 
-header('Content-Type: application/json; charset=utf-8');
 require_once __DIR__ . '/../helpers.php';
 require_once __DIR__ . '/../db.php';
 
-require_login();
+header('Content-Type: application/json; charset=utf-8');
 
-function json_response(bool $ok, $data=null, ?string $error=null, int $http=200): void {
+function json_response(bool $ok, $data = null, ?string $error = null, int $http = 200): void {
   http_response_code($http);
-  echo json_encode(['ok'=>$ok,'data'=>$data,'error'=>$error], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+  echo json_encode(['ok' => $ok, 'data' => $data, 'error' => $error], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   exit;
 }
 
-$convId = (int)($_GET['conversation_id'] ?? 0);
-$limit  = max(1, min(800, (int)($_GET['limit'] ?? 400)));
+require_login();
 
-if ($convId <= 0) json_response(false, null, 'conversation_id inválido', 400);
+$conversationId = (int)($_GET['conversation_id'] ?? 0);
+$limit = (int)($_GET['limit'] ?? 200);
+if ($limit < 1) $limit = 200;
+if ($limit > 500) $limit = 500;
+
+if ($conversationId <= 0) {
+  json_response(false, null, 'conversation_id é obrigatório', 400);
+}
 
 try {
   $pdo = get_pdo();
-  $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
+  // Pega as últimas N em ordem DESC e depois inverte no PHP para exibir ASC no front
   $st = $pdo->prepare("
     SELECT
       id,
+      conversation_id,
       source,
       direction,
+      external_message_id,
       sender_name,
       content,
       content_type,
@@ -34,26 +41,17 @@ try {
       created_at_external
     FROM atd_messages
     WHERE conversation_id = :cid
-    ORDER BY COALESCE(created_at_external, created_at) ASC
-    LIMIT {$limit}
+    ORDER BY created_at DESC, id DESC
+    LIMIT :lim
   ");
-  $st->execute([':cid'=>$convId]);
+  $st->bindValue(':cid', $conversationId, PDO::PARAM_INT);
+  $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+  $st->execute();
+
   $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+  $rows = array_reverse($rows);
 
-  // adapta pro seu JS atual
-  $out = array_map(function($m){
-    return [
-      'id' => (int)$m['id'],
-      'direction' => $m['direction'],
-      'sender_name' => $m['sender_name'],
-      'content' => $m['content'],
-      'content_type' => $m['content_type'],
-      'source' => $m['source'],
-      'created_at' => $m['created_at_external'] ?? $m['created_at'],
-    ];
-  }, $rows);
-
-  json_response(true, $out);
+  json_response(true, $rows, null, 200);
 } catch (Throwable $e) {
-  json_response(false, null, 'Erro: '.$e->getMessage(), 500);
+  json_response(false, null, 'Erro ao carregar mensagens: ' . $e->getMessage(), 500);
 }
