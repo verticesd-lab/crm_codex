@@ -97,21 +97,22 @@ if ($direction !== 'incoming') {
 }
 
 // =====================
-// CHATWOOT PUBLIC API
+// CHATWOOT ACCOUNTS API (mais estável)
 // =====================
+$ACCOUNT_ID = (int)(getenv('CHATWOOT_ACCOUNT_ID') ?: 1);
+
 $headers = [
   'Content-Type' => 'application/json',
   'api_access_token' => $CHATWOOT_TOKEN,
 ];
 
-// 1) Create/Update Contact (idempotente por "identifier/source_id")
-//
-// Dica: usamos source_id = phone, assim o Chatwoot “reconhece” o mesmo contato.
-$createContactUrl = $CHATWOOT_BASE . "/public/api/v1/inboxes/{$INBOX_IDENTIFIER}/contacts";
+// 1) Create/Update Contact
+$createContactUrl = $CHATWOOT_BASE . "/api/v1/accounts/{$ACCOUNT_ID}/contacts";
+
 $contactPayload = [
   'name' => ($name !== '' ? $name : $phone),
-  'phone_number' => '+' . $phone,     // Chatwoot costuma aceitar E.164
-  'identifier' => $phone,             // idempotência
+  'phone_number' => '+' . $phone,
+  'identifier' => $phone,
   'custom_attributes' => [
     'source' => $source,
     'raw_phone' => $phone,
@@ -127,18 +128,47 @@ if (!$r1['ok']) {
   ], 'Falha ao criar contato no Chatwoot', 502);
 }
 
-// O contact_identifier pode vir como "id" ou "identifier" dependendo da versão.
-// Vamos cobrir os mais comuns:
+// Contact ID
 $contactJson = $r1['json'] ?? [];
-$contactId = $contactJson['id'] ?? ($contactJson['contact']['id'] ?? null);
-$contactIdentifier = $contactJson['identifier'] ?? ($contactJson['contact']['identifier'] ?? null);
+$contactId = $contactJson['payload']['contact']['id'] ?? ($contactJson['id'] ?? null);
+if (!$contactId) {
+  json_response(false, ['step'=>'create_contact','resp'=>$contactJson], 'Chatwoot não retornou contact_id', 502);
+}
 
-// fallback: se não vier identifier, usamos o telefone (como mandamos)
-if (!$contactIdentifier) $contactIdentifier = $phone;
+// 2) Create Conversation (precisa do inbox_id numérico)
+// Vamos buscar o inbox_id pelo identifier UMA vez e cachear opcionalmente
+$inboxId = null;
+$inboxesUrl = $CHATWOOT_BASE . "/api/v1/accounts/{$ACCOUNT_ID}/inboxes";
+$rIn = http_json('GET', $inboxesUrl, $headers, null);
 
-// 2) Create Conversation
-$createConvUrl = $CHATWOOT_BASE . "/public/api/v1/inboxes/{$INBOX_IDENTIFIER}/contacts/{$contactIdentifier}/conversations";
-$r2 = http_json('POST', $createConvUrl, $headers, []);
+if ($rIn['ok']) {
+  $list = $rIn['json']['payload'] ?? $rIn['json'] ?? [];
+  foreach ($list as $ib) {
+    // algumas versões usam "identifier" dentro de "channel" ou direto
+    $identifier = $ib['channel']['identifier'] ?? ($ib['identifier'] ?? '');
+    if ((string)$identifier === (string)$INBOX_IDENTIFIER) {
+      $inboxId = (int)($ib['id'] ?? 0);
+      break;
+    }
+  }
+}
+
+if (!$inboxId) {
+  json_response(false, [
+    'step' => 'find_inbox_id',
+    'resp' => $rIn['json'] ?? $rIn['raw'],
+  ], 'Não consegui resolver inbox_id numérico pelo identifier', 502);
+}
+
+// 3) Create Conversation
+$createConvUrl = $CHATWOOT_BASE . "/api/v1/accounts/{$ACCOUNT_ID}/conversations";
+$convPayload = [
+  'source_id' => 'waha:' . $phone,   // idempotência por canal
+  'inbox_id' => $inboxId,
+  'contact_id' => $contactId,
+];
+
+$r2 = http_json('POST', $createConvUrl, $headers, $convPayload);
 if (!$r2['ok']) {
   json_response(false, [
     'step' => 'create_conversation',
@@ -148,18 +178,17 @@ if (!$r2['ok']) {
 }
 
 $convJson = $r2['json'] ?? [];
-$conversationId = $convJson['id'] ?? ($convJson['conversation']['id'] ?? null);
+$conversationId = $convJson['id'] ?? ($convJson['payload']['id'] ?? null);
 if (!$conversationId) {
   json_response(false, ['step'=>'create_conversation','resp'=>$convJson], 'Chatwoot não retornou conversation_id', 502);
 }
 
-// 3) Create Message (incoming)
-$createMsgUrl = $CHATWOOT_BASE . "/public/api/v1/inboxes/{$INBOX_IDENTIFIER}/contacts/{$contactIdentifier}/conversations/{$conversationId}/messages";
-
+// 4) Create Message (incoming)
+$createMsgUrl = $CHATWOOT_BASE . "/api/v1/accounts/{$ACCOUNT_ID}/conversations/{$conversationId}/messages";
 $messagePayload = [
   'content' => $content,
-  // Evita duplicar (quando o WAHA reenviar): echo_id é importante
-  'echo_id' => ($externalId !== '' ? $externalId : ('waha_' . $phone . '_' . time())),
+  'message_type' => 'incoming',
+  'external_source_ids' => ($externalId !== '' ? $externalId : null),
 ];
 
 $r3 = http_json('POST', $createMsgUrl, $headers, $messagePayload);
@@ -172,9 +201,9 @@ if (!$r3['ok']) {
 }
 
 json_response(true, [
+  'account_id' => $ACCOUNT_ID,
   'inbox_identifier' => $INBOX_IDENTIFIER,
-  'contact_identifier' => $contactIdentifier,
+  'inbox_id' => $inboxId,
   'contact_id' => $contactId,
   'conversation_id' => (int)$conversationId,
-  'message_echo_id' => $messagePayload['echo_id'],
 ], null, 200);
