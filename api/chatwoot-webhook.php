@@ -66,20 +66,16 @@ function get_header(string $name): string {
 }
 
 /**
- * Validação do Chatwoot:
- * - Preferencial: HMAC SHA256 (X-Chatwoot-Signature) com CHATWOOT_WEBHOOK_SECRET
- * - Token simples é OPCIONAL (só se você ativar CHATWOOT_REQUIRE_TOKEN=1)
+ * Auth: prefer HMAC signature. Token é opcional (só se CHATWOOT_REQUIRE_TOKEN=1).
  */
 function validate_webhook(string $rawBody): void {
   $secret = (string)(getenv('CHATWOOT_WEBHOOK_SECRET') ?: '');
   $sigHdr = trim((string)get_header('X-Chatwoot-Signature'));
 
-  // Alguns builds mandam "sha256=<hash>"
   if (stripos($sigHdr, 'sha256=') === 0) {
     $sigHdr = substr($sigHdr, 7);
   }
 
-  // 1) Se veio assinatura, valida e encerra (é o caminho do Chatwoot)
   if ($secret !== '' && $sigHdr !== '') {
     $calc = hash_hmac('sha256', $rawBody, $secret);
     if (!hash_equals($calc, $sigHdr)) {
@@ -89,9 +85,6 @@ function validate_webhook(string $rawBody): void {
     return;
   }
 
-  // 2) Se NÃO veio assinatura:
-  // Por padrão, NÃO bloqueia o Chatwoot.
-  // Só exige token se você setar CHATWOOT_REQUIRE_TOKEN=1
   $requireToken = (string)(getenv('CHATWOOT_REQUIRE_TOKEN') ?: '0');
   if ($requireToken !== '1') {
     log_cw("AUTH no_signature allow (require_token=0)");
@@ -100,7 +93,7 @@ function validate_webhook(string $rawBody): void {
 
   $expected = (string)(getenv('CHATWOOT_WEBHOOK_TOKEN') ?: '');
   if ($expected === '') {
-    log_cw("AUTH require_token=1 but CHATWOOT_WEBHOOK_TOKEN empty");
+    log_cw("AUTH require_token=1 but token empty");
     json_response(false, null, 'Unauthorized', 401);
   }
 
@@ -122,19 +115,17 @@ function validate_webhook(string $rawBody): void {
 }
 
 /**
- * Extrai telefone e conteúdo do payload (robusto para variações).
+ * Helpers: extract fields
  */
 function extract_phone(array $p): string {
   $candidates = [
     $p['conversation']['meta']['sender']['phone_number'] ?? null,
     $p['conversation']['contact_inbox']['contact']['phone_number'] ?? null,
     $p['conversation']['contact']['phone_number'] ?? null,
-    $p['conversation']['contact']['phone_number'] ?? null,
     $p['contact']['phone_number'] ?? null,
     $p['sender']['phone_number'] ?? null,
     $p['message']['sender']['phone_number'] ?? null,
   ];
-
   foreach ($candidates as $v) {
     if (!is_string($v) || trim($v) === '') continue;
     $digits = preg_replace('/\D+/', '', $v);
@@ -176,8 +167,7 @@ function is_outgoing_human(array $p): bool {
 
   if ($mt !== 'outgoing') return false;
 
-  $isPrivate = (bool)($p['message']['private'] ?? false);
-  if ($isPrivate) return false;
+  if ((bool)($p['message']['private'] ?? false)) return false;
 
   $senderType = (string)($p['message']['sender_type'] ?? $p['sender_type'] ?? '');
   if ($senderType !== '' && strtolower($senderType) === 'bot') return false;
@@ -186,7 +176,29 @@ function is_outgoing_human(array $p): bool {
 }
 
 /**
- * Atualiza CRM: marca último reply humano e bloqueia IA por human_block_minutes.
+ * Schema-safe: checa se coluna existe.
+ */
+function has_column(PDO $pdo, string $table, string $column): bool {
+  static $cache = [];
+  $key = $table.'.'.$column;
+  if (isset($cache[$key])) return $cache[$key];
+
+  $st = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = :t
+      AND COLUMN_NAME = :c
+  ");
+  $st->execute([':t'=>$table, ':c'=>$column]);
+  $ok = ((int)$st->fetchColumn() > 0);
+  $cache[$key] = $ok;
+  return $ok;
+}
+
+/**
+ * Atualiza CRM: humano falou -> seta human_last_reply_at e bloqueia IA.
+ * Agora SEM quebrar se não tiver last_content.
  */
 function mark_human_reply(PDO $pdo, string $phone, string $name, string $content): void {
   $st = $pdo->prepare("SELECT id, human_block_minutes FROM atd_conversations WHERE contact_phone = :p LIMIT 1");
@@ -195,15 +207,23 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
 
   if (!$conv) {
     try {
-      $ins = $pdo->prepare("
-        INSERT INTO atd_conversations (contact_phone, contact_name, status, last_message_at, last_content, human_last_reply_at, human_block_minutes, created_at, updated_at)
-        VALUES (:phone, :name, 'open', NOW(), :content, NOW(), 60, NOW(), NOW())
-      ");
-      $ins->execute([
+      $cols = ['contact_phone','contact_name','status','last_message_at','human_last_reply_at','human_block_minutes','created_at','updated_at'];
+      $vals = [':phone',':name','\'open\'','NOW()','NOW()','60','NOW()','NOW()'];
+
+      if (has_column($pdo, 'atd_conversations', 'last_content')) {
+        $cols[] = 'last_content';
+        $vals[] = ':content';
+      }
+
+      $sql = "INSERT INTO atd_conversations (".implode(',', $cols).") VALUES (".implode(',', $vals).")";
+      $ins = $pdo->prepare($sql);
+      $params = [
         ':phone' => $phone,
         ':name' => ($name !== '' ? $name : $phone),
-        ':content' => mb_substr($content, 0, 500),
-      ]);
+      ];
+      if (strpos($sql, ':content') !== false) $params[':content'] = mb_substr($content, 0, 500);
+      $ins->execute($params);
+
       $convId = (int)$pdo->lastInsertId();
       log_cw("CRM conversation created id={$convId} phone={$phone}");
       $conv = ['id' => $convId, 'human_block_minutes' => 60];
@@ -217,36 +237,41 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
   $humanBlock = (int)($conv['human_block_minutes'] ?? 60);
   if ($humanBlock < 5) $humanBlock = 5;
 
-  $up = $pdo->prepare("
-    UPDATE atd_conversations
-    SET
-      last_message_at = NOW(),
-      last_content = :content,
-      contact_name = COALESCE(NULLIF(:name,''), contact_name),
-      human_last_reply_at = NOW(),
-      ai_next_allowed_at = GREATEST(
-        COALESCE(ai_next_allowed_at, '1970-01-01 00:00:00'),
-        DATE_ADD(NOW(), INTERVAL :mins MINUTE)
-      ),
-      updated_at = NOW()
-    WHERE id = :id
-  ");
-  $up->execute([
-    ':content' => mb_substr($content, 0, 500),
+  $set = [];
+  $params = [
+    ':id' => $convId,
     ':name' => $name,
     ':mins' => $humanBlock,
-    ':id' => $convId,
-  ]);
+    ':content' => mb_substr($content, 0, 500),
+  ];
 
+  $set[] = "last_message_at = NOW()";
+  $set[] = "contact_name = COALESCE(NULLIF(:name,''), contact_name)";
+  $set[] = "human_last_reply_at = NOW()";
+  $set[] = "ai_next_allowed_at = GREATEST(
+              COALESCE(ai_next_allowed_at, '1970-01-01 00:00:00'),
+              DATE_ADD(NOW(), INTERVAL :mins MINUTE)
+            )";
+  $set[] = "updated_at = NOW()";
+
+  if (has_column($pdo, 'atd_conversations', 'last_content')) {
+    $set[] = "last_content = :content";
+  }
+
+  $sqlUp = "UPDATE atd_conversations SET ".implode(",\n", $set)." WHERE id = :id";
+  $up = $pdo->prepare($sqlUp);
+  $up->execute($params);
+
+  // histórico (se existir tabela)
   try {
     $insm = $pdo->prepare("
       INSERT INTO atd_messages (conversation_id, source, direction, external_message_id, sender_name, content, content_type, created_at, created_at_external)
-      VALUES (:cid, 'chatwoot', 'outgoing', NULL, :sender, :content, 'text', NOW(), NOW())
+      VALUES (:cid, 'chatwoot', 'outgoing', NULL, :sender, :content_full, 'text', NOW(), NOW())
     ");
     $insm->execute([
       ':cid' => $convId,
       ':sender' => ($name !== '' ? $name : 'Agente'),
-      ':content' => $content,
+      ':content_full' => $content,
     ]);
   } catch (Throwable $e) {
     log_cw("CRM insert message skipped/failed conv={$convId} err=".$e->getMessage());
@@ -309,7 +334,7 @@ $name = extract_name($payload);
 $content = extract_content($payload);
 
 if ($phone === '' || $content === '') {
-  log_cw("MISSING_FIELDS phone=" . $phone . " content_len=" . strlen($content));
+  log_cw("MISSING_FIELDS phone={$phone} content_len=" . strlen($content));
   json_response(true, ['ignored'=>true,'reason'=>'missing_phone_or_content'], null, 200);
 }
 
