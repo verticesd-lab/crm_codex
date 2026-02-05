@@ -26,9 +26,7 @@ function http_json(string $method, string $url, array $headers, ?array $body=nul
     CURLOPT_CONNECTTIMEOUT => 10,
   ]);
 
-  if ($payload !== null) {
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-  }
+  if ($payload !== null) curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
 
   $resp = curl_exec($ch);
   $err  = curl_error($ch);
@@ -49,6 +47,7 @@ function http_json(string $method, string $url, array $headers, ?array $body=nul
 $CHATWOOT_BASE = rtrim((string)getenv('CHATWOOT_BASE_URL'), '/');
 $CHATWOOT_TOKEN = (string)getenv('CHATWOOT_API_ACCESS_TOKEN');
 $INBOX_IDENTIFIER = (string)getenv('CHATWOOT_INBOX_IDENTIFIER');
+$INBOX_ID_ENV = (int)(getenv('CHATWOOT_INBOX_ID') ?: 0); // opcional (recomendado)
 
 if ($CHATWOOT_BASE === '') $CHATWOOT_BASE = 'https://chat.formenstore.com.br';
 if ($INBOX_IDENTIFIER === '') $INBOX_IDENTIFIER = 'gHuxGfLktXnJvLMggKRQSzkE';
@@ -57,7 +56,7 @@ if ($CHATWOOT_TOKEN === '') {
   json_response(false, null, 'CHATWOOT_API_ACCESS_TOKEN não configurado no ambiente', 500);
 }
 
-// Token simples do bridge (recomendado)
+// Auth do bridge (WAHA/ActivePieces -> CRM)
 $expected = (string)(getenv('WAHA_BRIDGE_TOKEN') ?: '');
 if ($expected !== '') {
   $got = $_GET['token'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
@@ -89,9 +88,7 @@ $direction = (string)($msg['direction'] ?? 'incoming');
 
 if ($phone === '') json_response(false, null, 'contact.phone obrigatório', 400);
 if ($content === '') json_response(false, null, 'message.content obrigatório', 400);
-if ($direction !== 'incoming') {
-  json_response(false, null, 'direction deve ser incoming neste endpoint', 400);
-}
+if ($direction !== 'incoming') json_response(false, null, 'direction deve ser incoming neste endpoint', 400);
 
 // =====================
 // CHATWOOT ACCOUNTS API
@@ -103,51 +100,69 @@ $headers = [
   'api_access_token' => $CHATWOOT_TOKEN,
 ];
 
-// ---------- helper: encontrar inbox_id pelo identifier ----------
-function resolve_inbox_id(string $base, int $accountId, array $headers, string $identifier): int {
+// ---------- resolve inbox_id ----------
+function resolve_inbox_id(string $base, int $accountId, array $headers, string $inboxIdentifier): int {
   $url = $base . "/api/v1/accounts/{$accountId}/inboxes";
   $r = http_json('GET', $url, $headers, null);
-
   if (!$r['ok']) return 0;
 
-  $list = $r['json']['payload'] ?? $r['json'] ?? [];
+  $j = $r['json'] ?? [];
+  $list = null;
+
+  if (is_array($j)) {
+    if (isset($j['payload']) && is_array($j['payload'])) $list = $j['payload'];
+    elseif (isset($j['data']['payload']) && is_array($j['data']['payload'])) $list = $j['data']['payload'];
+    elseif (isset($j['data']) && is_array($j['data'])) $list = $j['data'];
+    elseif (array_is_list($j)) $list = $j;
+  }
+
   if (!is_array($list)) return 0;
 
   foreach ($list as $ib) {
+    if (!is_array($ib)) continue;
+
     $id = (int)($ib['id'] ?? 0);
-    $ident = $ib['channel']['identifier'] ?? ($ib['identifier'] ?? '');
-    if ((string)$ident === (string)$identifier) {
-      return $id;
+
+    // O seu build usa "inbox_identifier" ✅
+    $cand = [
+      (string)($ib['inbox_identifier'] ?? ''),
+      (string)($ib['identifier'] ?? ''),
+      (string)($ib['channel']['identifier'] ?? ''),
+      (string)($ib['messaging_channel']['identifier'] ?? ''),
+      (string)($ib['website_token'] ?? ''),
+    ];
+
+    foreach ($cand as $c) {
+      if ($c !== '' && $c === (string)$inboxIdentifier) return $id;
     }
   }
+
   return 0;
 }
 
-// ---------- helper: buscar contato ----------
+// ---------- contatos ----------
 function find_contact_id(string $base, int $accountId, array $headers, string $phone, string $identifier): int {
-  // 1) tenta search por telefone
   $url = $base . "/api/v1/accounts/{$accountId}/contacts/search?q=" . urlencode($phone);
   $r = http_json('GET', $url, $headers, null);
-  if ($r['ok']) {
-    $payload = $r['json']['payload'] ?? $r['json'] ?? [];
-    // payload pode vir como array de contatos
-    if (is_array($payload)) {
-      foreach ($payload as $c) {
-        $cid = (int)($c['id'] ?? 0);
-        $cident = (string)($c['identifier'] ?? '');
-        $cphone = preg_replace('/\D+/', '', (string)($c['phone_number'] ?? ''));
-        if ($cid && ($cident === $identifier || $cphone === $phone)) {
-          return $cid;
-        }
-      }
-    }
+  if (!$r['ok']) return 0;
+
+  $payload = $r['json']['payload'] ?? $r['json'] ?? [];
+  if (!is_array($payload)) return 0;
+
+  foreach ($payload as $c) {
+    if (!is_array($c)) continue;
+    $cid = (int)($c['id'] ?? 0);
+    if (!$cid) continue;
+
+    $cident = (string)($c['identifier'] ?? '');
+    $cphone = preg_replace('/\D+/', '', (string)($c['phone_number'] ?? ''));
+
+    if ($cident === $identifier || $cphone === $phone) return $cid;
   }
 
-  // 2) fallback: listar contatos com page (pesado) -> não fazer por padrão
   return 0;
 }
 
-// ---------- helper: criar contato ----------
 function create_contact(string $base, int $accountId, array $headers, string $phone, string $name, string $identifier, string $source): array {
   $url = $base . "/api/v1/accounts/{$accountId}/contacts";
   $payload = [
@@ -162,18 +177,18 @@ function create_contact(string $base, int $accountId, array $headers, string $ph
   return http_json('POST', $url, $headers, $payload);
 }
 
-// ---------- helper: buscar conversa existente (por source_id) ----------
+// ---------- conversas ----------
 function find_conversation_id(string $base, int $accountId, array $headers, int $inboxId, string $sourceId): int {
-  // lista conversas do inbox e tenta achar pelo source_id
-  // (limita 20 pra não pesar)
   $url = $base . "/api/v1/accounts/{$accountId}/conversations?inbox_id={$inboxId}&status=all&assignee_type=all&page=1";
   $r = http_json('GET', $url, $headers, null);
   if (!$r['ok']) return 0;
 
+  // formatos comuns
   $list = $r['json']['data']['payload'] ?? $r['json']['payload'] ?? $r['json'] ?? [];
   if (!is_array($list)) return 0;
 
   foreach ($list as $c) {
+    if (!is_array($c)) continue;
     $cid = (int)($c['id'] ?? 0);
     $sid = (string)($c['source_id'] ?? '');
     if ($cid && $sid === $sourceId) return $cid;
@@ -181,7 +196,6 @@ function find_conversation_id(string $base, int $accountId, array $headers, int 
   return 0;
 }
 
-// ---------- helper: criar conversa ----------
 function create_conversation(string $base, int $accountId, array $headers, int $inboxId, int $contactId, string $sourceId): array {
   $url = $base . "/api/v1/accounts/{$accountId}/conversations";
   $payload = [
@@ -193,9 +207,12 @@ function create_conversation(string $base, int $accountId, array $headers, int $
 }
 
 // =====================
-// 0) Resolve inbox_id
+// 0) inbox_id
 // =====================
-$inboxId = resolve_inbox_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $INBOX_IDENTIFIER);
+$inboxId = $INBOX_ID_ENV;
+if ($inboxId <= 0) {
+  $inboxId = resolve_inbox_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $INBOX_IDENTIFIER);
+}
 if (!$inboxId) {
   json_response(false, [
     'step' => 'find_inbox_id',
@@ -212,8 +229,8 @@ $contactId = find_contact_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phone, $ide
 if (!$contactId) {
   $r1 = create_contact($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phone, $name, $identifier, $source);
 
-  // Se deu 422 porque já existe, tenta buscar de novo
   if (!$r1['ok'] && (int)$r1['code'] === 422) {
+    // já existe: busca de novo
     $contactId = find_contact_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phone, $identifier);
   } elseif ($r1['ok']) {
     $j = $r1['json'] ?? [];
@@ -230,18 +247,16 @@ if (!$contactId) {
 }
 
 // =====================
-// 2) Find-or-Create Conversation (por source_id)
+// 2) Find-or-Create Conversation
 // =====================
 $sourceId = 'waha:' . $phone;
-
-// tenta achar já existente
 $conversationId = find_conversation_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $inboxId, $sourceId);
 
 if (!$conversationId) {
   $r2 = create_conversation($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $inboxId, $contactId, $sourceId);
 
-  // Se falhou porque "já existe" (varia), tenta achar de novo
   if (!$r2['ok']) {
+    // tenta achar de novo
     $conversationId = find_conversation_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $inboxId, $sourceId);
   } else {
     $j = $r2['json'] ?? [];
@@ -258,17 +273,16 @@ if (!$conversationId) {
 }
 
 // =====================
-// 3) Create Message (incoming)
+// 3) Create Message
 // =====================
 $createMsgUrl = $CHATWOOT_BASE . "/api/v1/accounts/{$ACCOUNT_ID}/conversations/{$conversationId}/messages";
+
 $messagePayload = [
   'content' => $content,
   'message_type' => 'incoming',
 ];
 
-// Evita mandar null
 if ($externalId !== '') {
-  // Alguns builds aceitam, outros ignoram; mantém sem quebrar
   $messagePayload['external_source_ids'] = $externalId;
 }
 
