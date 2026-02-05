@@ -198,7 +198,6 @@ function has_column(PDO $pdo, string $table, string $column): bool {
 
 /**
  * Atualiza CRM: humano falou -> seta human_last_reply_at e bloqueia IA.
- * Agora SEM quebrar se não tiver last_content.
  */
 function mark_human_reply(PDO $pdo, string $phone, string $name, string $content): void {
   $st = $pdo->prepare("SELECT id, human_block_minutes FROM atd_conversations WHERE contact_phone = :p LIMIT 1");
@@ -239,10 +238,9 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
 
   $set = [];
   $params = [
-    ':id' => $convId,
+    ':id'   => $convId,
     ':name' => $name,
     ':mins' => $humanBlock,
-    ':content' => mb_substr($content, 0, 500),
   ];
 
   $set[] = "last_message_at = NOW()";
@@ -256,6 +254,7 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
 
   if (has_column($pdo, 'atd_conversations', 'last_content')) {
     $set[] = "last_content = :content";
+    $params[':content'] = mb_substr($content, 0, 500); // ✅ só entra se usar
   }
 
   $sqlUp = "UPDATE atd_conversations SET ".implode(",\n", $set)." WHERE id = :id";
