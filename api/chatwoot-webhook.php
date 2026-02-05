@@ -68,33 +68,56 @@ function get_header(string $name): string {
 /**
  * Validação do Chatwoot:
  * - Preferencial: HMAC SHA256 (X-Chatwoot-Signature) com CHATWOOT_WEBHOOK_SECRET
- * - Fallback: token simples (?token=... ou Authorization: Bearer ...)
+ * - Token simples é OPCIONAL (só se você ativar CHATWOOT_REQUIRE_TOKEN=1)
  */
 function validate_webhook(string $rawBody): void {
-  // 1) HMAC signature do Chatwoot
   $secret = (string)(getenv('CHATWOOT_WEBHOOK_SECRET') ?: '');
-  $sigHdr = get_header('X-Chatwoot-Signature');
+  $sigHdr = trim((string)get_header('X-Chatwoot-Signature'));
 
+  // Alguns builds mandam "sha256=<hash>"
+  if (stripos($sigHdr, 'sha256=') === 0) {
+    $sigHdr = substr($sigHdr, 7);
+  }
+
+  // 1) Se veio assinatura, valida e encerra (é o caminho do Chatwoot)
   if ($secret !== '' && $sigHdr !== '') {
     $calc = hash_hmac('sha256', $rawBody, $secret);
-    // Alguns builds mandam "sha256=<hash>"
-    $sig = trim(str_replace('sha256=', '', (string)$sigHdr));
-    if (!hash_equals($calc, $sig)) {
-      log_cw("INVALID_SIGNATURE calc={$calc} hdr={$sig}");
-      json_response(false, null, 'Unauthorized (invalid signature)', 401);
+    if (!hash_equals($calc, $sigHdr)) {
+      log_cw("UNAUTHORIZED signature_mismatch");
+      json_response(false, null, 'Unauthorized', 401);
     }
     return;
   }
 
-  // 2) Token simples (se você quiser travar mesmo sem signature)
+  // 2) Se NÃO veio assinatura:
+  // Por padrão, NÃO bloqueia o Chatwoot.
+  // Só exige token se você setar CHATWOOT_REQUIRE_TOKEN=1
+  $requireToken = (string)(getenv('CHATWOOT_REQUIRE_TOKEN') ?: '0');
+  if ($requireToken !== '1') {
+    log_cw("AUTH no_signature allow (require_token=0)");
+    return;
+  }
+
   $expected = (string)(getenv('CHATWOOT_WEBHOOK_TOKEN') ?: '');
-  if ($expected !== '') {
-    $got = $_GET['token'] ?? (get_header('Authorization') ?: '');
-    $got = str_replace('Bearer ', '', (string)$got);
-    if (!hash_equals(trim($expected), trim((string)$got))) {
-      log_cw("UNAUTHORIZED token_mismatch");
-      json_response(false, null, 'Unauthorized', 401);
-    }
+  if ($expected === '') {
+    log_cw("AUTH require_token=1 but CHATWOOT_WEBHOOK_TOKEN empty");
+    json_response(false, null, 'Unauthorized', 401);
+  }
+
+  $tokenHeader =
+    (string)(get_header('X-Chatwoot-Webhook-Token') ?: '') ?:
+    (string)(get_header('X-Webhook-Token') ?: '');
+
+  $got =
+    (string)($_GET['token'] ?? '') ?:
+    (string)(get_header('Authorization') ?: '') ?:
+    (string)$tokenHeader;
+
+  $got = str_replace('Bearer ', '', trim((string)$got));
+
+  if (!hash_equals(trim($expected), trim($got))) {
+    log_cw("UNAUTHORIZED token_mismatch");
+    json_response(false, null, 'Unauthorized', 401);
   }
 }
 
@@ -105,6 +128,7 @@ function extract_phone(array $p): string {
   $candidates = [
     $p['conversation']['meta']['sender']['phone_number'] ?? null,
     $p['conversation']['contact_inbox']['contact']['phone_number'] ?? null,
+    $p['conversation']['contact']['phone_number'] ?? null,
     $p['conversation']['contact']['phone_number'] ?? null,
     $p['contact']['phone_number'] ?? null,
     $p['sender']['phone_number'] ?? null,
@@ -144,24 +168,17 @@ function extract_content(array $p): string {
 }
 
 function is_outgoing_human(array $p): bool {
-  // Chatwoot geralmente manda event: message_created
   $event = (string)($p['event'] ?? $p['type'] ?? '');
   if ($event !== '' && $event !== 'message_created') return false;
 
-  // message_type: incoming/outgoing
   $mt = (string)($p['message']['message_type'] ?? $p['message_type'] ?? '');
-  if ($mt === '') {
-    // fallback por direction
-    $mt = (string)($p['message']['direction'] ?? '');
-  }
+  if ($mt === '') $mt = (string)($p['message']['direction'] ?? '');
 
   if ($mt !== 'outgoing') return false;
 
-  // Ignora mensagens privadas/notas internas
   $isPrivate = (bool)($p['message']['private'] ?? false);
   if ($isPrivate) return false;
 
-  // sender_type: User (humano) / Agent / Bot
   $senderType = (string)($p['message']['sender_type'] ?? $p['sender_type'] ?? '');
   if ($senderType !== '' && strtolower($senderType) === 'bot') return false;
 
@@ -172,14 +189,11 @@ function is_outgoing_human(array $p): bool {
  * Atualiza CRM: marca último reply humano e bloqueia IA por human_block_minutes.
  */
 function mark_human_reply(PDO $pdo, string $phone, string $name, string $content): void {
-  // tenta achar conversa
   $st = $pdo->prepare("SELECT id, human_block_minutes FROM atd_conversations WHERE contact_phone = :p LIMIT 1");
   $st->execute([':p' => $phone]);
   $conv = $st->fetch(PDO::FETCH_ASSOC);
 
   if (!$conv) {
-    // Se não existir, tenta criar (se seu schema permitir)
-    // Se der erro por schema diferente, só loga e segue.
     try {
       $ins = $pdo->prepare("
         INSERT INTO atd_conversations (contact_phone, contact_name, status, last_message_at, last_content, human_last_reply_at, human_block_minutes, created_at, updated_at)
@@ -192,7 +206,6 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
       ]);
       $convId = (int)$pdo->lastInsertId();
       log_cw("CRM conversation created id={$convId} phone={$phone}");
-      // define conv para update de IA abaixo
       $conv = ['id' => $convId, 'human_block_minutes' => 60];
     } catch (Throwable $e) {
       log_cw("CRM create conversation FAILED phone={$phone} err=".$e->getMessage());
@@ -204,7 +217,6 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
   $humanBlock = (int)($conv['human_block_minutes'] ?? 60);
   if ($humanBlock < 5) $humanBlock = 5;
 
-  // Atualiza: humano falou agora -> bloqueia IA até NOW + humanBlock
   $up = $pdo->prepare("
     UPDATE atd_conversations
     SET
@@ -226,7 +238,6 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
     ':id' => $convId,
   ]);
 
-  // salva mensagem também no histórico do CRM (se existir tabela)
   try {
     $insm = $pdo->prepare("
       INSERT INTO atd_messages (conversation_id, source, direction, external_message_id, sender_name, content, content_type, created_at, created_at_external)
@@ -238,27 +249,14 @@ function mark_human_reply(PDO $pdo, string $phone, string $name, string $content
       ':content' => $content,
     ]);
   } catch (Throwable $e) {
-    // se sua tabela tiver schema diferente, não trava o fluxo
     log_cw("CRM insert message skipped/failed conv={$convId} err=".$e->getMessage());
   }
 }
 
 /**
- * Envia mensagem pro WhatsApp.
- * Você pode escolher 1 dos 2 modos:
- *
- * A) WAHA direto:
- *   WAHA_API_URL=https://SEU_WAHA:PORT/api/sendText
- *   WAHA_API_KEY=...
- *   WAHA_SESSION=default
- *
- * B) ActivePieces webhook:
- *   AP_OUT_WEBHOOK_URL=https://activepieces.../webhooks/...
- *
- * Se nenhum estiver setado, o webhook responde OK mas loga.
+ * Envia mensagem pro WhatsApp (ActivePieces ou WAHA).
  */
 function send_to_whatsapp(string $phone, string $content): array {
-  // B) ActivePieces (mais simples)
   $ap = (string)(getenv('AP_OUT_WEBHOOK_URL') ?: '');
   if ($ap !== '') {
     $r = http_json('POST', $ap, ['Content-Type' => 'application/json'], [
@@ -269,7 +267,6 @@ function send_to_whatsapp(string $phone, string $content): array {
     return ['mode'=>'activepieces', 'ok'=>$r['ok'], 'http'=>$r['code'], 'resp'=>$r['json'] ?? $r['raw']];
   }
 
-  // A) WAHA direto (ajuste conforme seu WAHA)
   $wahaUrl = (string)(getenv('WAHA_API_URL') ?: '');
   $wahaKey = (string)(getenv('WAHA_API_KEY') ?: '');
   $session = (string)(getenv('WAHA_SESSION') ?: 'default');
@@ -278,7 +275,6 @@ function send_to_whatsapp(string $phone, string $content): array {
     $headers = ['Content-Type' => 'application/json'];
     if ($wahaKey !== '') $headers['X-Api-Key'] = $wahaKey;
 
-    // Payload típico do WAHA (pode variar conforme seu setup)
     $payload = [
       'session' => $session,
       'chatId' => $phone . '@c.us',
@@ -304,7 +300,6 @@ if (!is_array($payload)) {
   json_response(false, null, 'Invalid JSON', 400);
 }
 
-// Só processa outgoing humano
 if (!is_outgoing_human($payload)) {
   json_response(true, ['ignored'=>true], null, 200);
 }
@@ -321,10 +316,8 @@ if ($phone === '' || $content === '') {
 try {
   $pdo = get_pdo();
 
-  // Atualiza guard: humano falou -> bloqueia IA por human_block_minutes
   mark_human_reply($pdo, $phone, $name, $content);
 
-  // Envia pro WhatsApp (WAHA ou ActivePieces)
   $send = send_to_whatsapp($phone, $content);
 
   log_cw("OUTGOING_OK phone={$phone} mode={$send['mode']} http={$send['http']}");
