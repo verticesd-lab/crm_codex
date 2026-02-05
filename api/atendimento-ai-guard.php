@@ -12,7 +12,7 @@ function json_response(bool $ok, $data=null, ?string $error=null, int $http=200)
   exit;
 }
 
-// Segurança simples por token (recomendado)
+// Token
 $expected = getenv('ATD_GUARD_TOKEN') ?: '';
 if ($expected !== '') {
   $got = $_GET['token'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
@@ -32,106 +32,80 @@ if ($phone === '') json_response(false, null, 'phone obrigatório', 400);
 try {
   $pdo = get_pdo();
 
-  // pega conversa pela phone
   $st = $pdo->prepare("SELECT * FROM atd_conversations WHERE contact_phone = :p LIMIT 1");
   $st->execute([':p' => $phone]);
   $conv = $st->fetch(PDO::FETCH_ASSOC);
 
-  // Se não existir conversa ainda, libera e cria “next_allowed” após a primeira resposta
+  // conversa nova: libera (o cooldown só passa a existir depois que a IA responder e setar ai_next_allowed_at)
   if (!$conv) {
     json_response(true, [
       'allow' => true,
       'reason' => 'new_conversation',
-      'cooldown_minutes' => 180,
+      'cooldown_minutes' => 120,
       'next_allowed_at' => null,
       'conversation_id' => null,
     ]);
   }
 
+  $conversationId = (int)$conv['id'];
+
   $enabled = (int)($conv['ai_enabled'] ?? 1) === 1;
-  $cooldown = (int)($conv['ai_cooldown_minutes'] ?? 180);
+  $cooldown = (int)($conv['ai_cooldown_minutes'] ?? 120);
   if ($cooldown < 5) $cooldown = 5;
 
   if (!$enabled) {
     json_response(true, [
       'allow' => false,
       'reason' => 'ai_disabled',
-      'conversation_id' => (int)$conv['id'],
+      'conversation_id' => $conversationId,
       'next_allowed_at' => $conv['ai_next_allowed_at'] ?? null,
       'cooldown_minutes' => $cooldown,
     ]);
   }
-    // Bloqueio por humano (modo híbrido)
-  $humanLast = $conv['human_last_reply_at'] ?? null;
-  $humanBlockMins = (int)($conv['human_block_minutes'] ?? 60);
-  if ($humanBlockMins < 5) $humanBlockMins = 5;
 
-  if ($humanLast) {
-    // se NOW() < human_last_reply_at + humanBlockMins => bloqueia IA
-    $st = $pdo->prepare("SELECT NOW() n, DATE_ADD(:hl, INTERVAL :mins MINUTE) until_block");
-    $st->execute([
-      ':hl' => $humanLast,
-      ':mins' => $humanBlockMins
-    ]);
-    $t = $st->fetch(PDO::FETCH_ASSOC);
-
-    $now = (string)$t['n'];
-    $until = (string)$t['until_block'];
-
-    if ($now < $until) {
-      json_response(true, [
-        'allow' => false,
-        'reason' => 'human_recent_reply',
-        'conversation_id' => (int)$conv['id'],
-        'human_last_reply_at' => $humanLast,
-        'human_block_minutes' => $humanBlockMins,
-        'human_block_until' => $until,
-      ]);
-    }
-  }
-  // Bloqueio por humano (modo híbrido)
-  $humanLast = $conv['human_last_reply_at'] ?? null;
-  $humanBlockMins = (int)($conv['human_block_minutes'] ?? 60);
-  if ($humanBlockMins < 5) $humanBlockMins = 5;
-
-  if ($humanLast) {
-    // se NOW() < human_last_reply_at + humanBlockMins => bloqueia IA
-    $st = $pdo->prepare("SELECT NOW() n, DATE_ADD(:hl, INTERVAL :mins MINUTE) until_block");
-    $st->execute([
-      ':hl' => $humanLast,
-      ':mins' => $humanBlockMins
-    ]);
-    $t = $st->fetch(PDO::FETCH_ASSOC);
-
-    $now = (string)$t['n'];
-    $until = (string)$t['until_block'];
-
-    if ($now < $until) {
-      json_response(true, [
-        'allow' => false,
-        'reason' => 'human_recent_reply',
-        'conversation_id' => (int)$conv['id'],
-        'human_last_reply_at' => $humanLast,
-        'human_block_minutes' => $humanBlockMins,
-        'human_block_until' => $until,
-      ]);
-    }
-  }
-
-
-  // Se estiver em cooldown
+  // 1) Cooldown da IA (ciclo principal)
   $next = $conv['ai_next_allowed_at'] ?? null;
   if ($next) {
-    $stNow = $pdo->query("SELECT NOW() n")->fetch(PDO::FETCH_ASSOC);
-    $now = (string)$stNow['n'];
+    $st = $pdo->prepare("SELECT NOW() < :next AS blocked, NOW() n");
+    $st->execute([':next' => $next]);
+    $t = $st->fetch(PDO::FETCH_ASSOC);
 
-    if ($now < $next) {
+    if ((int)$t['blocked'] === 1) {
       json_response(true, [
         'allow' => false,
-        'reason' => 'cooldown',
-        'conversation_id' => (int)$conv['id'],
+        'reason' => 'ai_cooldown',
+        'conversation_id' => $conversationId,
         'next_allowed_at' => $next,
         'cooldown_minutes' => $cooldown,
+        'now' => (string)$t['n'],
+      ]);
+    }
+  }
+
+  // 2) Bloqueio por humano (modo híbrido)
+  $humanLast = $conv['human_last_reply_at'] ?? null;
+  $humanBlockMins = (int)($conv['human_block_minutes'] ?? 60);
+  if ($humanBlockMins < 0) $humanBlockMins = 0;
+
+  if ($humanLast && $humanBlockMins > 0) {
+    $st = $pdo->prepare("
+      SELECT
+        NOW() n,
+        DATE_ADD(:hl, INTERVAL :mins MINUTE) until_block,
+        NOW() < DATE_ADD(:hl, INTERVAL :mins MINUTE) AS blocked
+    ");
+    $st->execute([':hl' => $humanLast, ':mins' => $humanBlockMins]);
+    $t = $st->fetch(PDO::FETCH_ASSOC);
+
+    if ((int)$t['blocked'] === 1) {
+      json_response(true, [
+        'allow' => false,
+        'reason' => 'human_block',
+        'conversation_id' => $conversationId,
+        'human_last_reply_at' => $humanLast,
+        'human_block_minutes' => $humanBlockMins,
+        'human_block_until' => (string)$t['until_block'],
+        'now' => (string)$t['n'],
       ]);
     }
   }
@@ -140,7 +114,7 @@ try {
   json_response(true, [
     'allow' => true,
     'reason' => 'ok',
-    'conversation_id' => (int)$conv['id'],
+    'conversation_id' => $conversationId,
     'cooldown_minutes' => $cooldown,
     'next_allowed_at' => $next,
   ]);
