@@ -16,31 +16,77 @@ require_login();
   <script src="https://cdn.tailwindcss.com"></script>
 
   <style>
-    .cw-safe-h { height: calc(100vh - 64px); } /* header */
-
+    /* Container de Mensagens */
     #messages {
-      background-image:
-        radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
-      background-size: 24px 24px;
-      scroll-behavior: smooth;
+      background-color: #0f172a; /* Fundo levemente mais claro que o preto */
+      background-image: radial-gradient(rgba(255,255,255,0.03) 1px, transparent 0);
+      background-size: 20px 20px;
+      display: flex;
+      flex-direction: column;
+      padding: 20px !important;
     }
 
-    #messages::-webkit-scrollbar {
-      width: 4px;
+    /* Separador de Data Estilo Chatwoot */
+    .date-divider {
+      display: flex;
+      align-items: center;
+      text-align: center;
+      margin: 24px 0;
+      color: #475569;
+    }
+    .date-divider::before, .date-divider::after {
+      content: '';
+      flex: 1;
+      border-bottom: 1px solid #1e293b;
+    }
+    .date-divider span {
+      padding: 0 15px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
-    #messages::-webkit-scrollbar-thumb {
-      background: #334155;
-      border-radius: 10px;
+    /* Base das Mensagens */
+    .msg-row {
+      display: flex;
+      width: 100%;
+      margin-bottom: 4px; /* Espaço curto entre mensagens do mesmo autor */
     }
 
-    #messages::-webkit-scrollbar-track {
-      background: transparent;
+    .msg-bubble {
+      max-width: 70%;
+      padding: 10px 14px;
+      font-size: 14px;
+      line-height: 1.5;
+      position: relative;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
 
-    .rounded-2xl:hover {
-      filter: brightness(1.1);
-      transition: filter 0.2s;
+    /* Lado do Cliente (Esquerda) */
+    .justify-start .msg-bubble {
+      background-color: #1e293b; /* Cinza azulado escuro */
+      color: #f1f5f9;
+      border-radius: 4px 16px 16px 16px;
+    }
+
+    /* Seu Lado / IA (Direita) */
+    .justify-end .msg-bubble {
+      background-color: #4f46e5; /* Indigo vibrante */
+      color: #ffffff;
+      border-radius: 16px 4px 16px 16px;
+    }
+
+    /* Se for IA, mudar a cor para diferenciar do humano */
+    .is-ia .msg-bubble {
+      background-color: #312e81; /* Roxo bem escuro */
+      border: 1px solid #4338ca;
+    }
+
+    .msg-time {
+      font-size: 10px;
+      opacity: 0.6;
+      margin-top: 4px;
     }
   </style>
 </head>
@@ -226,78 +272,53 @@ async function openConversation(c){
   await loadMessages(selectedConversationId);
 }
 
-function renderMessages(rows){
+function renderMessages(rows) {
   const box = el('messages');
   box.innerHTML = '';
 
-  if (!rows.length) {
-    box.innerHTML = '<div class="text-sm text-slate-500 text-center py-10">Início da conversa.</div>';
-    return;
-  }
-
-  let lastDateLabel = "";
+  let lastDate = "";
+  let lastSender = "";
 
   rows.forEach(m => {
-    // --- LÓGICA DE SEPARADOR DE DATA ---
     const dateObj = new Date(m.created_at);
-    // Formata para "06 de Fevereiro de 2026"
-    const dateLabel = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-
-    if (dateLabel !== lastDateLabel) {
-      const divider = document.createElement('div');
-      divider.className = 'flex justify-center my-6 sticky top-0 z-10';
-      divider.innerHTML = `
-        <span class="bg-slate-900/90 backdrop-blur text-slate-500 text-[10px] uppercase tracking-widest px-4 py-1 rounded-full border border-slate-800 shadow-sm">
-          ${dateLabel}
-        </span>
-      `;
-      box.appendChild(divider);
-      lastDateLabel = dateLabel;
-    }
-
-    // --- LÓGICA DE QUEM ENVIOU ---
+    const dateLabel = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' });
     const isOutgoing = (m.direction === 'outgoing');
-    // Se o sender_name contiver "IA", tratamos como robô
     const isIA = (m.sender_name && m.sender_name.toUpperCase().includes('IA'));
 
-    const row = document.createElement('div');
-    row.className = 'flex w-full mb-3 ' + (isOutgoing ? 'justify-end' : 'justify-start');
-
-    const content = (m.content || '');
-    const time = dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-    // Definimos as cores baseado no papel
-    let bubbleClass = "";
-    let senderLabel = m.sender_name || (isOutgoing ? 'Você' : 'Cliente');
-
-    if (!isOutgoing) {
-      bubbleClass = "bg-slate-800 border-slate-700 text-slate-200 rounded-tl-none"; // Cliente
-    } else if (isIA) {
-      bubbleClass = "bg-indigo-950/40 border-indigo-500/30 text-indigo-100 rounded-tr-none border"; // IA
-      senderLabel = "🤖 " + senderLabel;
-    } else {
-      bubbleClass = "bg-indigo-600 text-white rounded-tr-none"; // Humano (Você)
+    // --- SEPARADOR DE DATA ---
+    if (dateLabel !== lastDate) {
+      const div = document.createElement('div');
+      div.className = 'date-divider';
+      div.innerHTML = `<span>${dateLabel}</span>`;
+      box.appendChild(div);
+      lastDate = dateLabel;
     }
 
-    row.innerHTML = `
-      <div class="flex flex-col ${isOutgoing ? 'items-end' : 'items-start'} max-w-[80%]">
-        <div class="flex items-center gap-2 mb-1 px-1">
-          <span class="text-[10px] font-bold text-slate-500 uppercase tracking-tight">${escapeHtml(senderLabel)}</span>
-          <span class="text-[10px] text-slate-600">${time}</span>
-        </div>
+    // --- LINHA DA MENSAGEM ---
+    const row = document.createElement('div');
+    row.className = `msg-row ${isOutgoing ? 'justify-end is-ia' : 'justify-start'}`;
+    if (!isIA && isOutgoing) row.classList.remove('is-ia');
+    
+    const time = dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-        <div class="relative px-3 py-2 rounded-2xl text-[14px] shadow-sm ${bubbleClass}">
-          <div class="whitespace-pre-wrap leading-relaxed">${escapeHtml(content)}</div>
+    // Só mostra o nome se o autor mudar (estilo WhatsApp/Chatwoot)
+    const showName = (m.sender_name !== lastSender);
+    lastSender = m.sender_name;
+
+    row.innerHTML = `
+      <div class="flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}">
+        ${showName ? `<span class="text-[10px] text-slate-500 mb-1 font-bold uppercase ml-1 mr-1">${isIA ? '🤖 IA' : m.sender_name || (isOutgoing ? 'Você' : 'Cliente')}</span>` : ''}
+        <div class="msg-bubble">
+          <div class="whitespace-pre-wrap">${escapeHtml(m.content)}</div>
+          <div class="msg-time ${isOutgoing ? 'text-right' : 'text-left'}">${time}</div>
         </div>
       </div>
     `;
+    
     box.appendChild(row);
   });
 
-  // Scroll automático para a última mensagem
-  setTimeout(() => {
-    box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
-  }, 50);
+  box.scrollTop = box.scrollHeight;
 }
 
 async function loadMessages(convId){
