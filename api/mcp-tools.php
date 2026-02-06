@@ -114,6 +114,18 @@ $tools = [
             'required' => ['company_id', 'client_id'],
         ],
     ],
+    [
+        'name' => 'lock_ai',
+        'description' => 'Aplica bloqueio temporario da IA por telefone na empresa da sessao.',
+        'inputSchema' => [
+            'type' => 'object',
+            'properties' => [
+                'phone' => ['type' => 'string'],
+                'minutes' => ['type' => 'integer'],
+            ],
+            'required' => ['phone', 'minutes'],
+        ],
+    ],
 ];
 
 apiJsonResponse(true, [

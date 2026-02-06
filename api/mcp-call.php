@@ -37,7 +37,10 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $tool = trim((string)($payload['tool'] ?? ''));
-$tool = strtolower(str_replace(['-', ' '], '_', $tool));
+// Normaliza nomes vindos de diferentes clientes (snake_case, kebab-case, "lockAi", etc.)
+$tool = preg_replace('/([a-z])([A-Z])/', '$1_$2', $tool);
+$tool = strtolower(str_replace(['-', ' '], '_', (string)$tool));
+$tool = preg_replace('/_+/', '_', (string)$tool);
 
 $args = [];
 if (isset($payload['input']) && is_array($payload['input'])) {
@@ -62,6 +65,8 @@ if ($tool === '') {
     apiJsonError('tool obrigatorio');
 }
 
+$tool = trim(strtolower($tool));
+
 switch ($tool) {
     case 'client_search':
         handle_client_search($pdo, $args);
@@ -82,9 +87,11 @@ switch ($tool) {
         handle_client_timeline($pdo, $args);
         break;
     case 'lock_ai':
+    case 'lockai':
         handle_lock_ai($pdo, $args);
         break;
     default:
+        error_log('Tool recebida no MCP: ' . $tool);
         apiJsonError('tool invalido');
 }
 
