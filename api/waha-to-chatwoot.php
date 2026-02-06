@@ -11,6 +11,52 @@ function json_response(bool $ok, $data=null, ?string $error=null, int $http=200)
   exit;
 }
 
+/**
+ * Carrega variáveis do .env (fallback) + getenv (prioridade).
+ * Ajuste o caminho se seu .env estiver em outro lugar.
+ */
+function env_local(string $key, string $default = ''): string {
+  static $loaded = false;
+  static $map = [];
+
+  if (!$loaded) {
+    $loaded = true;
+    $map = [];
+
+    // tenta .env na raiz do projeto (../..), e também um .env ao lado do /api (../)
+    $candidates = [
+      dirname(__DIR__, 2) . '/.env',
+      dirname(__DIR__) . '/.env',
+    ];
+
+    foreach ($candidates as $envPath) {
+      if (!is_file($envPath)) continue;
+
+      foreach (file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) continue;
+
+        [$k, $v] = array_map('trim', explode('=', $line, 2));
+        $v = trim($v);
+        $v = trim($v, "\"'"); // remove aspas
+        if ($k !== '') $map[$k] = $v;
+      }
+    }
+  }
+
+  $g = getenv($key);
+  if ($g !== false && $g !== '') return (string)$g;
+
+  if (isset($map[$key]) && $map[$key] !== '') return (string)$map[$key];
+
+  return $default;
+}
+
+function get_header(string $name): ?string {
+  $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
+  return $_SERVER[$key] ?? null;
+}
+
 function http_json(string $method, string $url, array $headers, ?array $body=null, int $timeout=20): array {
   $ch = curl_init($url);
   $payload = $body ? json_encode($body, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) : null;
@@ -41,66 +87,159 @@ function http_json(string $method, string $url, array $headers, ?array $body=nul
   return ['ok'=>($code >= 200 && $code < 300), 'code'=>$code, 'error'=>null, 'raw'=>$resp, 'json'=>$json];
 }
 
+/**
+ * Normaliza telefone para dígitos puros:
+ * - aceita: "5565...@c.us", "5565...@s.whatsapp.net", "6685...@lid", "+55 (65) ..."
+ * - se vier @lid, usa remoteJidAlt se fornecido (melhor).
+ */
+function normalize_phone(string $raw, ?string $remoteAlt = null): string {
+  $raw = trim($raw);
+
+  // se veio @lid e temos alternativa real
+  if (str_contains($raw, '@lid') && $remoteAlt) {
+    $raw = trim($remoteAlt);
+  }
+
+  // remove sufixos whatsapp
+  $raw = str_replace(['@c.us', '@s.whatsapp.net', '@lid'], '', $raw);
+
+  // mantém só dígitos
+  $digits = preg_replace('/\D+/', '', $raw ?? '');
+  return (string)$digits;
+}
+
+/**
+ * Mask simples para log (não vaza token completo).
+ */
+function mask_token(string $s): string {
+  $s = trim($s);
+  if ($s === '') return '(empty)';
+  return str_repeat('*', max(0, strlen($s) - 6)) . substr($s, -6);
+}
+
 // =====================
-// CONFIG
+// CONFIG CHATWOOT
 // =====================
-$CHATWOOT_BASE = rtrim((string)getenv('CHATWOOT_BASE_URL'), '/');
-$CHATWOOT_TOKEN = (string)getenv('CHATWOOT_API_ACCESS_TOKEN');
-$INBOX_IDENTIFIER = (string)getenv('CHATWOOT_INBOX_IDENTIFIER');
-$INBOX_ID_ENV = (int)(getenv('CHATWOOT_INBOX_ID') ?: 0); // opcional (recomendado)
+$CHATWOOT_BASE = rtrim(env_local('CHATWOOT_BASE_URL', ''), '/');
+$CHATWOOT_TOKEN = env_local('CHATWOOT_API_ACCESS_TOKEN', '');
+$INBOX_IDENTIFIER = env_local('CHATWOOT_INBOX_IDENTIFIER', '');
+$INBOX_ID_ENV = (int)(env_local('CHATWOOT_INBOX_ID', '0')); // opcional
+$ACCOUNT_ID = (int)(env_local('CHATWOOT_ACCOUNT_ID', '1'));
 
 if ($CHATWOOT_BASE === '') $CHATWOOT_BASE = 'https://chat.formenstore.com.br';
 if ($INBOX_IDENTIFIER === '') $INBOX_IDENTIFIER = 'gHuxGfLktXnJvLMggKRQSzkE';
 
 if ($CHATWOOT_TOKEN === '') {
-  json_response(false, null, 'CHATWOOT_API_ACCESS_TOKEN não configurado no ambiente', 500);
+  json_response(false, null, 'CHATWOOT_API_ACCESS_TOKEN não configurado (env/.env)', 500);
 }
-
-// Auth do bridge (WAHA/ActivePieces -> CRM)
-$expected = (string)(getenv('WAHA_BRIDGE_TOKEN') ?: '');
-if ($expected !== '') {
-  $got = $_GET['token'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
-  $got = str_replace('Bearer ', '', (string)$got);
-  if (!hash_equals(trim($expected), trim((string)$got))) {
-    json_response(false, null, 'Unauthorized', 401);
-  }
-}
-
-// =====================
-// INPUT
-// =====================
-$raw = file_get_contents('php://input');
-$body = json_decode((string)$raw, true);
-if (!is_array($body)) $body = $_POST;
-
-$source = (string)($body['source'] ?? 'waha');
-$msg = $body['message'] ?? null;
-$contact = $body['contact'] ?? null;
-
-if (!is_array($msg)) json_response(false, null, 'message obrigatório', 400);
-if (!is_array($contact)) json_response(false, null, 'contact obrigatório', 400);
-
-$phone = preg_replace('/\D+/', '', (string)($contact['phone'] ?? ''));
-$name  = trim((string)($contact['name'] ?? ''));
-$content = (string)($msg['content'] ?? '');
-$externalId = (string)($msg['id'] ?? '');
-$direction = (string)($msg['direction'] ?? 'incoming');
-
-if ($phone === '') json_response(false, null, 'contact.phone obrigatório', 400);
-if ($content === '') json_response(false, null, 'message.content obrigatório', 400);
-if ($direction !== 'incoming') json_response(false, null, 'direction deve ser incoming neste endpoint', 400);
-
-// =====================
-// CHATWOOT ACCOUNTS API
-// =====================
-$ACCOUNT_ID = (int)(getenv('CHATWOOT_ACCOUNT_ID') ?: 1);
 
 $headers = [
   'Content-Type' => 'application/json',
   'api_access_token' => $CHATWOOT_TOKEN,
 ];
 
-// ---------- resolve inbox_id ----------
+// =====================
+// AUTH DO BRIDGE (WAHA/ActivePieces -> CRM)
+// =====================
+// Use WAHA_BRIDGE_TOKEN como token esperado.
+// (Opcional) Se vazio, não exige token.
+$expected = env_local('WAHA_BRIDGE_TOKEN', '');
+
+if ($expected !== '') {
+  $tokenHeader =
+    (string)(get_header('X-Chatwoot-Webhook-Token') ?: '') ?:
+    (string)(get_header('X-Webhook-Token') ?: '');
+
+  $got =
+    (string)($_GET['token'] ?? '') ?:
+    (string)(get_header('Authorization') ?: '') ?:
+    (string)$tokenHeader;
+
+  $got = str_replace('Bearer ', '', trim((string)$got));
+
+  if (!hash_equals(trim($expected), trim($got))) {
+    // se você tiver função de log no helpers, ótimo; se não tiver, não quebra.
+    if (function_exists('log_cw')) {
+      log_cw("UNAUTHORIZED bridge_token expected=" . mask_token($expected) . " got=" . mask_token($got));
+    }
+    json_response(false, null, 'Unauthorized', 401);
+  }
+}
+
+// =====================
+// INPUT (aceita 2 formatos)
+// =====================
+// Formato A (antigo):
+// { source, contact:{name,phone}, message:{id,content,direction,timestamp} }
+//
+// Formato B (novo do ActivePieces):
+// { source, fromMe, phone_raw, chatId, pushName, messageId, timestamp, text }
+// ou com remoteJidAlt etc.
+$raw = file_get_contents('php://input');
+$body = json_decode((string)$raw, true);
+if (!is_array($body)) $body = $_POST;
+
+$source = (string)($body['source'] ?? 'waha');
+
+// Detecta formato
+$msg = $body['message'] ?? null;
+$contact = $body['contact'] ?? null;
+
+$direction = 'incoming';
+$content = '';
+$externalId = '';
+$pushName = '';
+$phoneDigits = '';
+$rawPhone = '';
+$remoteAlt = null; // remoteJidAlt
+$chatId = '';
+$fromMe = null;
+$ts = null;
+
+if (is_array($msg) && is_array($contact)) {
+  // -------- Formato A --------
+  $rawPhone = (string)($contact['phone'] ?? '');
+  $pushName = trim((string)($contact['name'] ?? ''));
+  $content = (string)($msg['content'] ?? '');
+  $externalId = (string)($msg['id'] ?? '');
+  $direction = (string)($msg['direction'] ?? 'incoming');
+  $ts = $msg['timestamp'] ?? null;
+
+  $phoneDigits = preg_replace('/\D+/', '', $rawPhone);
+} else {
+  // -------- Formato B --------
+  $rawPhone = (string)($body['phone_raw'] ?? '');
+  $remoteAlt = $body['remoteJidAlt'] ?? ($body['phone_alt'] ?? null);
+  $chatId = (string)($body['chatId'] ?? '');
+  $pushName = trim((string)($body['pushName'] ?? ''));
+  $externalId = (string)($body['messageId'] ?? ($body['id'] ?? ''));
+  $content = (string)($body['text'] ?? ($body['body'] ?? ''));
+  $fromMe = $body['fromMe'] ?? null;
+  $ts = $body['timestamp'] ?? null;
+
+  // se vier algo tipo "5565...@s.whatsapp.net"
+  $phoneDigits = normalize_phone($rawPhone, is_string($remoteAlt) ? $remoteAlt : null);
+
+  // se phone_raw veio vazio mas chatId veio preenchido, tenta pelo chatId
+  if ($phoneDigits === '' && $chatId !== '') {
+    $phoneDigits = normalize_phone($chatId, is_string($remoteAlt) ? $remoteAlt : null);
+  }
+
+  // enforce incoming neste endpoint
+  $direction = 'incoming';
+}
+
+// Validações
+if ($phoneDigits === '') json_response(false, ['raw'=>$rawPhone, 'chatId'=>$chatId], 'contact.phone obrigatório (não consegui extrair número)', 400);
+if ($content === '') json_response(false, null, 'message.content obrigatório', 400);
+if ($direction !== 'incoming') json_response(false, null, 'direction deve ser incoming neste endpoint', 400);
+
+// se pushName vazio, usa o telefone
+if ($pushName === '') $pushName = $phoneDigits;
+
+// =====================
+// CHATWOOT HELPERS
+// =====================
 function resolve_inbox_id(string $base, int $accountId, array $headers, string $inboxIdentifier): int {
   $url = $base . "/api/v1/accounts/{$accountId}/inboxes";
   $r = http_json('GET', $url, $headers, null);
@@ -123,7 +262,6 @@ function resolve_inbox_id(string $base, int $accountId, array $headers, string $
 
     $id = (int)($ib['id'] ?? 0);
 
-    // O seu build usa "inbox_identifier" ✅
     $cand = [
       (string)($ib['inbox_identifier'] ?? ''),
       (string)($ib['identifier'] ?? ''),
@@ -140,7 +278,6 @@ function resolve_inbox_id(string $base, int $accountId, array $headers, string $
   return 0;
 }
 
-// ---------- contatos ----------
 function find_contact_id(string $base, int $accountId, array $headers, string $phone, string $identifier): int {
   $url = $base . "/api/v1/accounts/{$accountId}/contacts/search?q=" . urlencode($phone);
   $r = http_json('GET', $url, $headers, null);
@@ -177,13 +314,11 @@ function create_contact(string $base, int $accountId, array $headers, string $ph
   return http_json('POST', $url, $headers, $payload);
 }
 
-// ---------- conversas ----------
 function find_conversation_id(string $base, int $accountId, array $headers, int $inboxId, string $sourceId): int {
   $url = $base . "/api/v1/accounts/{$accountId}/conversations?inbox_id={$inboxId}&status=all&assignee_type=all&page=1";
   $r = http_json('GET', $url, $headers, null);
   if (!$r['ok']) return 0;
 
-  // formatos comuns
   $list = $r['json']['data']['payload'] ?? $r['json']['payload'] ?? $r['json'] ?? [];
   if (!is_array($list)) return 0;
 
@@ -223,15 +358,14 @@ if (!$inboxId) {
 // =====================
 // 1) Find-or-Create Contact
 // =====================
-$identifier = $phone;
-$contactId = find_contact_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phone, $identifier);
+$identifier = $phoneDigits;
+$contactId = find_contact_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phoneDigits, $identifier);
 
 if (!$contactId) {
-  $r1 = create_contact($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phone, $name, $identifier, $source);
+  $r1 = create_contact($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phoneDigits, $pushName, $identifier, $source);
 
   if (!$r1['ok'] && (int)$r1['code'] === 422) {
-    // já existe: busca de novo
-    $contactId = find_contact_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phone, $identifier);
+    $contactId = find_contact_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $phoneDigits, $identifier);
   } elseif ($r1['ok']) {
     $j = $r1['json'] ?? [];
     $contactId = (int)($j['payload']['contact']['id'] ?? ($j['id'] ?? 0));
@@ -249,14 +383,13 @@ if (!$contactId) {
 // =====================
 // 2) Find-or-Create Conversation
 // =====================
-$sourceId = 'waha:' . $phone;
+$sourceId = 'waha:' . $phoneDigits;
 $conversationId = find_conversation_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $inboxId, $sourceId);
 
 if (!$conversationId) {
   $r2 = create_conversation($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $inboxId, $contactId, $sourceId);
 
   if (!$r2['ok']) {
-    // tenta achar de novo
     $conversationId = find_conversation_id($CHATWOOT_BASE, $ACCOUNT_ID, $headers, $inboxId, $sourceId);
   } else {
     $j = $r2['json'] ?? [];
@@ -273,7 +406,7 @@ if (!$conversationId) {
 }
 
 // =====================
-// 3) Create Message
+// 3) Create Message (incoming)
 // =====================
 $createMsgUrl = $CHATWOOT_BASE . "/api/v1/accounts/{$ACCOUNT_ID}/conversations/{$conversationId}/messages";
 
@@ -282,6 +415,7 @@ $messagePayload = [
   'message_type' => 'incoming',
 ];
 
+// Chatwoot aceita external_source_ids (depende da versão/build)
 if ($externalId !== '') {
   $messagePayload['external_source_ids'] = $externalId;
 }
