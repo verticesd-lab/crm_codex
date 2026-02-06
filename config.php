@@ -45,13 +45,7 @@ define(
 // =========================
 // SEGREDO DA API (MCP)
 // =========================
-$envApiSecret = getenv('API_SECRET');
-define(
-    'API_SECRET',
-    $envApiSecret !== false && $envApiSecret !== ''
-        ? $envApiSecret
-        : 'mude_este_api_secret_no_ambiente'
-);
+define('API_SECRET', getenv('API_TOKEN_IA') ?: ($_ENV['API_TOKEN_IA'] ?? 'fallback-aqui'));
 
 // =========================
 // CONFIGURAÇÕES CHATWOOT
