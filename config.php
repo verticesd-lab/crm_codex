@@ -43,6 +43,17 @@ define(
 );
 
 // =========================
+// SEGREDO DA API (MCP)
+// =========================
+$envApiSecret = getenv('API_SECRET');
+define(
+    'API_SECRET',
+    $envApiSecret !== false && $envApiSecret !== ''
+        ? $envApiSecret
+        : 'mude_este_api_secret_no_ambiente'
+);
+
+// =========================
 // CONFIGURAÇÕES CHATWOOT
 // =========================
 define('CHATWOOT_BASE_URL', 'https://chat.formenstore.com.br');

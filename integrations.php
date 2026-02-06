@@ -182,6 +182,31 @@ include __DIR__ . '/views/partials/header.php';
                 </div>
             </div>
         </div>
+
+        <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+            <p class="text-sm text-slate-500">MCP</p>
+            <h3 class="text-lg font-semibold">Activepieces MCP (tools)</h3>
+            <div class="mt-3 space-y-2 text-sm text-slate-600">
+                <p>1. Crie um flow no Activepieces e exponha como MCP Tool.</p>
+                <p>2. Dentro do flow, use HTTP para chamar o dispatcher MCP do CRM.</p>
+                <p>3. Retorne dados com "Reply to MCP Client".</p>
+                <p class="text-xs text-slate-500">Sempre envie token e company_id.</p>
+            </div>
+            <p class="text-xs text-slate-500 mt-3">Endpoints MCP do CRM:</p>
+            <ul class="text-xs text-slate-600 list-disc pl-4 space-y-1">
+                <li>GET <?= sanitize($apiBase) ?>/mcp-tools.php</li>
+                <li>POST <?= sanitize($apiBase) ?>/mcp-call.php</li>
+            </ul>
+            <p class="text-xs text-slate-500 mt-2">Exemplo (POST mcp-call):</p>
+            <pre class="text-[11px] bg-slate-900 text-slate-100 rounded p-3 overflow-x-auto">{
+  "token": "<?= sanitize(API_TOKEN_IA) ?>",
+  "tool": "client_search",
+  "input": {
+    "company_id": <?= $companyId ?>,
+    "phone": "5511999999999"
+  }
+}</pre>
+        </div>
     </div>
 </div>
 <script>

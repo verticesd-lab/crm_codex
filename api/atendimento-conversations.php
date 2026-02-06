@@ -17,6 +17,12 @@ function json_response(bool $ok, $data = null, ?string $error = null, int $http 
 
 require_login();
 
+$companyId = (int)($_SESSION['company_id'] ?? 0);
+if ($companyId <= 0) {
+  http_response_code(403);
+  die(json_encode(['ok' => false, 'data' => null, 'error' => 'Forbidden: company_id ausente na sessao'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
 $q = trim((string)($_GET['q'] ?? ''));
 $limit = (int)($_GET['limit'] ?? 80);
 if ($limit < 1) $limit = 80;
@@ -25,17 +31,18 @@ if ($limit > 200) $limit = 200;
 try {
   $pdo = get_pdo();
 
-  $where = '';
-  $params = [];
+  $whereParts = ['c.company_id = :company_id'];
+  $params = [':company_id' => $companyId];
 
   if ($q !== '') {
-    $where = "WHERE (
+    $whereParts[] = "(
       c.contact_phone LIKE :q OR
       c.contact_email LIKE :q OR
       c.contact_name  LIKE :q
     )";
     $params[':q'] = '%' . $q . '%';
   }
+  $where = 'WHERE ' . implode(' AND ', $whereParts);
 
   $sql = "
     SELECT
@@ -79,7 +86,8 @@ try {
   $st = $pdo->prepare($sql);
 
   foreach ($params as $k => $v) {
-    $st->bindValue($k, $v, PDO::PARAM_STR);
+    $type = ($k === ':company_id') ? PDO::PARAM_INT : PDO::PARAM_STR;
+    $st->bindValue($k, $v, $type);
   }
   $st->bindValue(':lim', $limit, PDO::PARAM_INT);
 

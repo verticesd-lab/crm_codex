@@ -14,6 +14,12 @@ function json_response(bool $ok, $data = null, ?string $error = null, int $http 
 
 require_login();
 
+$companyId = (int)($_SESSION['company_id'] ?? 0);
+if ($companyId <= 0) {
+  http_response_code(403);
+  die(json_encode(['ok' => false, 'data' => null, 'error' => 'Forbidden: company_id ausente na sessao'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
 $raw = file_get_contents('php://input');
 $body = json_decode((string)$raw, true);
 if (!is_array($body)) $body = $_POST;
@@ -28,8 +34,16 @@ try {
   $pdo = get_pdo();
 
   // Pega telefone/email da conversa
-  $stc = $pdo->prepare("SELECT id, contact_phone, contact_email, contact_name FROM atd_conversations WHERE id = :id LIMIT 1");
-  $stc->execute([':id' => $conversationId]);
+  $stc = $pdo->prepare("
+    SELECT id, contact_phone, contact_email, contact_name
+    FROM atd_conversations
+    WHERE id = :id AND company_id = :company_id
+    LIMIT 1
+  ");
+  $stc->execute([
+    ':id' => $conversationId,
+    ':company_id' => $companyId,
+  ]);
   $conv = $stc->fetch(PDO::FETCH_ASSOC);
 
   if (!$conv) json_response(false, null, 'Conversa não encontrada', 404);
@@ -50,7 +64,10 @@ try {
   ]);
 
   // Atualiza last_message_at
-  $pdo->prepare("UPDATE atd_conversations SET last_message_at = NOW() WHERE id = :id")->execute([':id' => $conversationId]);
+  $pdo->prepare("UPDATE atd_conversations SET last_message_at = NOW() WHERE id = :id AND company_id = :company_id")->execute([
+    ':id' => $conversationId,
+    ':company_id' => $companyId,
+  ]);
 
   // Dispara pro ActivePieces (opcional, mas recomendado)
   $webhook = getenv('ATD_OUTGOING_WEBHOOK_URL') ?: '';
