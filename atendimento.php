@@ -17,6 +17,31 @@ require_login();
 
   <style>
     .cw-safe-h { height: calc(100vh - 64px); } /* header */
+
+    #messages {
+      background-image:
+        radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
+      background-size: 24px 24px;
+      scroll-behavior: smooth;
+    }
+
+    #messages::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    #messages::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 10px;
+    }
+
+    #messages::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .rounded-2xl:hover {
+      filter: brightness(1.1);
+      transition: filter 0.2s;
+    }
   </style>
 </head>
 
@@ -205,29 +230,74 @@ function renderMessages(rows){
   const box = el('messages');
   box.innerHTML = '';
 
-  if (!rows.length){
-    box.innerHTML = '<div class="text-sm text-slate-400">Sem histórico ainda.</div>';
+  if (!rows.length) {
+    box.innerHTML = '<div class="text-sm text-slate-500 text-center py-10">Início da conversa.</div>';
     return;
   }
 
-  rows.forEach(m => {
-    const mine = (m.direction === 'outgoing');
-    const row = document.createElement('div');
-    row.className = 'flex ' + (mine ? 'justify-end' : 'justify-start');
+  let lastDateLabel = "";
 
-    const sender = (m.sender_name || (mine ? 'Você' : 'Cliente'));
+  rows.forEach(m => {
+    // --- LÓGICA DE SEPARADOR DE DATA ---
+    const dateObj = new Date(m.created_at);
+    // Formata para "06 de Fevereiro de 2026"
+    const dateLabel = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+
+    if (dateLabel !== lastDateLabel) {
+      const divider = document.createElement('div');
+      divider.className = 'flex justify-center my-6 sticky top-0 z-10';
+      divider.innerHTML = `
+        <span class="bg-slate-900/90 backdrop-blur text-slate-500 text-[10px] uppercase tracking-widest px-4 py-1 rounded-full border border-slate-800 shadow-sm">
+          ${dateLabel}
+        </span>
+      `;
+      box.appendChild(divider);
+      lastDateLabel = dateLabel;
+    }
+
+    // --- LÓGICA DE QUEM ENVIOU ---
+    const isOutgoing = (m.direction === 'outgoing');
+    // Se o sender_name contiver "IA", tratamos como robô
+    const isIA = (m.sender_name && m.sender_name.toUpperCase().includes('IA'));
+
+    const row = document.createElement('div');
+    row.className = 'flex w-full mb-3 ' + (isOutgoing ? 'justify-end' : 'justify-start');
+
     const content = (m.content || '');
+    const time = dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+    // Definimos as cores baseado no papel
+    let bubbleClass = "";
+    let senderLabel = m.sender_name || (isOutgoing ? 'Você' : 'Cliente');
+
+    if (!isOutgoing) {
+      bubbleClass = "bg-slate-800 border-slate-700 text-slate-200 rounded-tl-none"; // Cliente
+    } else if (isIA) {
+      bubbleClass = "bg-indigo-950/40 border-indigo-500/30 text-indigo-100 rounded-tr-none border"; // IA
+      senderLabel = "🤖 " + senderLabel;
+    } else {
+      bubbleClass = "bg-indigo-600 text-white rounded-tr-none"; // Humano (Você)
+    }
 
     row.innerHTML = `
-      <div class="${mine ? 'bg-indigo-600/20 border-indigo-500/30' : 'bg-slate-950/50 border-slate-700'} border rounded-xl px-3 py-2 max-w-[85%]">
-        <div class="text-xs text-slate-400 mb-1">${escapeHtml(sender)}</div>
-        <div class="text-sm whitespace-pre-wrap">${escapeHtml(content)}</div>
+      <div class="flex flex-col ${isOutgoing ? 'items-end' : 'items-start'} max-w-[80%]">
+        <div class="flex items-center gap-2 mb-1 px-1">
+          <span class="text-[10px] font-bold text-slate-500 uppercase tracking-tight">${escapeHtml(senderLabel)}</span>
+          <span class="text-[10px] text-slate-600">${time}</span>
+        </div>
+
+        <div class="relative px-3 py-2 rounded-2xl text-[14px] shadow-sm ${bubbleClass}">
+          <div class="whitespace-pre-wrap leading-relaxed">${escapeHtml(content)}</div>
+        </div>
       </div>
     `;
     box.appendChild(row);
   });
 
-  box.scrollTop = box.scrollHeight;
+  // Scroll automático para a última mensagem
+  setTimeout(() => {
+    box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+  }, 50);
 }
 
 async function loadMessages(convId){
