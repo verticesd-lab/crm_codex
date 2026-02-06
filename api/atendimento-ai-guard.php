@@ -12,19 +12,26 @@ function json_response(bool $ok, $data=null, ?string $error=null, int $http=200)
   exit;
 }
 
-// Token
-$expected = getenv('ATD_GUARD_TOKEN') ?: '';
-if ($expected !== '') {
-  $got = $_GET['token'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
-  $got = str_replace('Bearer ', '', (string)$got);
-  if (!hash_equals($expected, trim((string)$got))) {
-    json_response(false, null, 'Unauthorized', 401);
-  }
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+  json_response(false, null, 'Method not allowed', 405);
 }
 
 $raw = file_get_contents('php://input');
 $body = json_decode((string)$raw, true);
 if (!is_array($body)) $body = $_POST;
+
+$token = trim((string)($body['token'] ?? ''));
+if ($token === '') {
+  json_response(false, null, 'token obrigatório', 401);
+}
+if (!hash_equals((string)API_TOKEN_IA, $token)) {
+  json_response(false, null, 'Unauthorized', 401);
+}
+
+$companyId = (int)($body['company_id'] ?? 0);
+if ($companyId <= 0) {
+  json_response(false, null, 'company_id obrigatório', 400);
+}
 
 $phone = preg_replace('/\D+/', '', (string)($body['phone'] ?? ''));
 if ($phone === '') json_response(false, null, 'phone obrigatório', 400);
@@ -32,8 +39,17 @@ if ($phone === '') json_response(false, null, 'phone obrigatório', 400);
 try {
   $pdo = get_pdo();
 
-  $st = $pdo->prepare("SELECT * FROM atd_conversations WHERE contact_phone = :p LIMIT 1");
-  $st->execute([':p' => $phone]);
+  $st = $pdo->prepare("
+    SELECT *
+    FROM atd_conversations
+    WHERE contact_phone = :p
+      AND company_id = :cid
+    LIMIT 1
+  ");
+  $st->execute([
+    ':p' => $phone,
+    ':cid' => $companyId,
+  ]);
   $conv = $st->fetch(PDO::FETCH_ASSOC);
 
   // conversa nova: libera (o cooldown só passa a existir depois que a IA responder e setar ai_next_allowed_at)
@@ -41,6 +57,7 @@ try {
     json_response(true, [
       'allow' => true,
       'reason' => 'new_conversation',
+      'company_id' => $companyId,
       'cooldown_minutes' => 120,
       'next_allowed_at' => null,
       'conversation_id' => null,

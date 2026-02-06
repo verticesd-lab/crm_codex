@@ -81,6 +81,9 @@ switch ($tool) {
     case 'client_timeline':
         handle_client_timeline($pdo, $args);
         break;
+    case 'lock_ai':
+        handle_lock_ai($pdo, $args);
+        break;
     default:
         apiJsonError('tool invalido');
 }
@@ -499,5 +502,46 @@ function handle_client_timeline(PDO $pdo, array $input): void
         ]);
     } catch (Throwable $e) {
         apiJsonError('Erro ao montar timeline do cliente', 500);
+    }
+}
+
+function handle_lock_ai(PDO $pdo, array $input): void
+{
+    $companyId = (int)($_SESSION['company_id'] ?? 0);
+    $phone = preg_replace('/\D+/', '', (string)($input['phone'] ?? ''));
+    $minutes = (int)($input['minutes'] ?? 0);
+
+    if ($companyId <= 0) {
+        apiJsonError('company_id ausente na sessao', 403);
+    }
+    if ($phone === '') {
+        apiJsonError('phone obrigatorio');
+    }
+    if ($minutes <= 0) {
+        apiJsonError('minutes obrigatorio e deve ser maior que zero');
+    }
+
+    try {
+        $stmt = $pdo->prepare("
+            UPDATE atd_conversations
+            SET ai_next_allowed_at = DATE_ADD(NOW(), INTERVAL :minutes MINUTE),
+                updated_at = NOW()
+            WHERE contact_phone = :phone
+              AND company_id = :company_id
+        ");
+        $stmt->bindValue(':minutes', $minutes, PDO::PARAM_INT);
+        $stmt->bindValue(':phone', $phone, PDO::PARAM_STR);
+        $stmt->bindValue(':company_id', $companyId, PDO::PARAM_INT);
+        $stmt->execute();
+
+        apiJsonResponse(true, [
+            'locked' => true,
+            'phone' => $phone,
+            'minutes' => $minutes,
+            'company_id' => $companyId,
+            'affected_rows' => $stmt->rowCount(),
+        ]);
+    } catch (Throwable $e) {
+        apiJsonError('Erro ao aplicar lock_ai', 500);
     }
 }
