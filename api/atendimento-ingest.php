@@ -25,7 +25,7 @@ function normalize_digits(?string $s): ?string {
 }
 
 function auth_or_401(): void {
-  $expected = envv('ATENDIMENTO_INGEST_TOKEN');
+  $expected = envv('ATENDIMENTO_INGEST_TOKEN') ?: envv('WAHA_BRIDGE_TOKEN');
   if (!$expected) return; // se não setar token, fica aberto (não recomendo)
   $got = $_GET['token'] ?? '';
   if (!$got || !hash_equals($expected, (string)$got)) {
