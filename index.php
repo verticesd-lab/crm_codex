@@ -16,19 +16,12 @@ if (!$companyId) {
     redirect('dashboard.php');
 }
 
-function safe_dt(?string $dt): string {
-    if (!$dt) return '';
-    if (function_exists('format_datetime_br')) return format_datetime_br($dt);
-    return date('d/m H:i', strtotime($dt));
-}
-
-/**
- * Converte resumo (JSON de intent ou texto) em label legível
- */
+/* ── Intent parser ──────────────────────────────────────────────── */
 function parse_resumo(?string $resumo): array {
-    if (!$resumo) return ['text'=>'','intent'=>'outro','emoji'=>'💬','label'=>'Mensagem'];
+    $default = ['text'=>'','intent'=>'outro','emoji'=>'💬','label'=>'Mensagem','confidence'=>0];
+    if (!$resumo) return $default;
     $decoded = json_decode($resumo, true);
-    if (!is_array($decoded)) return ['text'=>$resumo,'intent'=>'outro','emoji'=>'💬','label'=>$resumo];
+    if (!is_array($decoded)) return array_merge($default, ['label'=>$resumo,'text'=>$resumo]);
 
     $intent     = $decoded['intent']     ?? 'outro';
     $confidence = (float)($decoded['confidence'] ?? 0);
@@ -44,12 +37,11 @@ function parse_resumo(?string $resumo): array {
         'reclamacao'        => ['label'=>'Reclamação',          'emoji'=>'⚠️'],
         'elogio'            => ['label'=>'Elogio',              'emoji'=>'⭐'],
         'despedida'         => ['label'=>'Despedida',           'emoji'=>'🤝'],
+        'catalogo'          => ['label'=>'Catálogo',            'emoji'=>'👕'],
         'outro'             => ['label'=>'Mensagem',            'emoji'=>'💬'],
     ];
-
     $meta = $map[$intent] ?? $map['outro'];
     $pct  = $confidence > 0 ? ' · ' . round($confidence * 100) . '%' : '';
-
     return [
         'text'       => $meta['emoji'] . ' ' . $meta['label'] . $pct,
         'intent'     => $intent,
@@ -59,24 +51,70 @@ function parse_resumo(?string $resumo): array {
     ];
 }
 
-/**
- * Tempo relativo (ex: "há 5 min", "há 2h", "ontem")
- * Assume DB em UTC, app em UTC-4 (Cuiabá)
- */
 function relative_time(?string $dt): string {
     if (!$dt) return '';
     $ts   = strtotime($dt);
-    $now  = time();
-    $diff = $now - $ts;            // diferença em segundos (UTC vs UTC)
+    $diff = time() - $ts;
     if ($diff < 0)      $diff = 0;
     if ($diff < 60)     return 'agora';
-    if ($diff < 3600)   return 'há ' . floor($diff / 60) . ' min';
+    if ($diff < 3600)   return 'há ' . floor($diff / 60) . 'min';
     if ($diff < 86400)  return 'há ' . floor($diff / 3600) . 'h';
     if ($diff < 172800) return 'ontem';
     return date('d/m', $ts - 4 * 3600);
 }
 
-// ── KPIs ──────────────────────────────────────────────────────────
+/* ── AJAX: retorna últimas interações como JSON ─────────────────── */
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'timeline') {
+    header('Content-Type: application/json');
+    $s = $pdo->prepare("
+        SELECT i.id, i.created_at, i.titulo, i.resumo,
+               c.nome AS cliente_nome, c.whatsapp AS cliente_whatsapp
+        FROM interactions i
+        JOIN clients c ON c.id = i.client_id
+        WHERE i.company_id = ?
+        ORDER BY i.created_at DESC
+        LIMIT 8
+    ");
+    $s->execute([$companyId]);
+    $rows = $s->fetchAll(PDO::FETCH_ASSOC);
+
+    $palette = [
+        ['#ede9fe','#6d28d9'],['#dcfce7','#15803d'],['#dbeafe','#1d4ed8'],
+        ['#fef9c3','#a16207'],['#fce7f3','#be185d'],['#e0f2fe','#0369a1'],
+    ];
+
+    // Hoje KPI
+    $kpi = $pdo->prepare("SELECT COUNT(*) FROM interactions WHERE company_id=? AND DATE(DATE_SUB(created_at,INTERVAL 4 HOUR))=CURDATE()");
+    $kpi->execute([$companyId]);
+    $hoje = (int)$kpi->fetchColumn();
+
+    $items = [];
+    foreach ($rows as $ci => $ix) {
+        $parsed = parse_resumo($ix['resumo'] ?? null);
+        $ts     = strtotime($ix['created_at']) - (4 * 3600);
+        $col    = $palette[$ci % count($palette)];
+        $nome   = $ix['cliente_nome'] ?? '?';
+        $items[] = [
+            'id'       => $ix['id'],
+            'nome'     => $nome,
+            'initials' => mb_strtoupper(mb_substr($nome, 0, 1, 'UTF-8')),
+            'titulo'   => $ix['titulo'] ?? 'Atendimento IA',
+            'intent'   => $parsed['intent'],
+            'label'    => $parsed['label'],
+            'emoji'    => $parsed['emoji'],
+            'hora'     => date('H:i', $ts),
+            'dateKey'  => date('Y-m-d', $ts),
+            'rel'      => relative_time($ix['created_at']),
+            'ts'       => $ts,
+            'avBg'     => $col[0],
+            'avFg'     => $col[1],
+        ];
+    }
+    echo json_encode(['items' => $items, 'hoje' => $hoje]);
+    exit;
+}
+
+/* ── KPIs ─────────────────────────────────────────────────────── */
 $s = $pdo->prepare('SELECT COUNT(*) FROM clients WHERE company_id=?');
 $s->execute([$companyId]); $clientsCount = (int)$s->fetchColumn();
 
@@ -92,23 +130,10 @@ $s->execute([$companyId]); $ordersCount = (int)$s->fetchColumn();
 $s = $pdo->prepare("SELECT COUNT(*) FROM orders WHERE company_id=? AND origem='pdv' AND DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(UTC_TIMESTAMP(),'%Y-%m')");
 $s->execute([$companyId]); $ordersPDV = (int)$s->fetchColumn();
 
-// Atendimentos só hoje (UTC-4 = Cuiabá)
-$s = $pdo->prepare("SELECT COUNT(*) FROM interactions WHERE company_id=? AND DATE(DATE_SUB(created_at, INTERVAL 4 HOUR))=CURDATE()");
+$s = $pdo->prepare("SELECT COUNT(*) FROM interactions WHERE company_id=? AND DATE(DATE_SUB(created_at,INTERVAL 4 HOUR))=CURDATE()");
 $s->execute([$companyId]); $interactionsHoje = (int)$s->fetchColumn();
 
-// ── Últimas 6 interações ───────────────────────────────────────────
-$latestInteractionsStmt = $pdo->prepare("
-    SELECT i.*, c.nome AS cliente_nome, c.whatsapp AS cliente_whatsapp
-    FROM interactions i
-    JOIN clients c ON c.id = i.client_id
-    WHERE i.company_id = ?
-    ORDER BY i.created_at DESC
-    LIMIT 6
-");
-$latestInteractionsStmt->execute([$companyId]);
-$latestInteractions = $latestInteractionsStmt->fetchAll();
-
-// ── Últimos 6 pedidos ──────────────────────────────────────────────
+/* ── Pedidos ──────────────────────────────────────────────────── */
 $latestOrdersStmt = $pdo->prepare("
     SELECT o.*, c.nome AS cliente_nome
     FROM orders o
@@ -125,57 +150,55 @@ include __DIR__ . '/views/partials/header.php';
 
 <style>
 /* ── KPIs ── */
-.kpi-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr)); gap:.85rem; margin-bottom:1.4rem; }
-.kpi-card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:1rem 1.2rem; position:relative; overflow:hidden; }
+.kpi-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:.85rem; margin-bottom:1.4rem; }
+.kpi-card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:1rem 1.25rem; position:relative; overflow:hidden; transition:box-shadow .15s; }
+.kpi-card:hover { box-shadow:0 4px 16px rgba(0,0,0,.06); }
 .kpi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; background:var(--ac,#6366f1); border-radius:14px 14px 0 0; }
-.kpi-lbl { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; margin-bottom:.35rem; }
-.kpi-val { font-size:2rem; font-weight:800; color:#0f172a; line-height:1; }
+.kpi-lbl { font-size:.67rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; margin-bottom:.4rem; }
+.kpi-val { font-size:2rem; font-weight:800; color:#0f172a; line-height:1; transition:color .3s; }
 .kpi-sub { font-size:.67rem; color:#94a3b8; margin-top:.3rem; }
 
 /* ── Actions ── */
 .act-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.85rem; margin-bottom:1.4rem; }
-.act-btn  { border-radius:14px; padding:1rem 1.25rem; color:#fff; text-decoration:none;
-            display:flex; align-items:center; justify-content:space-between;
-            transition:filter .15s,transform .1s; }
-.act-btn:hover { filter:brightness(1.08); transform:translateY(-1px); }
+.act-btn { border-radius:14px; padding:1rem 1.25rem; color:#fff; text-decoration:none; display:flex; align-items:center; justify-content:space-between; transition:filter .15s,transform .1s; }
+.act-btn:hover { filter:brightness(1.08); transform:translateY(-2px); }
 .act-btn-title { font-size:.95rem; font-weight:700; }
 .act-btn-sub   { font-size:.72rem; opacity:.8; margin-top:.1rem; }
 
-/* ── Bottom grid ── */
+/* ── Bottom ── */
 .dash-bottom { display:grid; grid-template-columns:1fr 1fr; gap:1.1rem; }
 .dp { background:#fff; border:1px solid #e2e8f0; border-radius:14px; overflow:hidden; }
-.dp-hd { padding:.8rem 1.2rem; border-bottom:1px solid #f1f5f9; display:flex; align-items:center; justify-content:space-between; }
+.dp-hd { padding:.85rem 1.25rem; border-bottom:1px solid #f1f5f9; display:flex; align-items:center; justify-content:space-between; }
 .dp-hd-left { display:flex; flex-direction:column; gap:.1rem; }
 .dp-tag   { font-size:.62rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#94a3b8; display:flex; align-items:center; gap:.35rem; }
 .dp-title { font-size:.92rem; font-weight:700; color:#0f172a; }
-.dp-link  { font-size:.72rem; color:#6366f1; font-weight:600; text-decoration:none; }
+.dp-link  { font-size:.72rem; color:#6366f1; font-weight:600; text-decoration:none; white-space:nowrap; }
 .dp-link:hover { text-decoration:underline; }
-.dp-body  { padding:.75rem 1rem; }
+.dp-body  { padding:.85rem 1rem; min-height:220px; }
 
 /* ── Live dot ── */
-.ldot { width:7px; height:7px; border-radius:50%; background:#22c55e;
-        display:inline-block; flex-shrink:0;
-        animation:ldot-pulse 1.6s ease-in-out infinite; }
-@keyframes ldot-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.ldot { width:7px; height:7px; border-radius:50%; background:#22c55e; display:inline-block; flex-shrink:0; animation:ldot 1.6s ease-in-out infinite; }
+@keyframes ldot { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+/* ── Refresh indicator ── */
+.refresh-bar { display:flex; align-items:center; gap:.5rem; font-size:.65rem; color:#94a3b8; }
+.refresh-ring { width:12px; height:12px; border:1.5px solid #e2e8f0; border-top-color:#6366f1; border-radius:50%; display:none; animation:spin .7s linear infinite; }
+.refresh-ring.spinning { display:inline-block; }
+@keyframes spin { to{transform:rotate(360deg)} }
 
 /* ── Timeline ── */
 .tl { display:flex; flex-direction:column; }
-.tl-sep { font-size:.62rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
-          color:#cbd5e1; padding:.5rem 0 .3rem; display:flex; align-items:center; gap:.5rem; }
+.tl-sep { font-size:.62rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#cbd5e1; padding:.5rem 0 .3rem; display:flex; align-items:center; gap:.5rem; }
 .tl-sep::after { content:''; flex:1; height:1px; background:#f1f5f9; }
 
-.tl-row { display:flex; align-items:center; gap:.7rem; padding:.55rem .35rem; border-radius:10px; transition:background .1s; }
+.tl-row { display:flex; align-items:center; gap:.7rem; padding:.6rem .4rem; border-radius:10px; transition:background .1s; animation:fadeIn .3s ease; }
 .tl-row:hover { background:#f8fafc; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
 
-.tl-av { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-         font-size:.78rem; font-weight:800; flex-shrink:0;
-         background:var(--bg,#ede9fe); color:var(--fg,#6d28d9);
-         border:2px solid #fff; box-shadow:0 0 0 1.5px var(--bg,#ede9fe); }
-
+.tl-av { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:.78rem; font-weight:800; flex-shrink:0; border:2px solid #fff; }
 .tl-info { flex:1; min-width:0; }
 .tl-name { font-size:.8rem; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:.35rem; flex-wrap:wrap; }
-.tl-badge { display:inline-flex; align-items:center; gap:.2rem; font-size:.63rem; font-weight:600;
-            padding:.12rem .4rem; border-radius:20px; background:#f1f5f9; color:#64748b; white-space:nowrap; }
+.tl-badge { display:inline-flex; align-items:center; gap:.2rem; font-size:.62rem; font-weight:600; padding:.12rem .4rem; border-radius:20px; background:#f1f5f9; color:#64748b; white-space:nowrap; }
 .tl-badge.saudacao          { background:#ede9fe; color:#6d28d9; }
 .tl-badge.interesse_produto { background:#dcfce7; color:#15803d; }
 .tl-badge.preco             { background:#fef9c3; color:#a16207; }
@@ -183,34 +206,30 @@ include __DIR__ . '/views/partials/header.php';
 .tl-badge.pagamento         { background:#e0f2fe; color:#0369a1; }
 .tl-badge.reclamacao        { background:#fee2e2; color:#dc2626; }
 .tl-badge.elogio            { background:#fef9c3; color:#a16207; }
-.tl-badge.despedida         { background:#f1f5f9; color:#64748b; }
-.tl-titulo { font-size:.72rem; color:#94a3b8; margin-top:.1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-.tl-time { text-align:right; flex-shrink:0; }
-.tl-time-main { font-size:.72rem; font-weight:600; color:#475569; }
-.tl-time-rel  { font-size:.6rem; color:#cbd5e1; margin-top:.1rem; }
+.tl-badge.catalogo          { background:#dcfce7; color:#15803d; }
+.tl-titulo { font-size:.72rem; color:#94a3b8; margin-top:.05rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tl-time { text-align:right; flex-shrink:0; min-width:38px; }
+.tl-time-h   { font-size:.72rem; font-weight:600; color:#475569; }
+.tl-time-rel { font-size:.6rem; color:#cbd5e1; margin-top:.1rem; }
 
 /* ── Orders ── */
-.ord-row { display:flex; align-items:center; gap:.7rem; padding:.55rem .35rem; border-radius:10px; transition:background .1s; }
+.ord-row { display:flex; align-items:center; gap:.7rem; padding:.6rem .4rem; border-radius:10px; transition:background .1s; }
 .ord-row:hover { background:#f8fafc; }
-.ord-ico { width:32px; height:32px; border-radius:50%; background:#f1f5f9; display:flex; align-items:center; justify-content:center; font-size:.9rem; flex-shrink:0; }
+.ord-ico  { width:32px; height:32px; border-radius:50%; background:#f1f5f9; display:flex; align-items:center; justify-content:center; font-size:.9rem; flex-shrink:0; }
 .ord-info { flex:1; min-width:0; }
-.ord-name  { font-size:.8rem; font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ord-tags  { display:flex; gap:.25rem; margin-top:.2rem; flex-wrap:wrap; }
-.obadge { display:inline-flex; font-size:.62rem; font-weight:700; padding:.1rem .4rem; border-radius:20px; }
-.obadge.pdv       { background:#dcfce7; color:#15803d; }
-.obadge.online    { background:#dbeafe; color:#1d4ed8; }
-.obadge.manual    { background:#f1f5f9; color:#64748b; }
-.obadge.pendente  { background:#fef9c3; color:#a16207; }
-.obadge.concluido { background:#dcfce7; color:#15803d; }
-.obadge.cancelado { background:#fee2e2; color:#dc2626; }
-
+.ord-name { font-size:.8rem; font-weight:700; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ord-tags { display:flex; gap:.25rem; margin-top:.2rem; flex-wrap:wrap; }
+.ob { display:inline-flex; font-size:.62rem; font-weight:700; padding:.1rem .4rem; border-radius:20px; }
+.ob.pdv,   .ob.concluido { background:#dcfce7; color:#15803d; }
+.ob.online,.ob.pago      { background:#dbeafe; color:#1d4ed8; }
+.ob.manual,.ob.pendente  { background:#fef9c3; color:#a16207; }
+.ob.cancelado            { background:#fee2e2; color:#dc2626; }
+.ob.novo                 { background:#ede9fe; color:#6d28d9; }
 .ord-val { text-align:right; flex-shrink:0; }
 .ord-price { font-size:.8rem; font-weight:700; color:#0f172a; }
 .ord-time  { font-size:.6rem; color:#cbd5e1; }
 
-/* Empty */
-.empty-tl { display:flex; flex-direction:column; align-items:center; padding:1.5rem 1rem; color:#94a3b8; gap:.35rem; }
+.empty-tl { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:2rem 1rem; color:#94a3b8; gap:.35rem; }
 .empty-tl span { font-size:1.6rem; }
 .empty-tl p { font-size:.78rem; }
 </style>
@@ -219,7 +238,7 @@ include __DIR__ . '/views/partials/header.php';
 <div class="kpi-grid">
   <div class="kpi-card" style="--ac:#6366f1;">
     <p class="kpi-lbl">Clientes</p>
-    <p class="kpi-val"><?= $clientsCount ?></p>
+    <p class="kpi-val" id="k-clientes"><?= $clientsCount ?></p>
     <p class="kpi-sub">cadastrados</p>
   </div>
   <div class="kpi-card" style="--ac:#0ea5e9;">
@@ -229,8 +248,8 @@ include __DIR__ . '/views/partials/header.php';
   </div>
   <div class="kpi-card" style="--ac:#22c55e;">
     <p class="kpi-lbl">Atendimentos hoje</p>
-    <p class="kpi-val"><?= $interactionsHoje ?></p>
-    <p class="kpi-sub"><?= $interactionsCount ?> no mês</p>
+    <p class="kpi-val" id="k-hoje"><?= $interactionsHoje ?></p>
+    <p class="kpi-sub" id="k-mes"><?= $interactionsCount ?> no mês</p>
   </div>
   <div class="kpi-card" style="--ac:#f59e0b;">
     <p class="kpi-lbl">Pedidos no mês</p>
@@ -240,7 +259,7 @@ include __DIR__ . '/views/partials/header.php';
   <div class="kpi-card" style="--ac:#8b5cf6;">
     <p class="kpi-lbl">Vendas PDV mês</p>
     <p class="kpi-val"><?= $ordersPDV ?></p>
-    <p class="kpi-sub">registradas no caixa</p>
+    <p class="kpi-sub">no caixa</p>
   </div>
 </div>
 
@@ -263,70 +282,28 @@ include __DIR__ . '/views/partials/header.php';
 <!-- Timeline + Pedidos -->
 <div class="dash-bottom">
 
-  <!-- TIMELINE WHATSAPP -->
+  <!-- TIMELINE -->
   <div class="dp">
     <div class="dp-hd">
       <div class="dp-hd-left">
-        <span class="dp-tag"><span class="ldot"></span> Ao vivo &middot; WhatsApp</span>
+        <span class="dp-tag">
+          <span class="ldot" id="live-dot"></span> Ao vivo &middot; WhatsApp
+        </span>
         <span class="dp-title">Timeline de Atendimentos</span>
       </div>
-      <a class="dp-link" href="<?= BASE_URL ?>/atendimento.php">Ver todos →</a>
+      <div style="display:flex;align-items:center;gap:.75rem;">
+        <div class="refresh-bar">
+          <div class="refresh-ring" id="refresh-ring"></div>
+          <span id="refresh-countdown" style="font-variant-numeric:tabular-nums;">30s</span>
+        </div>
+        <a class="dp-link" href="<?= BASE_URL ?>/atendimento.php">Ver todos →</a>
+      </div>
     </div>
     <div class="dp-body">
-      <?php if (empty($latestInteractions)): ?>
-        <div class="empty-tl"><span>💬</span><p>Nenhum atendimento registrado</p></div>
-      <?php else: ?>
-        <?php
-        // Paleta de cores para avatares
-        $palette = [
-            ['#ede9fe','#6d28d9'], ['#dcfce7','#15803d'], ['#dbeafe','#1d4ed8'],
-            ['#fef9c3','#a16207'], ['#fce7f3','#be185d'], ['#e0f2fe','#0369a1'],
-        ];
-        $lastDate = null; $ci = 0;
-        ?>
-        <div class="tl">
-        <?php foreach ($latestInteractions as $ix):
-            // Converte UTC → UTC-4 para exibição
-            $ts       = strtotime($ix['created_at']) - (4 * 3600);
-            $dateKey  = date('Y-m-d', $ts);
-            $today    = date('Y-m-d');
-            $yesterday= date('Y-m-d', time() - 86400);
-            $sepLabel = match($dateKey) {
-                $today     => 'Hoje',
-                $yesterday => 'Ontem',
-                default    => date('d/m', $ts),
-            };
-            $parsed   = parse_resumo($ix['resumo'] ?? null);
-            $titulo   = $ix['titulo'] ?? 'Atendimento IA';
-            $nome     = $ix['cliente_nome'] ?? '?';
-            $initials = mb_strtoupper(mb_substr($nome, 0, 1, 'UTF-8'));
-            $col      = $palette[$ci % count($palette)]; $ci++;
-            $hora     = date('H:i', $ts);
-            $rel      = relative_time($ix['created_at']);
-        ?>
-          <?php if ($dateKey !== $lastDate): $lastDate = $dateKey; ?>
-            <div class="tl-sep"><?= $sepLabel ?></div>
-          <?php endif; ?>
-
-          <div class="tl-row">
-            <div class="tl-av" style="--bg:<?= $col[0] ?>;--fg:<?= $col[1] ?>;"><?= sanitize($initials) ?></div>
-            <div class="tl-info">
-              <div class="tl-name">
-                <?= sanitize($nome) ?>
-                <?php if ($parsed['intent'] && $parsed['intent'] !== 'outro'): ?>
-                  <span class="tl-badge <?= htmlspecialchars($parsed['intent']) ?>"><?= $parsed['emoji'] ?> <?= $parsed['label'] ?></span>
-                <?php endif; ?>
-              </div>
-              <div class="tl-titulo"><?= sanitize($titulo) ?></div>
-            </div>
-            <div class="tl-time">
-              <div class="tl-time-main"><?= $hora ?></div>
-              <div class="tl-time-rel"><?= $rel ?></div>
-            </div>
-          </div>
-        <?php endforeach; ?>
-        </div>
-      <?php endif; ?>
+      <div class="tl" id="tl-container">
+        <!-- Populado pelo JS via AJAX -->
+        <div class="empty-tl"><span>⏳</span><p>Carregando...</p></div>
+      </div>
     </div>
   </div>
 
@@ -344,15 +321,15 @@ include __DIR__ . '/views/partials/header.php';
         <div class="empty-tl"><span>🧾</span><p>Nenhum pedido registrado</p></div>
       <?php else: ?>
         <?php foreach ($latestOrders as $order):
-            $ts  = strtotime($order['created_at']) - (4 * 3600);
-            $hora = date('H:i', $ts);
-            $origem = strtolower($order['origem'] ?? '');
-            $origemClass = in_array($origem,['pdv','online']) ? $origem : 'manual';
-            $origemLabel = strtoupper($order['origem'] ?? '—');
-            $status = strtolower($order['status'] ?? '');
+            $ts          = strtotime($order['created_at']) - (4 * 3600);
+            $hora        = date('H:i', $ts);
+            $origem      = strtolower($order['origem'] ?? '');
+            $origemClass = in_array($origem,['pdv','online','loja']) ? $origem : 'manual';
+            $status      = strtolower($order['status'] ?? '');
             $statusClass = match(true) {
                 in_array($status,['concluido','pago','finalizado']) => 'concluido',
                 $status === 'cancelado' => 'cancelado',
+                $status === 'novo'      => 'novo',
                 default => 'pendente',
             };
         ?>
@@ -361,8 +338,8 @@ include __DIR__ . '/views/partials/header.php';
             <div class="ord-info">
               <div class="ord-name"><?= sanitize($order['cliente_nome'] ?? 'Não identificado') ?></div>
               <div class="ord-tags">
-                <span class="obadge <?= $origemClass ?>"><?= $origemLabel ?></span>
-                <span class="obadge <?= $statusClass ?>"><?= sanitize($order['status'] ?? '—') ?></span>
+                <span class="ob <?= $origemClass ?>"><?= strtoupper($order['origem'] ?? '—') ?></span>
+                <span class="ob <?= $statusClass ?>"><?= sanitize($order['status'] ?? '—') ?></span>
               </div>
             </div>
             <div class="ord-val">
@@ -376,5 +353,135 @@ include __DIR__ . '/views/partials/header.php';
   </div>
 
 </div>
+
+<script>
+// ── Paleta de avatares ──
+const PALETTE = [
+  ['#ede9fe','#6d28d9'],['#dcfce7','#15803d'],['#dbeafe','#1d4ed8'],
+  ['#fef9c3','#a16207'],['#fce7f3','#be185d'],['#e0f2fe','#0369a1'],
+];
+
+let lastTopId    = null;
+let countdown    = 30;
+let countdownTmr = null;
+
+// ── Renderiza a timeline a partir dos dados da API ──
+function renderTimeline(items) {
+  const container = document.getElementById('tl-container');
+  if (!items || items.length === 0) {
+    container.innerHTML = '<div class="empty-tl"><span>💬</span><p>Nenhum atendimento registrado</p></div>';
+    return;
+  }
+
+  const today     = new Date();
+  const todayStr  = today.toISOString().split('T')[0];
+  const yestDate  = new Date(today); yestDate.setDate(yestDate.getDate()-1);
+  const yestStr   = yestDate.toISOString().split('T')[0];
+
+  let html = '<div class="tl">';
+  let lastDate = null;
+
+  items.forEach((ix, ci) => {
+    const sep = ix.dateKey !== lastDate;
+    lastDate = ix.dateKey;
+
+    let sepLabel = ix.dateKey;
+    if (ix.dateKey === todayStr)  sepLabel = 'Hoje';
+    else if (ix.dateKey === yestStr) sepLabel = 'Ontem';
+    else sepLabel = ix.dateKey.split('-').slice(1).reverse().join('/'); // DD/MM
+
+    const col = PALETTE[ci % PALETTE.length];
+    const badgeClass = ix.intent && ix.intent !== 'outro' ? ix.intent : '';
+    const badge = badgeClass
+      ? `<span class="tl-badge ${badgeClass}">${ix.emoji} ${ix.label}</span>`
+      : '';
+
+    html += sep ? `<div class="tl-sep">${sepLabel}</div>` : '';
+    html += `
+      <div class="tl-row">
+        <div class="tl-av" style="background:${col[0]};color:${col[1]};box-shadow:0 0 0 1.5px ${col[0]};">${ix.initials}</div>
+        <div class="tl-info">
+          <div class="tl-name">${escHtml(ix.nome)} ${badge}</div>
+          <div class="tl-titulo">${escHtml(ix.titulo)}</div>
+        </div>
+        <div class="tl-time">
+          <div class="tl-time-h">${ix.hora}</div>
+          <div class="tl-time-rel">${ix.rel}</div>
+        </div>
+      </div>`;
+  });
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Busca timeline via AJAX ──
+async function fetchTimeline(forceFlash) {
+  const ring = document.getElementById('refresh-ring');
+  ring.classList.add('spinning');
+
+  try {
+    const res  = await fetch('?ajax=timeline&_=' + Date.now());
+    const data = await res.json();
+    const items = data.items || [];
+
+    // Pisca a ldot verde se chegou item novo
+    const newTopId = items[0]?.id ?? null;
+    if (forceFlash || (lastTopId !== null && newTopId !== lastTopId)) {
+      flashDot();
+      // Atualiza KPI "hoje"
+      const k = document.getElementById('k-hoje');
+      if (k && data.hoje !== undefined) {
+        k.textContent = data.hoje;
+        k.style.color = '#22c55e';
+        setTimeout(() => k.style.color = '', 1200);
+      }
+    }
+    lastTopId = newTopId;
+    renderTimeline(items);
+  } catch(e) {
+    console.warn('Timeline fetch error:', e);
+  } finally {
+    ring.classList.remove('spinning');
+  }
+}
+
+// ── Pisca o dot ao vivo ──
+function flashDot() {
+  const dot = document.getElementById('live-dot');
+  dot.style.background = '#6366f1';
+  dot.style.transform = 'scale(1.6)';
+  setTimeout(() => {
+    dot.style.background = '#22c55e';
+    dot.style.transform  = '';
+  }, 800);
+}
+
+// ── Contagem regressiva + auto-refresh ──
+function startCountdown() {
+  const el = document.getElementById('refresh-countdown');
+  clearInterval(countdownTmr);
+  countdown = 30;
+  countdownTmr = setInterval(() => {
+    countdown--;
+    if (el) el.textContent = countdown + 's';
+    if (countdown <= 0) {
+      countdown = 30;
+      if (el) el.textContent = '30s';
+      fetchTimeline(false);
+    }
+  }, 1000);
+}
+
+// ── Init ──
+document.addEventListener('DOMContentLoaded', () => {
+  fetchTimeline(true); // carrega imediato
+  startCountdown();    // auto-refresh a cada 30s
+});
+</script>
 
 <?php include __DIR__ . '/views/partials/footer.php'; ?>
