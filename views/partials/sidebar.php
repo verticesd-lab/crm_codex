@@ -13,7 +13,7 @@ $currentBase   = basename($currentScript);
 // Links do menu
 $links = [
     'Dashboard'             => $base . '/index.php',
-    'PDV'                   => $base . '/pos.php',
+    'Caixa'                   => $base . '/pos.php',
     'Clientes'              => $base . '/clients.php',
     'Funil / Oportunidades' => $base . '/opportunities.php',
 
