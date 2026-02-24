@@ -183,21 +183,27 @@ try {
     $hasCanal     = in_array('canal',      $icols);
     $hasOrigem    = in_array('origem',     $icols);
 
-    // Adiciona colunas faltantes
-    if (!$hasCanal)  $pdo->exec("ALTER TABLE interactions ADD COLUMN canal   VARCHAR(50) DEFAULT 'whatsapp'");
-    if (!$hasOrigem) $pdo->exec("ALTER TABLE interactions ADD COLUMN origem  VARCHAR(50) DEFAULT 'bot'");
+    // Adiciona ou corrige colunas faltantes
+    if (!$hasCanal)  $pdo->exec("ALTER TABLE interactions ADD COLUMN canal  VARCHAR(50) DEFAULT 'whatsapp'");
+    if (!$hasOrigem) $pdo->exec("ALTER TABLE interactions ADD COLUMN origem VARCHAR(50) DEFAULT 'bot'");
+    // Garante tamanho suficiente (caso tenha sido criada com tamanho menor)
+    try { $pdo->exec("ALTER TABLE interactions MODIFY COLUMN origem VARCHAR(50)"); } catch(Throwable $e) {}
+    try { $pdo->exec("ALTER TABLE interactions MODIFY COLUMN canal  VARCHAR(50)"); } catch(Throwable $e) {}
+
+    // Trunca valores para caber nas colunas (segurança extra)
+    $crmOrigemSafe = substr($crmOrigem, 0, 50);
 
     // ── Salva interação ──────────────────────────────────────────
     if ($hasUpdatedAt) {
         $pdo->prepare('
             INSERT INTO interactions (company_id, client_id, titulo, resumo, canal, origem, created_at, updated_at)
             VALUES (?, ?, ?, ?, "whatsapp", ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
-        ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigem]);
+        ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigemSafe]);
     } else {
         $pdo->prepare('
             INSERT INTO interactions (company_id, client_id, titulo, resumo, canal, origem, created_at)
             VALUES (?, ?, ?, ?, "whatsapp", ?, UTC_TIMESTAMP())
-        ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigem]);
+        ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigemSafe]);
     }
 
     $interactionId = (int)$pdo->lastInsertId();
