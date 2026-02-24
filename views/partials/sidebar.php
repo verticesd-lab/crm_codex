@@ -7,7 +7,6 @@ $currentBase = basename($_SERVER['SCRIPT_NAME'] ?? '');
 
 /* ── Todos os módulos do sistema ────────────────────────────────
    [ key, label, href, requer_admin ]
-   key deve bater exatamente com o que settings.php salva no JSON
    ─────────────────────────────────────────────────────────────── */
 $ALL_MENU = [
     ['dashboard',            'Dashboard',            $base . '/index.php',               false],
@@ -16,18 +15,18 @@ $ALL_MENU = [
     ['funil',                'Funil / Oportunidades',$base . '/opportunities.php',       false],
     ['atendimento',          'Atendimento',          $base . '/atendimento.php',         false],
     ['produtos',             'Produtos/Serviços',    $base . '/products.php',            false],
-    ['cadastro_inteligente', 'Cadastro Inteligente', $base . '/products_imports.php',    true ],
+    ['cadastro_inteligente', 'Cadastro Inteligente', $base . '/products_imports.php',    false],
     ['pedidos',              'Pedidos',              $base . '/orders.php',              false],
-    ['promocoes',            'Promoções',            $base . '/promotions.php',          true ],
-    ['kpis',                 'KPIs',                 $base . '/kpis.php',                true ],
-    ['analytics',            'Analytics',            $base . '/analytics.php',           true ],
-    ['canais',               'Canais',               $base . '/integrations.php',        true ],
-    ['insights_ia',          'Insights IA',          $base . '/insights.php',            true ],
+    ['promocoes',            'Promoções',            $base . '/promotions.php',          false],
+    ['kpis',                 'KPIs',                 $base . '/kpis.php',                false],
+    ['analytics',            'Analytics',            $base . '/analytics.php',           false],
+    ['canais',               'Canais',               $base . '/integrations.php',        false],
+    ['insights_ia',          'Insights IA',          $base . '/insights.php',            false],
     ['agenda',               'Agenda',               $base . '/calendar.php',            false],
     ['agenda_barbearia',     'Agenda Barbearia',     $base . '/calendar_barbearia.php',  false],
     ['servicos_barbearia',   'Serviços Barbearia',   $base . '/services_admin.php',      false],
-    ['equipe',               'Equipe',               $base . '/staff.php',               true ],
-    ['configuracoes',        'Configurações',        $base . '/settings.php',            true ],
+    ['equipe',               'Equipe',               $base . '/staff.php',               false],
+    ['configuracoes',        'Configurações',        $base . '/settings.php',            false], // ← SEMPRE visível para quem tem acesso admin
 ];
 
 /* ── Carrega módulos ativos (sessão → banco) ─────────────────── */
@@ -45,27 +44,33 @@ if (isset($_SESSION['modules_config']) && is_array($_SESSION['modules_config']))
             $_sb_val = $_sb_row->fetchColumn();
             if ($_sb_val) {
                 $decoded = json_decode($_sb_val, true);
-                if (is_array($decoded)) {
+                if (is_array($decoded) && !empty($decoded)) {
                     $activeModules = $decoded;
-                    $_SESSION['modules_config'] = $decoded; // cache na sessão
+                    $_SESSION['modules_config'] = $decoded;
                 }
             }
         }
-    } catch (Throwable $e) { /* silencia — não quebra a página */ }
+    } catch (Throwable $e) { /* silencia */ }
 }
 
-// Nunca configurado → mostra tudo (retrocompatível com instalações antigas)
+// Nunca foi configurado → mostra tudo
 $showAll = ($activeModules === null || empty($activeModules));
-$isAdmin = !empty($_SESSION['is_admin']);
 
 /* ── Filtra links visíveis ──────────────────────────────────────
-   Regra 1: módulo deve estar ativo no JSON (ou showAll=true)
-   Regra 2: se requer_admin=true, só admin enxerga
+   SEM filtro por is_admin aqui — quem chegou até o sidebar
+   já passou pelo require_login(). A restrição de página
+   específica fica no próprio arquivo (ex: require_admin()).
+   O módulo "Configurações" é SEMPRE exibido (chave forçada abaixo).
    ─────────────────────────────────────────────────────────────── */
 $visibleLinks = [];
 foreach ($ALL_MENU as [$key, $label, $href, $requiresAdmin]) {
+    // Configurações sempre aparece — independente do JSON
+    if ($key === 'configuracoes') {
+        $visibleLinks[$label] = $href;
+        continue;
+    }
+    // Verifica se módulo está ativo
     if (!$showAll && empty($activeModules[$key])) continue;
-    if ($requiresAdmin && !$isAdmin) continue;
     $visibleLinks[$label] = $href;
 }
 ?>
