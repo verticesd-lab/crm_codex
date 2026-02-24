@@ -1,21 +1,20 @@
 <?php
 /**
  * webhook_evolution.php
- * Recebe POSTs do ActivePieces com eventos da Evolution API
- * e salva interações no CRM.
+ * Recebe POSTs do ActivePieces → salva interactions no CRM
  *
- * Payload esperado (enviado pelo ActivePieces):
+ * Payload do ActivePieces:
  * {
  *   "data": {
  *     "event": "messages.upsert",
  *     "instance": "loja_oficial",
- *     "_crm_intent":  "Agenda Barbearia ✂️"   (ou "saudacao", etc.)
- *     "_crm_origem":  "activepieces",
+ *     "_crm_intent": "Agenda Barbearia ✂️",
+ *     "_crm_origem": "activepieces",
  *     "data": {
- *       "key":         { "remoteJid": "556599...@s.whatsapp.net", "fromMe": false },
- *       "pushName":    "Patrick Lemes",
- *       "messageType": "conversation" | "pollUpdateMessage",
- *       "message":     { "conversation": "texto da mensagem" }
+ *       "key": { "remoteJid": "5565...@s.whatsapp.net", "fromMe": false },
+ *       "pushName": "Nome do Cliente",
+ *       "messageType": "conversation",
+ *       "message": { "conversation": "texto" }
  *     }
  *   }
  * }
@@ -24,79 +23,88 @@
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 
-// ── Responde imediatamente ao ActivePieces para não dar timeout ──
+// Responde imediatamente (evita timeout no ActivePieces)
 http_response_code(200);
 header('Content-Type: application/json');
 
-// ── Lê o payload ──────────────────────────────────────────────────
+// ── Log de debug (descomente para diagnosticar) ──────────────────
+// $logDir = __DIR__ . '/logs';
+// if (!is_dir($logDir)) mkdir($logDir, 0775, true);
+// file_put_contents($logDir . '/webhook_debug.log',
+//     date('Y-m-d H:i:s') . "\n" . file_get_contents('php://input') . "\n\n---\n\n",
+//     FILE_APPEND
+// );
+
+// ── Lê o payload ────────────────────────────────────────────────
 $raw     = file_get_contents('php://input');
 $payload = json_decode($raw, true);
 
 if (empty($payload)) {
-    echo json_encode(['ok' => false, 'error' => 'empty payload']);
+    echo json_encode(['ok' => false, 'error' => 'empty_payload']);
     exit;
 }
 
-// Suporta tanto { data: {...} } quanto o objeto direto
-$root = $payload['data'] ?? $payload;
+// Suporta { data: {...} } ou o objeto direto
+$root = isset($payload['data']) && is_array($payload['data'])
+    ? $payload['data']
+    : $payload;
 
-$event    = $root['event']        ?? '';
-$instance = $root['instance']     ?? '';
-$crmIntent= $root['_crm_intent']  ?? null; // campo especial inserido pelo ActivePieces
-$crmOrigem= $root['_crm_origem']  ?? 'whatsapp';
+$event      = $root['event']       ?? '';
+$instance   = $root['instance']    ?? 'loja_oficial';
+$crmIntent  = $root['_crm_intent'] ?? null;   // "Agenda Barbearia ✂️" etc
+$crmOrigem  = $root['_crm_origem'] ?? 'whatsapp';
 
-$msgData  = $root['data']         ?? [];   // dados da mensagem em si
+$msgData    = $root['data']        ?? [];
 
-$remoteJid   = $msgData['key']['remoteJid'] ?? '';
-$fromMe      = (bool)($msgData['key']['fromMe'] ?? false);
-$pushName    = $msgData['pushName']          ?? '';
-$messageType = $msgData['messageType']       ?? 'conversation';
-$msgText     = $msgData['message']['conversation']
-            ?? $msgData['message']['extendedTextMessage']['text']
-            ?? '';
+$remoteJid  = $msgData['key']['remoteJid'] ?? '';
+$fromMe     = (bool)($msgData['key']['fromMe'] ?? false);
+$pushName   = trim($msgData['pushName'] ?? '');
+$msgType    = $msgData['messageType'] ?? 'conversation';
+$msgText    = $msgData['message']['conversation']
+           ?? $msgData['message']['extendedTextMessage']['text']
+           ?? '';
 
-// ── Ignora mensagens enviadas por mim ────────────────────────────
+// ── Ignora mensagens enviadas por mim ───────────────────────────
 if ($fromMe) {
     echo json_encode(['ok' => true, 'skipped' => 'fromMe']);
     exit;
 }
 
-// ── Extrai número limpo (remove @s.whatsapp.net, etc.) ───────────
+// ── Extrai número limpo ──────────────────────────────────────────
 $whatsapp = preg_replace('/@.*$/', '', $remoteJid);
 $whatsapp = preg_replace('/[^0-9]/', '', $whatsapp);
 
 if (strlen($whatsapp) < 8) {
-    echo json_encode(['ok' => false, 'error' => 'invalid number: ' . $whatsapp]);
+    echo json_encode(['ok' => false, 'error' => 'invalid_number', 'raw' => $remoteJid]);
     exit;
 }
 
-// ── Mapeia _crm_intent (texto da enquete) → intent normalizado ───
+// ── Mapeia intent → dados normalizados ──────────────────────────
 function normalizar_intent(?string $raw): array {
     if (!$raw) return ['intent' => 'outro', 'titulo' => 'Atendimento IA', 'confidence' => 0.5];
 
-    $raw_lower = mb_strtolower($raw, 'UTF-8');
+    $lower = mb_strtolower($raw, 'UTF-8');
 
     $map = [
-        'agenda'      => ['intent' => 'agendamento',       'titulo' => 'Agendamento Barbearia',     'confidence' => 0.98],
-        'barbearia'   => ['intent' => 'agendamento',       'titulo' => 'Agendamento Barbearia',     'confidence' => 0.98],
-        'catálogo'    => ['intent' => 'interesse_produto', 'titulo' => 'Catálogo de Produtos',      'confidence' => 0.98],
-        'catalogo'    => ['intent' => 'interesse_produto', 'titulo' => 'Catálogo de Produtos',      'confidence' => 0.98],
-        'roupas'      => ['intent' => 'interesse_produto', 'titulo' => 'Catálogo de Produtos',      'confidence' => 0.95],
-        'atendente'   => ['intent' => 'falar_atendente',   'titulo' => 'Falar com Atendente',       'confidence' => 0.98],
-        'gerente'     => ['intent' => 'falar_atendente',   'titulo' => 'Falar com Atendente',       'confidence' => 0.95],
-        'localização' => ['intent' => 'localizacao',       'titulo' => 'Localização da Loja',       'confidence' => 0.98],
-        'localizacao' => ['intent' => 'localizacao',       'titulo' => 'Localização da Loja',       'confidence' => 0.98],
-        'saudacao'    => ['intent' => 'saudacao',          'titulo' => 'Primeiro Contato',          'confidence' => 0.99],
-        'saudação'    => ['intent' => 'saudacao',          'titulo' => 'Primeiro Contato',          'confidence' => 0.99],
+        'agenda'      => ['intent' => 'agendamento',       'titulo' => 'Agendamento Barbearia',  'confidence' => 0.98],
+        'barbearia'   => ['intent' => 'agendamento',       'titulo' => 'Agendamento Barbearia',  'confidence' => 0.98],
+        'catálogo'    => ['intent' => 'interesse_produto', 'titulo' => 'Catálogo de Produtos',   'confidence' => 0.98],
+        'catalogo'    => ['intent' => 'interesse_produto', 'titulo' => 'Catálogo de Produtos',   'confidence' => 0.98],
+        'roupas'      => ['intent' => 'interesse_produto', 'titulo' => 'Catálogo de Produtos',   'confidence' => 0.95],
+        'atendente'   => ['intent' => 'falar_atendente',   'titulo' => 'Falar com Atendente',    'confidence' => 0.98],
+        'gerente'     => ['intent' => 'falar_atendente',   'titulo' => 'Falar com Atendente',    'confidence' => 0.95],
+        'localização' => ['intent' => 'localizacao',       'titulo' => 'Localização da Loja',    'confidence' => 0.98],
+        'localizacao' => ['intent' => 'localizacao',       'titulo' => 'Localização da Loja',    'confidence' => 0.98],
+        'saudacao'    => ['intent' => 'saudacao',          'titulo' => 'Primeiro Contato',       'confidence' => 0.99],
+        'saudação'    => ['intent' => 'saudacao',          'titulo' => 'Primeiro Contato',       'confidence' => 0.99],
     ];
 
     foreach ($map as $keyword => $data) {
-        if (str_contains($raw_lower, mb_strtolower($keyword, 'UTF-8'))) {
+        if (str_contains($lower, mb_strtolower($keyword, 'UTF-8'))) {
             return $data;
         }
     }
 
-    // Fallback: usa o texto bruto como título
     return ['intent' => 'outro', 'titulo' => $raw, 'confidence' => 0.7];
 }
 
@@ -105,7 +113,6 @@ $intent     = $intentData['intent'];
 $titulo     = $intentData['titulo'];
 $confidence = $intentData['confidence'];
 
-// ── Resumo JSON (formato padrão do CRM) ─────────────────────────
 $resumo = json_encode([
     'intent'     => $intent,
     'confidence' => $confidence,
@@ -113,13 +120,11 @@ $resumo = json_encode([
     'origem'     => $crmOrigem,
 ], JSON_UNESCAPED_UNICODE);
 
-// ── Banco de dados ───────────────────────────────────────────────
+// ── Banco ────────────────────────────────────────────────────────
 try {
     $pdo = get_pdo();
 
-    // Descobre o company_id pela instância da Evolution API
-    // Se a tabela companies tiver campo "evolution_instance", usa ele
-    // Senão, pega a primeira empresa (sistema single-tenant)
+    // Descobre company_id pela instância, ou pega a primeira
     $companyId = null;
     try {
         $cols = $pdo->query('SHOW COLUMNS FROM companies')->fetchAll(PDO::FETCH_COLUMN);
@@ -131,74 +136,61 @@ try {
     } catch(Throwable $e) {}
 
     if (!$companyId) {
-        // Fallback: primeira empresa
-        $s = $pdo->query('SELECT id FROM companies ORDER BY id ASC LIMIT 1');
-        $row = $s->fetch();
+        $row = $pdo->query('SELECT id FROM companies ORDER BY id ASC LIMIT 1')->fetch();
         $companyId = $row ? (int)$row['id'] : null;
     }
 
     if (!$companyId) {
-        echo json_encode(['ok' => false, 'error' => 'no company found']);
+        echo json_encode(['ok' => false, 'error' => 'no_company']);
         exit;
     }
 
-    // ── Cria ou encontra o cliente ───────────────────────────────
-    $clientId = null;
-
-    $s = $pdo->prepare('SELECT id FROM clients WHERE company_id = ? AND whatsapp = ? LIMIT 1');
+    // ── Cliente: busca ou cria ───────────────────────────────────
+    $s = $pdo->prepare('SELECT id, nome FROM clients WHERE company_id=? AND whatsapp=? LIMIT 1');
     $s->execute([$companyId, $whatsapp]);
-    $existingClient = $s->fetchColumn();
+    $existing = $s->fetch(PDO::FETCH_ASSOC);
 
-    if ($existingClient) {
-        $clientId = (int)$existingClient;
-        // Atualiza pushName se estava vazio
-        if ($pushName) {
-            $pdo->prepare('UPDATE clients SET nome = COALESCE(NULLIF(nome,""), ?), updated_at = NOW() WHERE id = ?')
+    if ($existing) {
+        $clientId = (int)$existing['id'];
+        // Atualiza nome se estava vazio
+        if ($pushName && empty($existing['nome'])) {
+            $pdo->prepare('UPDATE clients SET nome=?, updated_at=NOW() WHERE id=?')
                 ->execute([$pushName, $clientId]);
         }
     } else {
-        // Cria novo cliente
         $nome = $pushName ?: ('WA ' . substr($whatsapp, -4));
-        $pdo->prepare('
-            INSERT INTO clients (company_id, nome, whatsapp, origem, created_at, updated_at)
-            VALUES (?, ?, ?, "whatsapp", NOW(), NOW())
-        ')->execute([$companyId, $nome, $whatsapp]);
+        $pdo->prepare('INSERT INTO clients (company_id,nome,whatsapp,origem,created_at,updated_at) VALUES (?,?,?,"whatsapp",NOW(),NOW())')
+            ->execute([$companyId, $nome, $whatsapp]);
         $clientId = (int)$pdo->lastInsertId();
     }
 
-    // ── Evita duplicatas (mesmo cliente + mesmo intent nos últimos 2 min) ──
+    // ── Anti-duplicata: mesmo cliente + mesmo título nos últimos 2 min ──
     $s = $pdo->prepare("
         SELECT id FROM interactions
-        WHERE company_id = ? AND client_id = ?
+        WHERE company_id=? AND client_id=? AND titulo=?
           AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 2 MINUTE)
-          AND titulo = ?
         LIMIT 1
     ");
     $s->execute([$companyId, $clientId, $titulo]);
     if ($s->fetchColumn()) {
-        echo json_encode(['ok' => true, 'skipped' => 'duplicate_within_2min']);
+        echo json_encode(['ok' => true, 'skipped' => 'duplicate_2min']);
         exit;
     }
 
-    // ── Garante colunas extras na tabela interactions ────────────
+    // ── Garante colunas canal/origem na tabela interactions ──────
     try {
         $icols = $pdo->query('SHOW COLUMNS FROM interactions')->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('canal', $icols))  $pdo->exec("ALTER TABLE interactions ADD COLUMN canal VARCHAR(50) DEFAULT 'whatsapp'");
-        if (!in_array('origem', $icols)) $pdo->exec("ALTER TABLE interactions ADD COLUMN origem VARCHAR(50) DEFAULT 'bot'");
+        if (!in_array('canal',   $icols)) $pdo->exec("ALTER TABLE interactions ADD COLUMN canal   VARCHAR(50) DEFAULT 'whatsapp'");
+        if (!in_array('origem',  $icols)) $pdo->exec("ALTER TABLE interactions ADD COLUMN origem  VARCHAR(50) DEFAULT 'bot'");
     } catch(Throwable $e) {}
 
-    // ── Salva a interação ────────────────────────────────────────
+    // ── Salva interação ──────────────────────────────────────────
     $pdo->prepare('
-        INSERT INTO interactions
-            (company_id, client_id, titulo, resumo, canal, origem, created_at, updated_at)
-        VALUES
-            (?, ?, ?, ?, "whatsapp", ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+        INSERT INTO interactions (company_id, client_id, titulo, resumo, canal, origem, created_at, updated_at)
+        VALUES (?, ?, ?, ?, "whatsapp", ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
     ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigem]);
 
     $interactionId = (int)$pdo->lastInsertId();
-
-    // ── Log para debug (opcional, remova em produção) ────────────
-    // file_put_contents(__DIR__ . '/logs/webhook.log', date('Y-m-d H:i:s') . " [$whatsapp] $titulo\n", FILE_APPEND);
 
     echo json_encode([
         'ok'             => true,
