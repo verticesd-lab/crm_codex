@@ -44,17 +44,28 @@ function parse_price(string $v): float {
 }
 
 /* ─── state ─────────────────────────────────────────────────────── */
-$action   = $_GET['action'] ?? 'list';
-$q        = trim($_GET['q'] ?? '');
-$cat      = trim($_GET['categoria'] ?? '');
-$page     = max(1,(int)($_GET['page']??1));
-$perPage  = in_array((int)($_GET['per_page']??30),[30,60,100]) ? (int)$_GET['per_page'] : 30;
-$filterAt = $_GET['ativo'] ?? '';   // '1','0',''
+$action       = $_GET['action'] ?? 'list';
+$q            = trim($_GET['q'] ?? '');
+$cat          = trim($_GET['categoria'] ?? '');
+$page         = max(1, (int)($_GET['page'] ?? 1));
+
+// CORREÇÃO: Pegamos o valor com fallback para 30 ANTES de validar no in_array
+$requestedPP  = (int)($_GET['per_page'] ?? 30);
+$perPage      = in_array($requestedPP, [30, 60, 100]) ? $requestedPP : 30;
+
+$filterAt     = $_GET['ativo'] ?? '';   // '1','0',''
 
 $flashSuccess = get_flash('success');
 $flashError   = get_flash('error');
 
-$backQs = http_build_query(array_filter(['q'=>$q,'categoria'=>$cat,'page'=>$page,'per_page'=>$perPage,'ativo'=>$filterAt]));
+// Mantemos todos os filtros na query string de retorno
+$backQs = http_build_query([
+    'q'         => $q,
+    'categoria' => $cat,
+    'page'      => $page,
+    'per_page'  => $perPage,
+    'ativo'     => $filterAt
+]);
 
 /* ─── DELETE ─────────────────────────────────────────────────────── */
 if ($action === 'delete' && isset($_GET['id'])) {
