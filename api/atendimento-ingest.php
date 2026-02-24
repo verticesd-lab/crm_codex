@@ -25,7 +25,7 @@ function normalize_digits(?string $s): ?string {
 }
 
 function auth_or_401(): void {
-  $expected = envv('ATENDIMENTO_INGEST_TOKEN');
+  $expected = envv('ATENDIMENTO_INGEST_TOKEN') ?: envv('WAHA_BRIDGE_TOKEN');
   if (!$expected) return; // se não setar token, fica aberto (não recomendo)
   $got = $_GET['token'] ?? '';
   if (!$got || !hash_equals($expected, (string)$got)) {
@@ -107,6 +107,9 @@ $contactEmail = is_string($contactEmail) ? strtolower(trim($contactEmail)) : nul
 if (!$contactPhone && !$contactEmail) {
   json_response(false, null, 'Sem contato (phone/email).', 400);
 }
+if ($companyId <= 0) {
+  json_response(false, null, 'company_id obrigatorio', 400);
+}
 
 $externalCreatedAt = dt_from_unix($ts);
 
@@ -115,16 +118,37 @@ try {
   $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
   $pdo->beginTransaction();
 
-  // 1) encontra/gera conversa por phone/email (por company)
-  $where = [];
-  $params = [];
-  if ($companyId > 0) { $where[] = 'company_id = :company_id'; $params[':company_id'] = $companyId; }
-  if ($contactPhone) { $where[] = 'contact_phone = :phone'; $params[':phone'] = $contactPhone; }
-  elseif ($contactEmail) { $where[] = 'contact_email = :email'; $params[':email'] = $contactEmail; }
-
-  $sqlFind = 'SELECT id FROM atd_conversations WHERE ' . implode(' AND ', $where) . ' ORDER BY id DESC LIMIT 1';
-  $st = $pdo->prepare($sqlFind);
-  $st->execute($params);
+  // 1) Reutiliza conversa aberta (open) por telefone+empresa.
+  //    Se não existir, cria nova conversa.
+  if ($contactPhone) {
+    $st = $pdo->prepare("
+      SELECT id
+      FROM atd_conversations
+      WHERE company_id = :company_id
+        AND contact_phone = :phone
+        AND status = 'open'
+      ORDER BY COALESCE(last_message_at, updated_at, created_at) DESC, id DESC
+      LIMIT 1
+    ");
+    $st->execute([
+      ':company_id' => $companyId,
+      ':phone' => $contactPhone,
+    ]);
+  } else {
+    $st = $pdo->prepare("
+      SELECT id
+      FROM atd_conversations
+      WHERE company_id = :company_id
+        AND contact_email = :email
+        AND status = 'open'
+      ORDER BY COALESCE(last_message_at, updated_at, created_at) DESC, id DESC
+      LIMIT 1
+    ");
+    $st->execute([
+      ':company_id' => $companyId,
+      ':email' => $contactEmail,
+    ]);
+  }
   $row = $st->fetch(PDO::FETCH_ASSOC);
 
   if ($row && isset($row['id'])) {
@@ -149,7 +173,7 @@ try {
       VALUES (:company_id, :inbox_id, :phone, :email, :name, 'open', NULL)
     ");
     $stIns->execute([
-      ':company_id' => $companyId > 0 ? $companyId : null,
+      ':company_id' => $companyId,
       ':inbox_id' => $inboxId,
       ':phone' => $contactPhone,
       ':email' => $contactEmail,
@@ -181,14 +205,13 @@ try {
     ':created_at_external' => $externalCreatedAt,
   ]);
 
-  // 3) atualiza last_message_at
+  // 3) atualiza last_message_at para subir conversa no topo do painel
   $stLast = $pdo->prepare("
     UPDATE atd_conversations
-    SET last_message_at = COALESCE(:dt, NOW())
+    SET last_message_at = NOW()
     WHERE id = :id
   ");
   $stLast->execute([
-    ':dt' => $externalCreatedAt,
     ':id' => $convId
   ]);
 

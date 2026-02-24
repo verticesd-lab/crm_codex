@@ -8,11 +8,20 @@ header('Content-Type: application/json; charset=utf-8');
 
 function json_response(bool $ok, $data = null, ?string $error = null, int $http = 200): void {
   http_response_code($http);
-  echo json_encode(['ok' => $ok, 'data' => $data, 'error' => $error], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  echo json_encode(
+    ['ok' => $ok, 'data' => $data, 'error' => $error],
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+  );
   exit;
 }
 
 require_login();
+
+$companyId = (int)($_SESSION['company_id'] ?? 0);
+if ($companyId <= 0) {
+  http_response_code(403);
+  die(json_encode(['ok' => false, 'data' => null, 'error' => 'Forbidden: company_id ausente na sessao'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
 
 $q = trim((string)($_GET['q'] ?? ''));
 $limit = (int)($_GET['limit'] ?? 80);
@@ -22,37 +31,79 @@ if ($limit > 200) $limit = 200;
 try {
   $pdo = get_pdo();
 
-  $where = '';
-  $params = [];
+  $whereParts = ['c.company_id = :company_id'];
+  $params = [':company_id' => $companyId];
 
   if ($q !== '') {
-    $where = "WHERE (contact_phone LIKE :q OR contact_email LIKE :q OR contact_name LIKE :q)";
+    $whereParts[] = "(
+      c.contact_phone LIKE :q OR
+      c.contact_email LIKE :q OR
+      c.contact_name  LIKE :q
+    )";
     $params[':q'] = '%' . $q . '%';
   }
+  $where = 'WHERE ' . implode(' AND ', $whereParts);
 
   $sql = "
     SELECT
-      c.*,
+      c.id AS conversation_id,          -- << PADRÃO pro frontend
+      c.id,
+      c.company_id,
+      c.inbox_id,
+      c.contact_phone,
+      c.contact_email,
+      c.contact_name,
+      c.status,
+      c.last_message_at,
+      c.human_last_reply_at,
+      c.human_block_minutes,
+      c.ai_next_allowed_at,
+      c.created_at,
+      c.updated_at,
+
       (
         SELECT m.content
         FROM atd_messages m
         WHERE m.conversation_id = c.id
-        ORDER BY m.created_at DESC, m.id DESC
+        ORDER BY COALESCE(m.created_at_external, m.created_at) DESC, m.id DESC
         LIMIT 1
-      ) AS last_content
+      ) AS last_content,
+
+      (
+        SELECT COALESCE(m.created_at_external, m.created_at)
+        FROM atd_messages m
+        WHERE m.conversation_id = c.id
+        ORDER BY COALESCE(m.created_at_external, m.created_at) DESC, m.id DESC
+        LIMIT 1
+      ) AS last_message_at_calc
+
     FROM atd_conversations c
     $where
-    ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC, c.id DESC
+    ORDER BY COALESCE(c.last_message_at, last_message_at_calc, c.updated_at, c.created_at) DESC, c.id DESC
     LIMIT :lim
   ";
 
   $st = $pdo->prepare($sql);
-  foreach ($params as $k => $v) $st->bindValue($k, $v, PDO::PARAM_STR);
-  $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-  $st->execute();
 
+  foreach ($params as $k => $v) {
+    $type = ($k === ':company_id') ? PDO::PARAM_INT : PDO::PARAM_STR;
+    $st->bindValue($k, $v, $type);
+  }
+  $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+
+  $st->execute();
   $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+  // garante last_message_at final (se estiver NULL na conversa)
+  foreach ($rows as &$r) {
+    if (empty($r['last_message_at']) && !empty($r['last_message_at_calc'])) {
+      $r['last_message_at'] = $r['last_message_at_calc'];
+    }
+    unset($r['last_message_at_calc']); // remove campo auxiliar
+  }
+
   json_response(true, $rows, null, 200);
+
 } catch (Throwable $e) {
   json_response(false, null, 'Erro ao listar conversas: ' . $e->getMessage(), 500);
 }

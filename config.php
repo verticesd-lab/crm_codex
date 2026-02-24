@@ -43,6 +43,11 @@ define(
 );
 
 // =========================
+// SEGREDO DA API (MCP)
+// =========================
+define('API_SECRET', getenv('API_TOKEN_IA') ?: ($_ENV['API_TOKEN_IA'] ?? 'fallback-aqui'));
+
+// =========================
 // CONFIGURAÇÕES CHATWOOT
 // =========================
 define('CHATWOOT_BASE_URL', 'https://chat.formenstore.com.br');
