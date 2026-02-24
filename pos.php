@@ -12,13 +12,50 @@ $clientsStmt = $pdo->prepare('SELECT id, nome, telefone_principal, whatsapp FROM
 $clientsStmt->execute([$companyId]);
 $clients = $clientsStmt->fetchAll();
 
-$productsStmt = $pdo->prepare('SELECT id, nome, preco, categoria FROM products WHERE company_id=? AND ativo=1 ORDER BY categoria, nome');
+$productsStmt = $pdo->prepare('SELECT id, nome, preco, categoria FROM products WHERE company_id=? AND ativo=1 ORDER BY nome');
 $productsStmt->execute([$companyId]);
-$products = $productsStmt->fetchAll();
+$rawProducts = $productsStmt->fetchAll();
 
-// Categorias únicas
-$categories = array_unique(array_filter(array_column($products, 'categoria')));
-sort($categories);
+/**
+ * Normaliza categoria: remove acentos, trim, ucfirst
+ * "BONÉ" / "Boné" / "bone" → "Bone" (chave normalizada)
+ */
+function normalize_cat(string $cat): string {
+    $cat = trim($cat);
+    if ($cat === '') return '';
+    // Remove acentos via transliteration
+    $normalized = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $cat);
+    $normalized = strtolower(preg_replace('/[^a-zA-Z0-9 ]/', '', $normalized ?? $cat));
+    return trim($normalized);
+}
+
+// Mapeia categoria normalizada → label original mais frequente
+$catMap = []; // normalized_key => original_label
+foreach ($rawProducts as $p) {
+    $orig = trim((string)($p['categoria'] ?? ''));
+    if ($orig === '') continue;
+    $key = normalize_cat($orig);
+    if (!isset($catMap[$key])) $catMap[$key] = $orig;
+}
+ksort($catMap);
+
+// Reconstrói produtos com cat_key numérico (índice no array de categorias)
+$catKeys = array_keys($catMap); // 0,1,2...
+$catIndexByKey = array_flip($catKeys); // normalized_key => idx
+
+$products = [];
+foreach ($rawProducts as $p) {
+    $orig    = trim((string)($p['categoria'] ?? ''));
+    $normKey = normalize_cat($orig);
+    $catIdx  = isset($catIndexByKey[$normKey]) ? $catIndexByKey[$normKey] : -1;
+    $products[] = array_merge($p, ['cat_idx' => $catIdx, 'cat_label' => $catIdx >= 0 ? $catMap[$normKey] : '']);
+}
+
+// Ordena: por cat_label, depois por nome
+usort($products, fn($a,$b) => strcmp($a['cat_label'].$a['nome'], $b['cat_label'].$b['nome']));
+
+// Lista de categorias para os tabs
+$categories = $catMap; // normalized_key => label
 
 // ── Últimas vendas do dia ──
 $todayStmt = $pdo->prepare("
@@ -201,71 +238,94 @@ include __DIR__ . '/views/partials/header.php';
 .products-grid {
   flex: 1;
   overflow-y: auto;
-  padding: .85rem 1.1rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: .7rem;
-  align-content: start;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 .products-grid::-webkit-scrollbar { width:4px; }
 .products-grid::-webkit-scrollbar-track { background:transparent; }
 .products-grid::-webkit-scrollbar-thumb { background:#d1d5db; border-radius:2px; }
 
-.prod-card {
-  background: #fff;
-  border: 1.5px solid #e5e7eb;
-  border-radius: 12px;
-  padding: .9rem .8rem;
-  cursor: pointer;
-  transition: all .15s;
-  display: flex;
-  flex-direction: column;
-  gap: .35rem;
-  position: relative;
-  overflow: hidden;
+/* Section header (categoria) */
+.prod-section-header {
+  padding: .5rem 1.1rem .3rem;
+  font-size: .68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #6366f1;
+  background: #f5f3ff;
+  border-bottom: 1px solid #e0e7ff;
+  border-top: 1px solid #e0e7ff;
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
-.prod-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  background: #6366f1;
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform .2s;
-}
-.prod-card:hover { border-color:#6366f1; box-shadow:0 4px 16px rgba(99,102,241,.12); transform:translateY(-2px); }
-.prod-card:hover::before { transform:scaleX(1); }
-.prod-card:active { transform:scale(.97); }
-.prod-card.added { border-color:#22c55e; background:#f0fdf4; }
 
-.prod-cat-badge {
-  font-size:.6rem;
-  font-weight:700;
-  text-transform:uppercase;
-  letter-spacing:.05em;
-  color:#94a3b8;
+/* Product row */
+.prod-row {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .65rem 1.1rem;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+  transition: background .1s;
+  background: #fff;
 }
-.prod-name {
-  font-size:.82rem;
-  font-weight:600;
-  color:#0f172a;
-  line-height:1.3;
-  flex:1;
+.prod-row:hover { background: #f5f3ff; }
+.prod-row:active { background: #ede9fe; }
+.prod-row.added { background: #f0fdf4; }
+.prod-row-info { flex: 1; min-width: 0; }
+.prod-row-name {
+  font-size: .9rem;
+  font-weight: 600;
+  color: #0f172a;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.prod-price {
-  font-family:'JetBrains Mono',monospace;
-  font-size:.95rem;
-  font-weight:700;
-  color:#6366f1;
+.prod-row-price {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .9rem;
+  font-weight: 700;
+  color: #6366f1;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.prod-add-hint {
-  font-size:.65rem;
-  color:#94a3b8;
-  display:flex;
-  align-items:center;
-  gap:.2rem;
+.prod-row-add {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background .15s, transform .1s;
 }
+.prod-row-add:hover { background: #4f46e5; }
+.prod-row:active .prod-row-add { transform: scale(.9); }
+.prod-row.added .prod-row-add { background: #16a34a; }
+
+/* Cat count badge */
+.cat-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.2);
+  font-size: .62rem;
+  font-weight: 700;
+  padding: .05rem .35rem;
+  border-radius: 10px;
+  margin-left: .2rem;
+}
+.cat-tab .cat-count { background: #f1f5f9; color: #64748b; }
+.cat-tab.active .cat-count { background: rgba(255,255,255,.25); color: #fff; }
 
 /* ── Right: carrinho ── */
 .pos-cart {
@@ -376,25 +436,25 @@ include __DIR__ . '/views/partials/header.php';
 }
 .cart-item:hover { background:#1f2229; }
 .ci-info { flex:1; min-width:0; }
-.ci-name { font-size:.82rem; font-weight:600; color:#e5e7eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ci-price { font-family:'JetBrains Mono',monospace; font-size:.72rem; color:#6b7280; }
+.ci-name { font-size:.95rem; font-weight:600; color:#e5e7eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ci-price { font-family:'JetBrains Mono',monospace; font-size:.78rem; color:#6b7280; margin-top:.1rem; }
 .ci-qty-ctrl { display:flex; align-items:center; gap:0; }
 .ci-qty-btn {
-  width:22px; height:22px;
+  width:26px; height:26px;
   border:none;
-  border-radius:5px;
+  border-radius:6px;
   background:#2a2d35;
   color:#9ca3af;
-  font-size:.85rem;
+  font-size:1rem;
   font-weight:700;
   cursor:pointer;
   display:flex; align-items:center; justify-content:center;
   transition:background .1s;
 }
 .ci-qty-btn:hover { background:#374151; color:#fff; }
-.ci-qty { font-family:'JetBrains Mono',monospace; font-size:.8rem; font-weight:700; color:#fff; min-width:24px; text-align:center; }
-.ci-subtotal { font-family:'JetBrains Mono',monospace; font-size:.82rem; font-weight:700; color:#a78bfa; min-width:60px; text-align:right; }
-.ci-remove { width:18px; height:18px; background:transparent; border:none; cursor:pointer; color:#374151; transition:color .1s; display:flex; align-items:center; justify-content:center; }
+.ci-qty { font-family:'JetBrains Mono',monospace; font-size:.95rem; font-weight:700; color:#fff; min-width:28px; text-align:center; }
+.ci-subtotal { font-family:'JetBrains Mono',monospace; font-size:.92rem; font-weight:700; color:#a78bfa; min-width:68px; text-align:right; }
+.ci-remove { width:20px; height:20px; background:transparent; border:none; cursor:pointer; color:#374151; transition:color .1s; display:flex; align-items:center; justify-content:center; }
 .ci-remove:hover { color:#ef4444; }
 
 /* Cart footer */
@@ -402,11 +462,11 @@ include __DIR__ . '/views/partials/header.php';
 
 .cart-totals { margin-bottom:.75rem; }
 .cart-total-row { display:flex; justify-content:space-between; align-items:center; padding:.2rem 0; }
-.cart-total-label { font-size:.78rem; color:#6b7280; }
-.cart-total-val { font-family:'JetBrains Mono',monospace; font-size:.82rem; color:#9ca3af; }
+.cart-total-label { font-size:.85rem; color:#6b7280; }
+.cart-total-val { font-family:'JetBrains Mono',monospace; font-size:.9rem; color:#9ca3af; }
 .cart-total-row.grand { border-top:1px solid #2a2d35; padding-top:.5rem; margin-top:.25rem; }
-.cart-total-row.grand .cart-total-label { font-size:.9rem; font-weight:700; color:#e5e7eb; }
-.cart-total-row.grand .cart-total-val { font-size:1.25rem; font-weight:800; color:#fff; }
+.cart-total-row.grand .cart-total-label { font-size:1rem; font-weight:700; color:#e5e7eb; }
+.cart-total-row.grand .cart-total-val { font-size:1.4rem; font-weight:800; color:#fff; }
 
 .desconto-row { display:flex; align-items:center; gap:.5rem; margin-bottom:.6rem; }
 .desconto-row label { font-size:.72rem; color:#6b7280; white-space:nowrap; }
@@ -427,12 +487,12 @@ include __DIR__ . '/views/partials/header.php';
 /* Formas de pagamento */
 .pagamento-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:.35rem; margin-bottom:.75rem; }
 .pag-btn {
-  padding:.45rem .3rem;
+  padding:.5rem .3rem;
   border-radius:8px;
   border:1.5px solid #374151;
   background:transparent;
   color:#6b7280;
-  font-size:.68rem;
+  font-size:.75rem;
   font-weight:600;
   cursor:pointer;
   text-align:center;
@@ -440,20 +500,20 @@ include __DIR__ . '/views/partials/header.php';
   display:flex;
   flex-direction:column;
   align-items:center;
-  gap:.2rem;
+  gap:.25rem;
 }
 .pag-btn:hover { border-color:#6366f1; color:#a78bfa; }
 .pag-btn.active { border-color:#22c55e; background:rgba(34,197,94,.1); color:#22c55e; }
 
 .btn-finalizar {
   width:100%;
-  padding:.9rem;
+  padding:1rem;
   background:linear-gradient(135deg,#22c55e,#16a34a);
   color:#fff;
   border:none;
   border-radius:10px;
   font-family:'Outfit',sans-serif;
-  font-size:.95rem;
+  font-size:1.05rem;
   font-weight:700;
   cursor:pointer;
   display:flex;
@@ -467,12 +527,12 @@ include __DIR__ . '/views/partials/header.php';
 .btn-finalizar:active { transform:scale(.98); }
 .btn-limpar {
   width:100%;
-  padding:.55rem;
+  padding:.6rem;
   background:transparent;
   color:#4b5563;
   border:1px solid #2a2d35;
   border-radius:8px;
-  font-size:.78rem;
+  font-size:.82rem;
   font-weight:600;
   cursor:pointer;
   margin-top:.4rem;
@@ -581,33 +641,45 @@ include __DIR__ . '/views/partials/header.php';
     </div>
     <!-- Category tabs -->
     <div class="cat-tabs" id="cat-tabs">
-      <button class="cat-tab active" data-cat="all">Todos</button>
-      <?php foreach($categories as $cat): ?>
-        <button class="cat-tab" data-cat="<?= htmlspecialchars($cat) ?>"><?= htmlspecialchars($cat) ?></button>
+      <button class="cat-tab active" data-cat-idx="-1">
+        Todos <span class="cat-count"><?= count($products) ?></span>
+      </button>
+      <?php foreach($catKeys as $idx => $normKey): $label = $catMap[$normKey];
+        $cnt = count(array_filter($products, fn($p) => $p['cat_idx'] === $idx)); ?>
+        <button class="cat-tab" data-cat-idx="<?= $idx ?>">
+          <?= htmlspecialchars($label) ?> <span class="cat-count"><?= $cnt ?></span>
+        </button>
       <?php endforeach; ?>
     </div>
-    <!-- Products grid -->
+    <!-- Products list -->
     <div class="products-grid" id="products-grid">
-      <?php foreach($products as $p): ?>
-        <div class="prod-card"
+      <?php
+      $currentCatIdx = -99;
+      foreach($products as $p):
+        if ($p['cat_idx'] !== $currentCatIdx):
+          $currentCatIdx = $p['cat_idx'];
+          if ($p['cat_label']): ?>
+        <div class="prod-section-header" data-section-cat="<?= $p['cat_idx'] ?>">
+          <?= htmlspecialchars($p['cat_label']) ?>
+        </div>
+      <?php endif; endif; ?>
+        <div class="prod-row"
              data-id="<?= (int)$p['id'] ?>"
-             data-name="<?= htmlspecialchars($p['nome']) ?>"
+             data-name="<?= htmlspecialchars((string)$p['nome']) ?>"
              data-price="<?= (float)$p['preco'] ?>"
-             data-cat="<?= htmlspecialchars($p['categoria'] ?? '') ?>">
-          <?php if($p['categoria']): ?>
-            <span class="prod-cat-badge"><?= htmlspecialchars($p['categoria']) ?></span>
-          <?php endif; ?>
-          <span class="prod-name"><?= sanitize($p['nome']) ?></span>
-          <span class="prod-price">R$ <?= number_format((float)$p['preco'],2,',','.') ?></span>
-          <span class="prod-add-hint">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Adicionar
-          </span>
+             data-cat-idx="<?= (int)$p['cat_idx'] ?>">
+          <div class="prod-row-info">
+            <span class="prod-row-name"><?= sanitize((string)$p['nome']) ?></span>
+          </div>
+          <span class="prod-row-price">R$ <?= number_format((float)$p['preco'],2,',','.') ?></span>
+          <button class="prod-row-add" tabindex="-1">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
         </div>
       <?php endforeach; ?>
       <?php if(empty($products)): ?>
-        <div style="grid-column:1/-1;text-align:center;padding:3rem;color:#94a3b8;font-size:.875rem;">
-          Nenhum produto cadastrado. <a href="products.php?action=create" style="color:#6366f1;">Cadastrar produto →</a>
+        <div style="padding:3rem;text-align:center;color:#94a3b8;font-size:.875rem;">
+          Nenhum produto cadastrado. <a href="products.php?action=create" style="color:#6366f1;">Cadastrar produto &rarr;</a>
         </div>
       <?php endif; ?>
     </div>
@@ -752,9 +824,9 @@ include __DIR__ . '/views/partials/header.php';
   // ── Dados ──
   const products = <?= json_encode(array_values($products)) ?>;
   let cart = [];
-  let activeCat = 'all';
-  let activeCanal = 'pdv';
-  let activePag = 'dinheiro';
+  let activeCatIdx = -1; // -1 = todos
+  let activeCanal  = 'pdv';
+  let activePag    = 'dinheiro';
 
   // ── Elementos ──
   const cartItemsEl  = document.getElementById('cart-items');
@@ -772,9 +844,30 @@ include __DIR__ . '/views/partials/header.php';
     return 'R$ ' + (v||0).toFixed(2).replace('.',',');
   }
 
+  // ── Aplica filtros (categoria + busca) ──
+  function applyFilters() {
+    const term = searchEl.value.trim().toLowerCase();
+    let visibleHeaders = new Set();
+
+    gridEl.querySelectorAll('.prod-row').forEach(row => {
+      const rowCatIdx  = parseInt(row.dataset.catIdx, 10);
+      const name       = row.dataset.name.toLowerCase();
+      const matchCat   = activeCatIdx === -1 || rowCatIdx === activeCatIdx;
+      const matchTerm  = !term || name.includes(term);
+      const visible    = matchCat && matchTerm;
+      row.style.display = visible ? '' : 'none';
+      if (visible) visibleHeaders.add(rowCatIdx);
+    });
+
+    // Mostra/oculta headers de seção
+    gridEl.querySelectorAll('.prod-section-header').forEach(h => {
+      const idx = parseInt(h.dataset.sectionCat, 10);
+      h.style.display = visibleHeaders.has(idx) ? '' : 'none';
+    });
+  }
+
   // ── Render cart ──
   function renderCart() {
-    // Remove itens antigos (preserva empty)
     Array.from(cartItemsEl.querySelectorAll('.cart-item')).forEach(el => el.remove());
 
     const subtotal = cart.reduce((s,it) => s + it.qty * it.price, 0);
@@ -808,7 +901,7 @@ include __DIR__ . '/views/partials/header.php';
         </div>
         <span class="ci-subtotal">${fmt(it.qty*it.price)}</span>
         <button class="ci-remove" data-idx="${idx}" title="Remover">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       `;
       cartItemsEl.insertBefore(div, cartEmptyEl);
@@ -819,12 +912,12 @@ include __DIR__ . '/views/partials/header.php';
   cartItemsEl.addEventListener('click', e => {
     const btn = e.target.closest('[data-action],[data-idx]');
     if (!btn) return;
-    const idx = parseInt(btn.dataset.idx, 10);
+    const idx    = parseInt(btn.dataset.idx, 10);
     const action = btn.dataset.action;
     if (action === 'inc') { cart[idx].qty++; }
     else if (action === 'dec') { if(cart[idx].qty > 1) cart[idx].qty--; else cart.splice(idx,1); }
     else if (btn.classList.contains('ci-remove')) { cart.splice(idx,1); }
-    updateProductCards();
+    updateProductRows();
     renderCart();
   });
 
@@ -835,60 +928,53 @@ include __DIR__ . '/views/partials/header.php';
     const existing = cart.find(it => it.id === id);
     if (existing) { existing.qty++; }
     else { cart.push({ id, name, price, qty: 1 }); }
-    updateProductCards();
+    updateProductRows();
     renderCart();
-    // Feedback visual no card
-    const card = gridEl.querySelector(`[data-id="${id}"]`);
-    if (card) {
-      card.classList.add('added');
-      setTimeout(() => card.classList.remove('added'), 600);
+    // Feedback visual na linha
+    const row = gridEl.querySelector(`.prod-row[data-id="${id}"]`);
+    if (row) {
+      row.classList.add('added');
+      setTimeout(() => row.classList.remove('added'), 800);
     }
   }
 
-  function updateProductCards() {
+  function updateProductRows() {
     const inCart = new Set(cart.map(it => it.id));
-    gridEl.querySelectorAll('.prod-card').forEach(card => {
-      const id = parseInt(card.dataset.id, 10);
-      card.classList.toggle('added', inCart.has(id));
+    gridEl.querySelectorAll('.prod-row').forEach(row => {
+      const id = parseInt(row.dataset.id, 10);
+      row.classList.toggle('added', inCart.has(id));
+      const addBtn = row.querySelector('.prod-row-add');
+      if (addBtn) {
+        const qty = cart.find(it => it.id === id)?.qty || 0;
+        addBtn.innerHTML = qty > 0
+          ? `<span style="font-size:.8rem;font-weight:800">${qty}</span>`
+          : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+      }
     });
   }
 
-  // ── Product card click ──
+  // ── Product row click ──
   gridEl.addEventListener('click', e => {
-    const card = e.target.closest('.prod-card');
-    if (!card) return;
+    const row = e.target.closest('.prod-row');
+    if (!row) return;
     addProduct(
-      parseInt(card.dataset.id, 10),
-      card.dataset.name,
-      parseFloat(card.dataset.price)
+      parseInt(row.dataset.id, 10),
+      row.dataset.name,
+      parseFloat(row.dataset.price)
     );
   });
 
   // ── Search ──
-  searchEl.addEventListener('input', () => {
-    const term = searchEl.value.trim().toLowerCase();
-    gridEl.querySelectorAll('.prod-card').forEach(card => {
-      const name = card.dataset.name.toLowerCase();
-      const cat  = card.dataset.cat.toLowerCase();
-      const matchCat  = activeCat === 'all' || cat === activeCat;
-      const matchTerm = !term || name.includes(term);
-      card.style.display = (matchCat && matchTerm) ? '' : 'none';
-    });
-  });
+  searchEl.addEventListener('input', applyFilters);
 
-  // ── Category tabs ──
+  // ── Category tabs — usa cat_idx numérico ──
   document.getElementById('cat-tabs').addEventListener('click', e => {
     const tab = e.target.closest('.cat-tab');
     if (!tab) return;
-    activeCat = tab.dataset.cat;
+    activeCatIdx = parseInt(tab.dataset.catIdx, 10);
     document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    const term = searchEl.value.trim().toLowerCase();
-    gridEl.querySelectorAll('.prod-card').forEach(card => {
-      const matchCat  = activeCat === 'all' || card.dataset.cat.toLowerCase() === activeCat;
-      const matchTerm = !term || card.dataset.name.toLowerCase().includes(term);
-      card.style.display = (matchCat && matchTerm) ? '' : 'none';
-    });
+    applyFilters();
   });
 
   // ── Canal tabs ──
@@ -913,20 +999,16 @@ include __DIR__ . '/views/partials/header.php';
 
   // ── Novo cliente toggle ──
   document.getElementById('btn-new-client').addEventListener('click', () => {
-    const sec = document.getElementById('new-client-section');
-    sec.classList.toggle('visible');
+    document.getElementById('new-client-section').classList.toggle('visible');
   });
 
   // ── Sem cadastro ──
   const noCheck = document.getElementById('no-client-check');
   noCheck.addEventListener('change', () => {
     const disabled = noCheck.checked;
-    document.getElementById('client-select').disabled = disabled;
-    document.getElementById('btn-new-client').disabled = disabled;
-    document.getElementById('new-client-name').disabled = disabled;
-    document.getElementById('new-client-phone').disabled = disabled;
-    [document.getElementById('client-select'), document.getElementById('btn-new-client')].forEach(el => {
-      el.style.opacity = disabled ? '.4' : '1';
+    ['client-select','btn-new-client','new-client-name','new-client-phone'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = disabled; el.style.opacity = disabled ? '.4' : '1'; }
     });
   });
 
