@@ -177,18 +177,28 @@ try {
         exit;
     }
 
-    // ── Garante colunas canal/origem na tabela interactions ──────
-    try {
-        $icols = $pdo->query('SHOW COLUMNS FROM interactions')->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('canal',   $icols)) $pdo->exec("ALTER TABLE interactions ADD COLUMN canal   VARCHAR(50) DEFAULT 'whatsapp'");
-        if (!in_array('origem',  $icols)) $pdo->exec("ALTER TABLE interactions ADD COLUMN origem  VARCHAR(50) DEFAULT 'bot'");
-    } catch(Throwable $e) {}
+    // ── Descobre colunas reais da tabela interactions ────────────
+    $icols = $pdo->query('SHOW COLUMNS FROM interactions')->fetchAll(PDO::FETCH_COLUMN);
+    $hasUpdatedAt = in_array('updated_at', $icols);
+    $hasCanal     = in_array('canal',      $icols);
+    $hasOrigem    = in_array('origem',     $icols);
+
+    // Adiciona colunas faltantes
+    if (!$hasCanal)  $pdo->exec("ALTER TABLE interactions ADD COLUMN canal   VARCHAR(50) DEFAULT 'whatsapp'");
+    if (!$hasOrigem) $pdo->exec("ALTER TABLE interactions ADD COLUMN origem  VARCHAR(50) DEFAULT 'bot'");
 
     // ── Salva interação ──────────────────────────────────────────
-    $pdo->prepare('
-        INSERT INTO interactions (company_id, client_id, titulo, resumo, canal, origem, created_at, updated_at)
-        VALUES (?, ?, ?, ?, "whatsapp", ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
-    ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigem]);
+    if ($hasUpdatedAt) {
+        $pdo->prepare('
+            INSERT INTO interactions (company_id, client_id, titulo, resumo, canal, origem, created_at, updated_at)
+            VALUES (?, ?, ?, ?, "whatsapp", ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+        ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigem]);
+    } else {
+        $pdo->prepare('
+            INSERT INTO interactions (company_id, client_id, titulo, resumo, canal, origem, created_at)
+            VALUES (?, ?, ?, ?, "whatsapp", ?, UTC_TIMESTAMP())
+        ')->execute([$companyId, $clientId, $titulo, $resumo, $crmOrigem]);
+    }
 
     $interactionId = (int)$pdo->lastInsertId();
 
