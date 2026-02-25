@@ -73,7 +73,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'timeline') {
         JOIN clients c ON c.id = i.client_id
         WHERE i.company_id = ?
         ORDER BY i.created_at DESC
-        LIMIT 8
+        LIMIT 20
     ");
     $s->execute([$companyId]);
     $rows = $s->fetchAll(PDO::FETCH_ASSOC);
@@ -89,11 +89,19 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'timeline') {
     $hoje = (int)$kpi->fetchColumn();
 
     $items = [];
+    $today     = date('Y-m-d', time() - 4*3600); // hoje em UTC-4
+    $yesterday = date('Y-m-d', time() - 4*3600 - 86400);
     foreach ($rows as $ci => $ix) {
         $parsed = parse_resumo($ix['resumo'] ?? null);
         $ts     = strtotime($ix['created_at']) - (4 * 3600);
         $col    = $palette[$ci % count($palette)];
         $nome   = $ix['cliente_nome'] ?? '?';
+        $dateKey= date('Y-m-d', $ts);
+        $sepLabel = match($dateKey) {
+            $today     => 'Hoje',
+            $yesterday => 'Ontem',
+            default    => date('d/m', $ts),
+        };
         $items[] = [
             'id'       => $ix['id'],
             'nome'     => $nome,
@@ -103,14 +111,17 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'timeline') {
             'label'    => $parsed['label'],
             'emoji'    => $parsed['emoji'],
             'hora'     => date('H:i', $ts),
-            'dateKey'  => date('Y-m-d', $ts),
+            'dateKey'  => $dateKey,
+            'sepLabel' => $sepLabel,
             'rel'      => relative_time($ix['created_at']),
             'ts'       => $ts,
             'avBg'     => $col[0],
             'avFg'     => $col[1],
         ];
     }
-    echo json_encode(['items' => $items, 'hoje' => $hoje]);
+    // lastActivity = timestamp UTC da interação mais recente (para o banner de status)
+    $lastActivity = !empty($rows) ? strtotime($rows[0]['created_at']) : null;
+    echo json_encode(['items' => $items, 'hoje' => $hoje, 'lastActivity' => $lastActivity]);
     exit;
 }
 
@@ -299,6 +310,10 @@ include __DIR__ . '/views/partials/header.php';
         <a class="dp-link" href="<?= BASE_URL ?>/atendimento.php">Ver todos →</a>
       </div>
     </div>
+    <!-- Banner de status do webhook -->
+    <div id="webhook-status" style="padding:.4rem 1.25rem;font-size:.68rem;background:#f8fafc;border-bottom:1px solid #f1f5f9;color:#64748b;">
+      ⏳ Verificando conexão...
+    </div>
     <div class="dp-body">
       <div class="tl" id="tl-container">
         <!-- Populado pelo JS via AJAX -->
@@ -366,37 +381,45 @@ let countdown    = 30;
 let countdownTmr = null;
 
 // ── Renderiza a timeline a partir dos dados da API ──
-function renderTimeline(items) {
+function renderTimeline(items, lastActivity) {
   const container = document.getElementById('tl-container');
   if (!items || items.length === 0) {
     container.innerHTML = '<div class="empty-tl"><span>💬</span><p>Nenhum atendimento registrado</p></div>';
     return;
   }
 
-  const today     = new Date();
-  const todayStr  = today.toISOString().split('T')[0];
-  const yestDate  = new Date(today); yestDate.setDate(yestDate.getDate()-1);
-  const yestStr   = yestDate.toISOString().split('T')[0];
+  // Banner de status do webhook — usa lastActivity vindo do servidor
+  const banner = document.getElementById('webhook-status');
+  if (banner && lastActivity) {
+    const diffMin = Math.floor((Date.now()/1000 - lastActivity) / 60);
+    if (diffMin < 60) {
+      banner.innerHTML = `<span style="color:#16a34a;">🟢 Conectado</span> · última msg há ${diffMin < 1 ? 'menos de 1' : diffMin} min`;
+      banner.style.color = '#64748b';
+    } else if (diffMin < 1440) {
+      const hrs = Math.floor(diffMin/60);
+      banner.innerHTML = `<span style="color:#d97706;">🟡 Inativo</span> · última msg há ${hrs}h — verifique o ActivePieces`;
+      banner.style.color = '#92400e';
+    } else {
+      const days = Math.floor(diffMin/1440);
+      banner.innerHTML = `<span style="color:#dc2626;">🔴 Desconectado</span> · sem atividade há ${days} dia(s)`;
+      banner.style.color = '#991b1b';
+    }
+  }
 
   let html = '<div class="tl">';
-  let lastDate = null;
+  let lastDateKey = null;
 
   items.forEach((ix, ci) => {
-    const sep = ix.dateKey !== lastDate;
-    lastDate = ix.dateKey;
-
-    let sepLabel = ix.dateKey;
-    if (ix.dateKey === todayStr)  sepLabel = 'Hoje';
-    else if (ix.dateKey === yestStr) sepLabel = 'Ontem';
-    else sepLabel = ix.dateKey.split('-').slice(1).reverse().join('/'); // DD/MM
-
+    const sep = ix.dateKey !== lastDateKey;
+    lastDateKey = ix.dateKey;
+    // sepLabel já vem do servidor corretamente em PT-BR (Hoje/Ontem/DD/MM)
     const col = PALETTE[ci % PALETTE.length];
     const badgeClass = ix.intent && ix.intent !== 'outro' ? ix.intent : '';
     const badge = badgeClass
       ? `<span class="tl-badge ${badgeClass}">${ix.emoji} ${ix.label}</span>`
       : '';
 
-    html += sep ? `<div class="tl-sep">${sepLabel}</div>` : '';
+    html += sep ? `<div class="tl-sep">${ix.sepLabel}</div>` : '';
     html += `
       <div class="tl-row">
         <div class="tl-av" style="background:${col[0]};color:${col[1]};box-shadow:0 0 0 1.5px ${col[0]};">${ix.initials}</div>
@@ -442,7 +465,7 @@ async function fetchTimeline(forceFlash) {
       }
     }
     lastTopId = newTopId;
-    renderTimeline(items);
+    renderTimeline(items, data.lastActivity ?? null);
   } catch(e) {
     console.warn('Timeline fetch error:', e);
   } finally {
@@ -461,17 +484,27 @@ function flashDot() {
   }, 800);
 }
 
-// ── Contagem regressiva + auto-refresh ──
+// ── Contagem regressiva + auto-refresh (5 minutos) ──
+const REFRESH_SEC = 300; // 5 minutos
+
 function startCountdown() {
   const el = document.getElementById('refresh-countdown');
   clearInterval(countdownTmr);
-  countdown = 30;
+  countdown = REFRESH_SEC;
+
+  function fmt(s) {
+    if (s >= 60) return Math.ceil(s/60) + 'min';
+    return s + 's';
+  }
+
+  if (el) el.textContent = fmt(countdown);
+
   countdownTmr = setInterval(() => {
     countdown--;
-    if (el) el.textContent = countdown + 's';
+    if (el) el.textContent = fmt(countdown);
     if (countdown <= 0) {
-      countdown = 30;
-      if (el) el.textContent = '30s';
+      countdown = REFRESH_SEC;
+      if (el) el.textContent = fmt(countdown);
       fetchTimeline(false);
     }
   }, 1000);
@@ -480,7 +513,7 @@ function startCountdown() {
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   fetchTimeline(true); // carrega imediato
-  startCountdown();    // auto-refresh a cada 30s
+  startCountdown();    // auto-refresh a cada 5 min
 });
 </script>
 
