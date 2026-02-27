@@ -49,16 +49,14 @@ $q            = trim($_GET['q'] ?? '');
 $cat          = trim($_GET['categoria'] ?? '');
 $page         = max(1, (int)($_GET['page'] ?? 1));
 
-// CORREÇÃO: Pegamos o valor com fallback para 30 ANTES de validar no in_array
 $requestedPP  = (int)($_GET['per_page'] ?? 30);
 $perPage      = in_array($requestedPP, [30, 60, 100]) ? $requestedPP : 30;
 
-$filterAt     = $_GET['ativo'] ?? '';   // '1','0',''
+$filterAt     = $_GET['ativo'] ?? '';
 
 $flashSuccess = get_flash('success');
 $flashError   = get_flash('error');
 
-// Mantemos todos os filtros na query string de retorno
 $backQs = http_build_query([
     'q'         => $q,
     'categoria' => $cat,
@@ -83,7 +81,7 @@ if ($action === 'delete' && isset($_GET['id'])) {
     redirect('products.php'.($backQs?'?'.$backQs:''));
 }
 
-/* ─── TOGGLE ATIVO (AJAX-friendly) ──────────────────────────────── */
+/* ─── TOGGLE ATIVO ──────────────────────────────── */
 if ($action === 'toggle_ativo' && isset($_GET['id'])) {
     $id  = (int)$_GET['id'];
     $cur = $pdo->prepare('SELECT ativo FROM products WHERE id=? AND company_id=?');
@@ -143,7 +141,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $imgPath = $up;
     }
 
-    // Verifica colunas extras
     try {
         $cols = $pdo->query('SHOW COLUMNS FROM products')->fetchAll(PDO::FETCH_COLUMN);
         if (!in_array('referencia',$cols)) $pdo->exec("ALTER TABLE products ADD COLUMN referencia VARCHAR(100) DEFAULT NULL");
@@ -194,7 +191,6 @@ if ($cat !== '')     { $where[] = 'categoria=?';         $params[] = $cat; }
 if ($filterAt !== '') { $where[] = 'ativo=?';            $params[] = (int)$filterAt; }
 $whereStr = implode(' AND ', $where);
 
-$total     = (int)$pdo->prepare("SELECT COUNT(*) FROM products WHERE $whereStr")->execute($params) ? $pdo->prepare("SELECT COUNT(*) FROM products WHERE $whereStr")->execute($params) : 0;
 $cntStmt   = $pdo->prepare("SELECT COUNT(*) FROM products WHERE $whereStr");
 $cntStmt->execute($params);
 $totalRows = (int)$cntStmt->fetchColumn();
@@ -258,9 +254,9 @@ include __DIR__ . '/views/partials/header.php';
 .pr-table tbody tr.selected { background:#ede9fe; }
 .pr-table td { padding:.6rem .85rem; vertical-align:middle; }
 
-/* thumb */
-.prod-thumb { width:36px; height:36px; border-radius:7px; object-fit:cover; background:#f1f5f9; border:1px solid #e2e8f0; flex-shrink:0; }
-.prod-thumb-empty { width:36px; height:36px; border-radius:7px; background:#f1f5f9; border:1px dashed #e2e8f0; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:.8rem; flex-shrink:0; }
+/* thumb — AUMENTADO para 52px no desktop */
+.prod-thumb { width:52px; height:52px; border-radius:9px; object-fit:cover; background:#f1f5f9; border:1px solid #e2e8f0; flex-shrink:0; }
+.prod-thumb-empty { width:52px; height:52px; border-radius:9px; background:#f1f5f9; border:1px dashed #e2e8f0; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:1.1rem; flex-shrink:0; }
 .prod-name-cell { display:flex; align-items:center; gap:.6rem; }
 .prod-name { font-weight:600; color:#0f172a; }
 .prod-ref  { font-size:.68rem; color:#94a3b8; }
@@ -347,6 +343,165 @@ include __DIR__ . '/views/partials/header.php';
 /* Flash */
 .flash-ok  { padding:.65rem 1rem; border-radius:8px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:.82rem; margin:.5rem 1.25rem 0; }
 .flash-err { padding:.65rem 1rem; border-radius:8px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:.82rem; margin:.5rem 1.25rem 0; }
+
+/* ══════════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE — cards com foto visível
+   Oculta a tabela e exibe cards com imagem grande e legível
+══════════════════════════════════════════════════════════════════ */
+
+/* Desktop: esconde os cards mobile */
+.mobile-cards-wrap { display: none; }
+
+@media (max-width: 768px) {
+
+  /* ── Layout ── */
+  .pr-wrap {
+    flex-direction: column;
+    height: auto;
+    overflow: visible;
+    margin: -.75rem;
+  }
+  .pr-main { overflow: visible; }
+
+  /* Painel lateral vira bottom sheet no mobile */
+  .pr-panel {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-height: 90vh;
+    border-left: none;
+    border-top: 2px solid #e2e8f0;
+    border-radius: 16px 16px 0 0;
+  }
+  .pr-panel.open {
+    width: 100% !important;
+    min-width: 100% !important;
+  }
+
+  /* Topbar compacto */
+  .pr-topbar { padding: .6rem .9rem; gap: .5rem; }
+  .pr-topbar h1 { font-size: .88rem; }
+  .pr-stats { gap: .75rem; }
+  .pr-stat-val { font-size: .82rem; }
+  .pr-stat-label { font-size: .55rem; }
+
+  /* Filtros empilhados */
+  .pr-filters { flex-direction: column; align-items: stretch; gap: .4rem; padding: .6rem .9rem; }
+  .pr-search { width: 100%; }
+  .pr-search input { width: 100%; box-sizing: border-box; }
+  .pr-select { width: 100%; }
+
+  /* Esconde a tabela no mobile */
+  .pr-table-wrap { display: none; }
+
+  /* ── Cards de produto — mostram a foto ── */
+  .mobile-cards-wrap {
+    display: block;
+    padding: .6rem .9rem 1rem;
+    overflow-y: auto;
+  }
+
+  .mobile-card {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    background: #fff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    padding: .65rem .85rem;
+    margin-bottom: .45rem;
+    cursor: pointer;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .mobile-card:active { border-color: #6366f1; box-shadow: 0 0 0 3px #ede9fe; }
+  .mobile-card.selected { border-color: #6366f1; background: #faf5ff; }
+
+  /* Foto grande e visível no card */
+  .mc-photo {
+    flex-shrink: 0;
+    width: 68px;
+    height: 68px;
+    border-radius: 10px;
+    object-fit: cover;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+  }
+  .mc-photo-empty {
+    flex-shrink: 0;
+    width: 68px;
+    height: 68px;
+    border-radius: 10px;
+    background: #f1f5f9;
+    border: 1.5px dashed #cbd5e1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6rem;
+  }
+
+  /* Conteúdo do card */
+  .mc-info { flex: 1; min-width: 0; }
+  .mc-name {
+    font-size: .88rem;
+    font-weight: 700;
+    color: #0f172a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mc-meta { font-size: .7rem; color: #94a3b8; margin-top: .1rem; }
+  .mc-price { font-size: .9rem; font-weight: 800; color: #0f172a; margin-top: .25rem; }
+  .mc-badges { display: flex; gap: .3rem; flex-wrap: wrap; margin-top: .3rem; }
+
+  /* Botões de ação rápida no card */
+  .mc-actions {
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+    flex-shrink: 0;
+  }
+  .mc-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1.5px solid #e2e8f0;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #64748b;
+    text-decoration: none;
+    font-size: .8rem;
+  }
+  .mc-btn.danger { border-color: #fca5a5; color: #ef4444; }
+
+  /* Paginação compacta */
+  .pr-pagination { padding: .65rem .9rem; flex-wrap: wrap; }
+  .pag-info { width: 100%; text-align: center; }
+  .pag-btns { justify-content: center; width: 100%; }
+
+  /* Botão "Novo Produto" — fixo no canto inferior direito no mobile */
+  .mobile-fab {
+    display: flex !important;
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    z-index: 999;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: #6366f1;
+    color: #fff;
+    border: none;
+    font-size: 1.6rem;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 16px rgba(99,102,241,.45);
+    cursor: pointer;
+  }
+}
+
+/* Desktop: esconde o FAB mobile */
+.mobile-fab { display: none; }
 </style>
 
 <?php if ($flashSuccess): ?>
@@ -389,13 +544,11 @@ include __DIR__ . '/views/partials/header.php';
     <!-- Filters -->
     <form method="GET" id="filter-form">
       <div class="pr-filters">
-        <!-- Busca -->
         <div class="pr-search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
           <input type="text" name="q" value="<?= htmlspecialchars($q) ?>" placeholder="Buscar produto…" onchange="this.form.submit()">
         </div>
 
-        <!-- Categoria -->
         <select name="categoria" class="pr-select" onchange="this.form.submit()">
           <option value="">Todas as categorias</option>
           <?php foreach($categories as $c): ?>
@@ -403,7 +556,6 @@ include __DIR__ . '/views/partials/header.php';
           <?php endforeach; ?>
         </select>
 
-        <!-- Status -->
         <?php
         $atUrl = fn($v) => '?'.http_build_query(array_filter(['q'=>$q,'categoria'=>$cat,'per_page'=>$perPage,'ativo'=>$v]));
         ?>
@@ -415,7 +567,6 @@ include __DIR__ . '/views/partials/header.php';
           <span style="width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;"></span>Inativos
         </a>
 
-        <!-- Per page -->
         <select name="per_page" class="pr-select" onchange="this.form.submit()" style="margin-left:auto;">
           <?php foreach([30,60,100] as $pp): ?>
             <option value="<?= $pp ?>" <?= $perPage===$pp?'selected':'' ?>><?= $pp ?>/página</option>
@@ -425,7 +576,7 @@ include __DIR__ . '/views/partials/header.php';
       </div>
     </form>
 
-    <!-- Table -->
+    <!-- ══ DESKTOP TABLE ══ -->
     <div class="pr-table-wrap">
       <?php if (empty($products)): ?>
         <div style="text-align:center;padding:3rem;color:#94a3b8;">
@@ -437,7 +588,7 @@ include __DIR__ . '/views/partials/header.php';
       <table class="pr-table">
         <thead>
           <tr>
-            <th style="width:44px;"></th>
+            <th style="width:60px;"></th>
             <th>Produto</th>
             <th>Categoria</th>
             <th>Preço Venda</th>
@@ -534,6 +685,73 @@ include __DIR__ . '/views/partials/header.php';
           <?php endforeach; ?>
         </tbody>
       </table>
+      <?php endif; ?>
+    </div>
+
+    <!-- ══ MOBILE CARDS — visíveis apenas em telas ≤ 768px ══ -->
+    <div class="mobile-cards-wrap">
+      <?php if (empty($products)): ?>
+        <div style="text-align:center;padding:3rem;color:#94a3b8;">
+          <div style="font-size:2.5rem;margin-bottom:.5rem;">📦</div>
+          <p style="font-size:.875rem;">Nenhum produto encontrado.</p>
+        </div>
+      <?php else: ?>
+        <?php foreach($products as $p):
+          $preco  = (float)$p['preco'];
+          $custo  = isset($p['preco_custo']) ? (float)$p['preco_custo'] : 0;
+          $margem = ($custo > 0 && $preco > 0) ? round(($preco-$custo)/$preco*100) : null;
+          $estoque= isset($p['estoque']) ? (int)$p['estoque'] : null;
+        ?>
+        <div class="mobile-card" id="mcard-<?= (int)$p['id'] ?>" onclick="openPanel(<?= (int)$p['id'] ?>)">
+
+          <!-- Foto do produto (grande e bem visível) -->
+          <?php if(!empty($p['imagem'])): ?>
+            <img src="<?= sanitize(image_url($p['imagem'])) ?>" class="mc-photo" alt="<?= sanitize($p['nome']) ?>">
+          <?php else: ?>
+            <div class="mc-photo-empty">📷</div>
+          <?php endif; ?>
+
+          <!-- Informações -->
+          <div class="mc-info">
+            <div class="mc-name"><?= sanitize($p['nome']) ?></div>
+            <?php if(!empty($p['referencia']) || !empty($p['cor'])): ?>
+              <div class="mc-meta">
+                <?= !empty($p['referencia']) ? 'REF: '.sanitize($p['referencia']) : '' ?>
+                <?= !empty($p['cor']) ? ' · '.sanitize($p['cor']) : '' ?>
+              </div>
+            <?php endif; ?>
+            <div class="mc-price">R$ <?= number_format($preco,2,',','.') ?>
+              <?php if($margem !== null): ?>
+                <span style="font-size:.72rem;font-weight:500;color:#16a34a;margin-left:.3rem;">Margem <?= $margem ?>%</span>
+              <?php endif; ?>
+            </div>
+            <div class="mc-badges">
+              <?php if(!empty($p['categoria'])): ?>
+                <span class="badge badge-cat"><?= sanitize($p['categoria']) ?></span>
+              <?php endif; ?>
+              <span class="badge <?= $p['ativo']?'badge-active':'badge-inactive' ?>"><?= $p['ativo']?'Ativo':'Inativo' ?></span>
+              <?php if($p['destaque']): ?>
+                <span class="badge badge-destaque">⭐</span>
+              <?php endif; ?>
+              <?php if($estoque !== null): ?>
+                <span class="badge" style="background:<?= $estoque==0?'#fee2e2':($estoque<5?'#fef9c3':'#f1f5f9') ?>;color:<?= $estoque==0?'#dc2626':($estoque<5?'#a16207':'#475569') ?>;">
+                  📦 <?= $estoque ?>
+                </span>
+              <?php endif; ?>
+            </div>
+          </div>
+
+          <!-- Ações rápidas (param propagação de clique) -->
+          <div class="mc-actions" onclick="event.stopPropagation()">
+            <a href="?action=toggle_ativo&id=<?= (int)$p['id'] ?>&<?= $backQs ?>" class="mc-btn" title="<?= $p['ativo']?'Desativar':'Ativar' ?>">
+              <?= $p['ativo'] ? '🚫' : '✅' ?>
+            </a>
+            <a href="product_stock.php?id=<?= (int)$p['id'] ?>" class="mc-btn" title="Estoque">📦</a>
+            <a href="?action=delete&id=<?= (int)$p['id'] ?>&<?= $backQs ?>" class="mc-btn danger" title="Remover"
+               onclick="return confirm('Remover <?= addslashes(htmlspecialchars($p['nome'])) ?>?')">🗑️</a>
+          </div>
+        </div>
+        <?php endforeach; ?>
       <?php endif; ?>
     </div>
 
@@ -677,6 +895,9 @@ include __DIR__ . '/views/partials/header.php';
 
 </div>
 
+<!-- FAB mobile — botão flutuante "Novo Produto" -->
+<button class="mobile-fab" onclick="openPanel(null)" title="Novo Produto">＋</button>
+
 <!-- Products data for panel population -->
 <script>
 const PRODUCTS_DATA = <?= json_encode(array_column($products, null, 'id')) ?>;
@@ -686,6 +907,11 @@ const BASE_URL = '<?= rtrim((string)BASE_URL,'/') ?>';
 function openPanel(id) {
   const panel = document.getElementById('pr-panel');
   panel.classList.add('open');
+
+  // Scroll to panel on mobile
+  if (window.innerWidth <= 768) {
+    setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
 
   if (id) {
     const p = PRODUCTS_DATA[id];
@@ -722,10 +948,16 @@ function openPanel(id) {
     autoDetectSizes(p.sizes || '');
     calcMargem();
 
-    // Highlight row
+    // Highlight row desktop
     document.querySelectorAll('.pr-table tbody tr').forEach(r => r.classList.remove('selected'));
     const row = document.getElementById('row-'+id);
     if (row) { row.classList.add('selected'); row.scrollIntoView({block:'nearest'}); }
+
+    // Highlight card mobile
+    document.querySelectorAll('.mobile-card').forEach(r => r.classList.remove('selected'));
+    const card = document.getElementById('mcard-'+id);
+    if (card) card.classList.add('selected');
+
   } else {
     // New product
     document.getElementById('panel-title').textContent = 'Novo Produto';
@@ -737,13 +969,13 @@ function openPanel(id) {
     document.getElementById('sz-wrap').innerHTML = '';
     document.getElementById('f-sizes').value = '';
     document.getElementById('margem-preview').style.display = 'none';
-    document.querySelectorAll('.pr-table tbody tr').forEach(r => r.classList.remove('selected'));
+    document.querySelectorAll('.pr-table tbody tr, .mobile-card').forEach(r => r.classList.remove('selected'));
   }
 }
 
 function closePanel() {
   document.getElementById('pr-panel').classList.remove('open');
-  document.querySelectorAll('.pr-table tbody tr').forEach(r => r.classList.remove('selected'));
+  document.querySelectorAll('.pr-table tbody tr, .mobile-card').forEach(r => r.classList.remove('selected'));
 }
 
 // ── Imagem preview ──
