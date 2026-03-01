@@ -32,9 +32,7 @@ $companyId = (int)$company['id'];
 
 /**
  * =====================================================
- * ✅ TRACKING (Site Analytics) - via plugin site_analytics.php
- * - Evita duplicar código dentro da página
- * - Não quebra se o arquivo não existir
+ * ✅ TRACKING (Site Analytics)
  * =====================================================
  */
 $siteTrackerPath = __DIR__ . '/site_analytics.php';
@@ -88,7 +86,7 @@ $productsStmt = $pdo->prepare("
 $productsStmt->execute($params);
 $products = $productsStmt->fetchAll();
 
-// Destaques (mantém como estava)
+// Destaques
 $featuredStmt = $pdo->prepare('
     SELECT * FROM products
     WHERE company_id = ? AND ativo = 1 AND destaque = 1
@@ -114,7 +112,7 @@ if (!isset($_SESSION[$cartKey])) {
     $_SESSION[$cartKey] = [];
 }
 
-// Adicionar ao carrinho (preserva filtros/paginação)
+// Adicionar ao carrinho
 if (isset($_GET['add'])) {
     $productId = (int)$_GET['add'];
     $_SESSION[$cartKey][$productId] = ($_SESSION[$cartKey][$productId] ?? 0) + 1;
@@ -130,9 +128,25 @@ if (isset($_GET['add'])) {
     redirect($backUrl);
 }
 
-// WhatsApp fixo (limpa número)
+// WhatsApp fixo
 $whats = preg_replace('/\D+/', '', (string)($company['whatsapp_principal'] ?? ''));
 $msg   = 'Olá, vim da loja online!';
+
+/**
+ * Helper: renderiza os chips de tamanho a partir da string "P,M,G,GG"
+ * Retorna HTML pronto ou string vazia se não houver tamanhos.
+ */
+function render_sizes(string $sizesStr): string {
+    $sizes = array_filter(array_map('trim', explode(',', $sizesStr)));
+    if (empty($sizes)) return '';
+
+    $html = '<div class="sizes-row">';
+    foreach ($sizes as $sz) {
+        $html .= '<span class="sz-pill">' . htmlspecialchars($sz, ENT_QUOTES) . '</span>';
+    }
+    $html .= '</div>';
+    return $html;
+}
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -161,6 +175,65 @@ $msg   = 'Olá, vim da loja online!';
             }
         }
     </script>
+
+    <style>
+        /* ── Tamanhos disponíveis ────────────────────────────── */
+        .sizes-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin: 6px 0 2px;
+        }
+
+        .sz-pill {
+            /* Pequeno, discreto, elegante */
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 28px;
+            padding: 1px 7px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            /* Visual: borda sutil sobre fundo quase transparente */
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: rgba(255, 255, 255, 0.65);
+            /* Sem animação excessiva — apenas hover suave */
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+            cursor: default;
+            white-space: nowrap;
+        }
+
+        /* Hover leve para indicar disponibilidade */
+        .sz-pill:hover {
+            background: rgba(124, 58, 237, 0.22);
+            border-color: rgba(124, 58, 237, 0.55);
+            color: rgba(255, 255, 255, 0.92);
+        }
+
+        /* Label "Tamanhos:" antes dos chips */
+        .sizes-label {
+            font-size: 0.6rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: rgba(148, 163, 184, 0.7); /* slate-400/70 */
+            margin-bottom: 4px;
+            display: block;
+        }
+
+        /* Wrapper completo dos tamanhos */
+        .sizes-block {
+            margin: 8px 0 6px;
+            padding: 7px 10px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.07);
+        }
+    </style>
 </head>
 <body class="bg-slate-950 text-white min-h-screen">
     <div class="absolute inset-0 -z-10 overflow-hidden">
@@ -237,7 +310,7 @@ $msg   = 'Olá, vim da loja online!';
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <!-- sticky só no desktop (lg) -->
+            <!-- sidebar -->
             <aside class="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3 h-fit lg:sticky lg:top-4">
                 <p class="text-sm text-slate-200/80 font-semibold">Categorias</p>
                 <div class="flex flex-col gap-2">
@@ -267,6 +340,7 @@ $msg   = 'Olá, vim da loja online!';
             </aside>
 
             <div class="lg:col-span-3 space-y-6">
+                <!-- Busca/Filtros -->
                 <div class="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur">
                     <form class="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
@@ -292,7 +366,7 @@ $msg   = 'Olá, vim da loja online!';
                     </p>
                 </div>
 
-                <!-- DESTAQUES -->
+                <!-- ══ DESTAQUES ══ -->
                 <section id="featured" class="space-y-3">
                     <div class="flex items-center justify-between">
                         <h2 class="text-xl font-semibold">Destaques</h2>
@@ -313,13 +387,21 @@ $msg   = 'Olá, vim da loja online!';
                                         <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
                                     <?php endif; ?>
 
-                                    <div class="p-4 space-y-2">
+                                    <div class="p-4 space-y-1">
                                         <p class="text-xs uppercase tracking-wide text-emerald-200/80">
                                             <?= sanitize($product['categoria']) ?>
                                         </p>
                                         <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
                                         <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
-                                        <div class="flex items-center justify-between">
+
+                                        <?php if (!empty($product['sizes'])): ?>
+                                        <div class="sizes-block">
+                                            <span class="sizes-label">Tamanhos disponíveis</span>
+                                            <?= render_sizes((string)$product['sizes']) ?>
+                                        </div>
+                                        <?php endif; ?>
+
+                                        <div class="flex items-center justify-between pt-1">
                                             <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
                                             <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Destaque</span>
                                         </div>
@@ -346,7 +428,7 @@ $msg   = 'Olá, vim da loja online!';
                     </div>
                 </section>
 
-                <!-- LISTA GERAL -->
+                <!-- ══ LISTA GERAL ══ -->
                 <section class="space-y-3">
                     <div class="flex items-center justify-between">
                         <h2 class="text-xl font-semibold">Produtos</h2>
@@ -369,13 +451,21 @@ $msg   = 'Olá, vim da loja online!';
                                         <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
                                     <?php endif; ?>
 
-                                    <div class="p-4 space-y-2">
+                                    <div class="p-4 space-y-1">
                                         <p class="text-xs uppercase tracking-wide text-emerald-200/80">
                                             <?= sanitize($product['categoria']) ?>
                                         </p>
                                         <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
                                         <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
-                                        <div class="flex items-center justify-between">
+
+                                        <?php if (!empty($product['sizes'])): ?>
+                                        <div class="sizes-block">
+                                            <span class="sizes-label">Tamanhos disponíveis</span>
+                                            <?= render_sizes((string)$product['sizes']) ?>
+                                        </div>
+                                        <?php endif; ?>
+
+                                        <div class="flex items-center justify-between pt-1">
                                             <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
                                             <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Disponível</span>
                                         </div>
