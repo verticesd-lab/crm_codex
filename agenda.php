@@ -1,53 +1,8 @@
-PATCH 1 (AJAX endpoint): OK
-PATCH 2: ANCHOR NOT FOUND
-PATCH 3: ANCHOR NOT FOUND
-Size: 44379 → 46034 chars
-PATCH 1 (AJAX endpoint): OK
-PATCH 2 (campo nome): OK
-PATCH 3 (JS autocomplete): OK
-Size: 37521 → 44269 chars
 <?php
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/agenda_helpers.php';
-
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// ✅ TRACKER (não quebra se o arquivo ainda não existir)
-$trackerPath = __DIR__ . '/analytics_tracker.php';
-if (file_exists($trackerPath)) {
-    require_once $trackerPath;
-}
-
-/**
- * ==============================
- * CONFIGURACAO DA AGENDA
- * ==============================
- */
-
-// Duracao de cada atendimento, em minutos
-$SLOT_INTERVAL_MINUTES = 30;
-
-// Horario de abertura e fechamento
-$OPEN_TIME  = '09:00';
-$CLOSE_TIME = '20:00';
-
-// Horarios bloqueados (fallback se nao houver bloqueios no banco)
-$BLOCKED_SLOTS = [
-    '11:00',
-    '11:30',
-    '12:00',
-    '12:30',
-];
-
-/**
- * ==============================
- * CARREGA EMPRESA E DATA
- * ==============================
- */
 
 // ─── AJAX: autocomplete de clientes por nome ───────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'autocomplete_cliente') {
@@ -100,6 +55,44 @@ if (isset($_GET['action']) && $_GET['action'] === 'autocomplete_cliente') {
     }
     exit;
 }
+
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// ✅ TRACKER (não quebra se o arquivo ainda não existir)
+$trackerPath = __DIR__ . '/analytics_tracker.php';
+if (file_exists($trackerPath)) {
+    require_once $trackerPath;
+}
+
+/**
+ * ==============================
+ * CONFIGURACAO DA AGENDA
+ * ==============================
+ */
+
+// Duracao de cada atendimento, em minutos
+$SLOT_INTERVAL_MINUTES = 30;
+
+// Horario de abertura e fechamento
+$OPEN_TIME  = '09:00';
+$CLOSE_TIME = '20:00';
+
+// Horarios bloqueados (fallback se nao houver bloqueios no banco)
+$BLOCKED_SLOTS = [
+    '11:00',
+    '11:30',
+    '12:00',
+    '12:30',
+];
+
+/**
+ * ==============================
+ * CARREGA EMPRESA E DATA
+ * ==============================
+ */
 
 // slug da empresa: via GET ou sessao
 $slug = $_GET['empresa'] ?? ($_SESSION['company_slug'] ?? '');
