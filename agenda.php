@@ -1,3 +1,11 @@
+PATCH 1 (AJAX endpoint): OK
+PATCH 2: ANCHOR NOT FOUND
+PATCH 3: ANCHOR NOT FOUND
+Size: 44379 → 46034 chars
+PATCH 1 (AJAX endpoint): OK
+PATCH 2 (campo nome): OK
+PATCH 3 (JS autocomplete): OK
+Size: 37521 → 44269 chars
 <?php
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
@@ -40,6 +48,58 @@ $BLOCKED_SLOTS = [
  * CARREGA EMPRESA E DATA
  * ==============================
  */
+
+// ─── AJAX: autocomplete de clientes por nome ───────────────────────
+if (isset($_GET['action']) && $_GET['action'] === 'autocomplete_cliente') {
+    header('Content-Type: application/json; charset=utf-8');
+    $q    = trim($_GET['q'] ?? '');
+    $slug = trim($_GET['empresa'] ?? '');
+
+    if (strlen($q) < 2 || !$slug) {
+        echo json_encode([]);
+        exit;
+    }
+
+    try {
+        $pdo2   = get_pdo();
+        $stComp = $pdo2->prepare('SELECT id FROM companies WHERE slug = ? LIMIT 1');
+        $stComp->execute([$slug]);
+        $cid = (int)($stComp->fetchColumn() ?: 0);
+
+        if (!$cid) { echo json_encode([]); exit; }
+
+        $st = $pdo2->prepare("
+            SELECT customer_name, phone, instagram
+            FROM appointments
+            WHERE company_id = ?
+              AND customer_name LIKE ?
+              AND status IN ('agendado','concluido')
+            GROUP BY customer_name, phone, instagram
+            ORDER BY MAX(created_at) DESC
+            LIMIT 8
+        ");
+        $st->execute([$cid, $q . '%']);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+        $seen   = [];
+        $result = [];
+        foreach ($rows as $r) {
+            $key = mb_strtolower(trim($r['customer_name']));
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $result[] = [
+                'nome'      => $r['customer_name'],
+                'telefone'  => $r['phone']     ?? '',
+                'instagram' => $r['instagram'] ?? '',
+            ];
+        }
+
+        echo json_encode($result, JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        echo json_encode([]);
+    }
+    exit;
+}
 
 // slug da empresa: via GET ou sessao
 $slug = $_GET['empresa'] ?? ($_SESSION['company_slug'] ?? '');
@@ -178,9 +238,6 @@ $occupancy = agenda_build_occupancy_map($appointments, $timeSlots, $SLOT_INTERVA
  * ==============================
  * TOP 4 SERVIÇOS + "MAIS SERVIÇOS"
  * ==============================
- * Regra:
- * - tenta ordenar por "mais utilizados" (contagem em services_json)
- * - se falhar / vazio, mantém ordem do catálogo
  */
 $serviceUsage = [];
 foreach ($servicesCatalog as $k => $svc) {
@@ -265,16 +322,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Para REFRESH: validar somente o minimo pra liberar horarios (sem exigir nome/telefone/hora)
     if ($action === 'refresh') {
-        // barbeiro
         if ($selectedBarberId > 0 && isset($barbersById[$selectedBarberId])) {
             if ((int)$barbersById[$selectedBarberId]['is_active'] !== 1) {
                 $errors[] = 'Este barbeiro ainda nao esta disponivel.';
             }
         }
 
-        // servicos (se marcou algo, duracao tem que bater)
         if (!empty($selectedServices) && $slotsNeeded <= 0) {
             $errors[] = 'Duracao de servicos invalida.';
         }
@@ -282,8 +336,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $showConfirmation = false;
 
     } else {
-        // Preview / Confirm: validacoes completas
-
         if ($nome === '') {
             $errors[] = 'Informe seu nome.';
         }
@@ -755,17 +807,24 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     <?php endif; ?>
                 </div>
 
-                <div>
+                <div class="relative">
                     <label class="block text-sm font-medium text-slate-200 mb-1">
                         Nome completo <span class="text-red-400">*</span>
                     </label>
                     <input
                         type="text"
                         name="nome"
+                        id="clienteNome"
+                        autocomplete="off"
                         class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
                         placeholder="Seu nome"
                         value="<?= sanitize($nome) ?>"
                     >
+                    <ul id="clienteSuggestions"
+                        class="hidden absolute z-50 left-0 right-0 mt-1 bg-slate-800 border border-white/15 rounded-xl shadow-2xl overflow-hidden text-sm"
+                        style="max-height:220px;overflow-y:auto;">
+                    </ul>
+                    <p class="text-[11px] text-slate-400 mt-1">✨ Clientes recorrentes: formulário preenchido automaticamente.</p>
                 </div>
 
                 <div>
@@ -887,6 +946,117 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const serviceChecks = document.querySelectorAll('input[name="servicos[]"]');
     serviceChecks.forEach(c => c.addEventListener('change', doRefresh));
+
+    // ══════════════════════════════════════════════════════
+    //  AUTOCOMPLETE — clientes recorrentes
+    // ══════════════════════════════════════════════════════
+    (function () {
+        const nomeInput = document.getElementById('clienteNome');
+        const suggBox   = document.getElementById('clienteSuggestions');
+        if (!nomeInput || !suggBox) return;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const empresa   = urlParams.get('empresa') || '';
+
+        let debounceTimer = null;
+        let currentFocus  = -1;
+
+        function closeSugg() {
+            suggBox.innerHTML = '';
+            suggBox.classList.add('hidden');
+            currentFocus = -1;
+        }
+
+        function fillForm(item) {
+            nomeInput.value = item.nome;
+            const telInput = document.querySelector('input[name="telefone"]');
+            if (telInput && item.telefone) telInput.value = item.telefone;
+            const igInput = document.querySelector('input[name="instagram"]');
+            if (igInput && item.instagram) igInput.value = item.instagram;
+            closeSugg();
+            nomeInput.focus();
+        }
+
+        function renderSugg(items) {
+            suggBox.innerHTML = '';
+            currentFocus = -1;
+            if (!items.length) { closeSugg(); return; }
+
+            items.forEach(function (item) {
+                const li = document.createElement('li');
+                li.className = 'flex flex-col px-4 py-2 cursor-pointer hover:bg-brand-600/60 transition-colors border-b border-white/5 last:border-0';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'font-semibold text-slate-100 text-sm';
+                nameSpan.textContent = item.nome;
+
+                const detailSpan = document.createElement('span');
+                detailSpan.className = 'text-[11px] text-slate-400 mt-0.5';
+                const parts = [];
+                if (item.telefone)  parts.push('📱 ' + item.telefone);
+                if (item.instagram) parts.push('📷 ' + item.instagram);
+                detailSpan.textContent = parts.join('  ·  ');
+
+                li.appendChild(nameSpan);
+                if (parts.length) li.appendChild(detailSpan);
+
+                li.addEventListener('mousedown', function (e) {
+                    e.preventDefault();
+                    fillForm(item);
+                });
+
+                suggBox.appendChild(li);
+            });
+
+            suggBox.classList.remove('hidden');
+        }
+
+        async function fetchSugg(q) {
+            if (!empresa || q.length < 2) { closeSugg(); return; }
+            try {
+                const url = 'agenda.php?empresa=' + encodeURIComponent(empresa)
+                          + '&action=autocomplete_cliente&q=' + encodeURIComponent(q);
+                const res = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                if (!res.ok) return;
+                const data = await res.json();
+                renderSugg(Array.isArray(data) ? data : []);
+            } catch (_) { closeSugg(); }
+        }
+
+        nomeInput.addEventListener('input', function () {
+            clearTimeout(debounceTimer);
+            const q = this.value.trim();
+            if (q.length < 2) { closeSugg(); return; }
+            debounceTimer = setTimeout(() => fetchSugg(q), 220);
+        });
+
+        nomeInput.addEventListener('keydown', function (e) {
+            const items = suggBox.querySelectorAll('li');
+            if (!items.length) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                currentFocus = Math.min(currentFocus + 1, items.length - 1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                currentFocus = Math.max(currentFocus - 1, 0);
+            } else if (e.key === 'Enter' && currentFocus >= 0) {
+                e.preventDefault();
+                items[currentFocus].dispatchEvent(new Event('mousedown'));
+                return;
+            } else if (e.key === 'Escape') {
+                closeSugg(); return;
+            } else { return; }
+            items.forEach((li, i) => li.classList.toggle('bg-brand-600/60', i === currentFocus));
+        });
+
+        nomeInput.addEventListener('blur', function () {
+            setTimeout(closeSugg, 200);
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!nomeInput.contains(e.target) && !suggBox.contains(e.target)) closeSugg();
+        });
+    })();
 });
 </script>
 
