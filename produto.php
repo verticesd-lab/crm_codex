@@ -142,72 +142,84 @@ if (!isset($_SESSION[$cartKey])) {
     </header>
 
     <main class="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+
         <!-- ── Carrossel de fotos ── -->
-        <div>
-            <!-- Imagem principal com setas -->
-            <div class="relative bg-white/5 border border-white/10 rounded-2xl overflow-hidden" id="carousel-wrap">
-                <div class="relative" style="aspect-ratio:4/3;">
-                    <?php foreach ($images as $idx => $img): ?>
+        <div id="carousel-wrap">
+
+            <!-- Container principal: posição relativa, sem altura forçada -->
+            <div style="position:relative; border-radius:16px; overflow:hidden; background:#0f172a; border:1px solid rgba(255,255,255,.1);">
+
+                <!-- Slides: display block/none — sem absolute, sem h-full -->
+                <?php foreach ($images as $idx => $img): ?>
+                <div id="slide-<?= $idx ?>"
+                     style="<?= $idx === 0 ? 'display:block' : 'display:none' ?>">
                     <img src="<?= sanitize($img) ?>"
-                         id="slide-<?= $idx ?>"
-                         alt="<?= sanitize($product['nome']) ?> - foto <?= $idx+1 ?>"
-                         class="absolute inset-0 w-full h-full object-contain bg-slate-900 transition-opacity duration-300 <?= $idx === 0 ? 'opacity-100 z-10' : 'opacity-0 z-0' ?>">
-                    <?php endforeach; ?>
+                         alt="<?= sanitize($product['nome']) ?>"
+                         style="width:100%; max-height:480px; height:auto; object-fit:contain; display:block; background:#0f172a;">
                 </div>
+                <?php endforeach; ?>
 
                 <?php if (count($images) > 1): ?>
                 <!-- Seta esquerda -->
                 <button id="btn-prev"
-                    class="absolute left-2 top-1/2 -translate-y-1/2 z-20
-                           w-9 h-9 rounded-full bg-black/50 border border-white/20
-                           flex items-center justify-center text-white
-                           hover:bg-brand-600 transition-colors backdrop-blur-sm">
+                        style="position:absolute; left:10px; top:50%; transform:translateY(-50%);
+                               width:36px; height:36px; border-radius:50%;
+                               background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.25);
+                               color:#fff; cursor:pointer; display:flex;
+                               align-items:center; justify-content:center; z-index:10;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
                 <!-- Seta direita -->
                 <button id="btn-next"
-                    class="absolute right-2 top-1/2 -translate-y-1/2 z-20
-                           w-9 h-9 rounded-full bg-black/50 border border-white/20
-                           flex items-center justify-center text-white
-                           hover:bg-brand-600 transition-colors backdrop-blur-sm">
+                        style="position:absolute; right:10px; top:50%; transform:translateY(-50%);
+                               width:36px; height:36px; border-radius:50%;
+                               background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.25);
+                               color:#fff; cursor:pointer; display:flex;
+                               align-items:center; justify-content:center; z-index:10;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                 </button>
 
-                <!-- Indicadores (dots) -->
-                <div class="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5 z-20">
+                <!-- Dots -->
+                <div style="position:absolute; bottom:10px; left:0; right:0;
+                            display:flex; justify-content:center; gap:6px; z-index:10;">
                     <?php foreach ($images as $idx => $_): ?>
-                    <button class="carousel-dot w-2 h-2 rounded-full transition-all duration-200
-                                   <?= $idx === 0 ? 'bg-white scale-125' : 'bg-white/40' ?>"
-                            data-dot="<?= $idx ?>"></button>
+                    <button class="car-dot" data-dot="<?= $idx ?>"
+                            style="width:8px; height:8px; border-radius:50%; border:none; padding:0; cursor:pointer;
+                                   background:<?= $idx===0 ? '#fff' : 'rgba(255,255,255,.35)' ?>;
+                                   transform:<?= $idx===0 ? 'scale(1.3)' : 'scale(1)' ?>;
+                                   transition:all .2s;"></button>
                     <?php endforeach; ?>
                 </div>
-                <?php endif; ?>
 
-                <!-- Badge contador -->
-                <?php if (count($images) > 1): ?>
-                <div id="slide-counter"
-                     class="absolute top-2 right-2 z-20 bg-black/50 backdrop-blur-sm
-                            text-white text-xs font-semibold px-2 py-1 rounded-full border border-white/20">
+                <!-- Contador -->
+                <div id="car-counter"
+                     style="position:absolute; top:10px; right:10px;
+                            background:rgba(0,0,0,.55); color:#fff;
+                            font-size:11px; font-weight:600; padding:3px 9px;
+                            border-radius:20px; border:1px solid rgba(255,255,255,.2); z-index:10;">
                     1 / <?= count($images) ?>
                 </div>
                 <?php endif; ?>
             </div>
 
-            <!-- Thumbnails -->
+            <!-- Thumbnails clicáveis -->
             <?php if (count($images) > 1): ?>
-            <div class="mt-3 flex gap-2 overflow-x-auto pb-1">
+            <div style="display:flex; gap:8px; margin-top:10px; overflow-x:auto; padding-bottom:4px;">
                 <?php foreach ($images as $idx => $img): ?>
-                <button class="thumb-btn flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden
-                               border-2 transition-all duration-150
-                               <?= $idx === 0 ? 'border-brand-500 ring-2 ring-brand-500/30' : 'border-white/10 hover:border-white/40' ?>"
-                        data-thumb="<?= $idx ?>">
+                <button class="car-thumb" data-thumb="<?= $idx ?>"
+                        style="flex-shrink:0; width:60px; height:60px; border-radius:10px;
+                               overflow:hidden; padding:0; cursor:pointer;
+                               border:2px solid <?= $idx===0 ? '#7c3aed' : 'rgba(255,255,255,.2)' ?>;
+                               box-shadow:<?= $idx===0 ? '0 0 0 3px rgba(124,58,237,.35)' : 'none' ?>;
+                               transition:border-color .15s;">
                     <img src="<?= sanitize($img) ?>"
-                         class="w-full h-full object-cover"
+                         style="width:100%; height:100%; object-fit:cover; display:block;"
                          alt="Foto <?= $idx+1 ?>">
                 </button>
                 <?php endforeach; ?>
             </div>
             <?php endif; ?>
+
         </div>
 
         <div class="space-y-4">
@@ -276,47 +288,43 @@ if (!isset($_SESSION[$cartKey])) {
     if (total <= 1) return;
 
     let current = 0;
-
-    const slides  = document.querySelectorAll('[id^="slide-"]');
-    const dots    = document.querySelectorAll('[data-dot]');
-    const thumbs  = document.querySelectorAll('[data-thumb]');
-    const counter = document.getElementById('slide-counter');
+    const slides  = Array.from({length: total}, (_, i) => document.getElementById('slide-' + i));
+    const dots    = Array.from(document.querySelectorAll('.car-dot'));
+    const thumbs  = Array.from(document.querySelectorAll('.car-thumb'));
+    const counter = document.getElementById('car-counter');
 
     function goTo(n) {
-        // Limpa atual
-        slides[current].classList.replace('opacity-100','opacity-0');
-        slides[current].classList.replace('z-10','z-0');
-        dots[current].classList.remove('bg-white','scale-125');
-        dots[current].classList.add('bg-white/40');
-        thumbs[current].classList.remove('border-brand-500','ring-2','ring-brand-500/30');
-        thumbs[current].classList.add('border-white/10');
+        // Esconde slide atual
+        slides[current].style.display    = 'none';
+        dots[current].style.background   = 'rgba(255,255,255,.35)';
+        dots[current].style.transform    = 'scale(1)';
+        thumbs[current].style.borderColor = 'rgba(255,255,255,.2)';
+        thumbs[current].style.boxShadow   = 'none';
 
         current = (n + total) % total;
 
-        // Ativa novo
-        slides[current].classList.replace('opacity-0','opacity-100');
-        slides[current].classList.replace('z-0','z-10');
-        dots[current].classList.add('bg-white','scale-125');
-        dots[current].classList.remove('bg-white/40');
-        thumbs[current].classList.add('border-brand-500','ring-2','ring-brand-500/30');
-        thumbs[current].classList.remove('border-white/10');
+        // Mostra novo slide
+        slides[current].style.display    = 'block';
+        dots[current].style.background   = '#fff';
+        dots[current].style.transform    = 'scale(1.3)';
+        thumbs[current].style.borderColor = '#7c3aed';
+        thumbs[current].style.boxShadow   = '0 0 0 3px rgba(124,58,237,.35)';
 
         if (counter) counter.textContent = (current + 1) + ' / ' + total;
     }
 
     document.getElementById('btn-prev').addEventListener('click', () => goTo(current - 1));
     document.getElementById('btn-next').addEventListener('click', () => goTo(current + 1));
+    dots.forEach(d   => d.addEventListener('click', () => goTo(+d.dataset.dot)));
+    thumbs.forEach(t => t.addEventListener('click', () => goTo(+t.dataset.thumb)));
 
-    dots.forEach(d => d.addEventListener('click', () => goTo(parseInt(d.dataset.dot))));
-    thumbs.forEach(t => t.addEventListener('click', () => goTo(parseInt(t.dataset.thumb))));
-
-    // Swipe touch
+    // Swipe no mobile
     let tx = 0;
     const wrap = document.getElementById('carousel-wrap');
     wrap.addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, {passive:true});
     wrap.addEventListener('touchend',   e => {
         const dx = e.changedTouches[0].clientX - tx;
-        if (Math.abs(dx) > 40) goTo(dx < 0 ? current + 1 : current - 1);
+        if (Math.abs(dx) > 40) goTo(current + (dx < 0 ? 1 : -1));
     });
 
     // Teclado

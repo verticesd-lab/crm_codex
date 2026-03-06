@@ -17,6 +17,19 @@ if (!$companyId) {
     else { echo 'Empresa não configurada.'; exit; }
 }
 
+/* ─── migração automática — roda no carregamento da página ─────── */
+try {
+    $cols = $pdo->query('SHOW COLUMNS FROM products')->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('referencia',$cols))  $pdo->exec("ALTER TABLE products ADD COLUMN referencia VARCHAR(100) DEFAULT NULL");
+    if (!in_array('cor',$cols))         $pdo->exec("ALTER TABLE products ADD COLUMN cor VARCHAR(80) DEFAULT NULL");
+    if (!in_array('estoque',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN estoque INT DEFAULT 0");
+    if (!in_array('desconto',$cols))    $pdo->exec("ALTER TABLE products ADD COLUMN desconto DECIMAL(5,2) DEFAULT 0");
+    if (!in_array('preco_custo',$cols)) $pdo->exec("ALTER TABLE products ADD COLUMN preco_custo DECIMAL(10,2) DEFAULT NULL");
+    if (!in_array('imagem2',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem2 VARCHAR(255) DEFAULT NULL");
+    if (!in_array('imagem3',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem3 VARCHAR(255) DEFAULT NULL");
+    if (!in_array('imagem4',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem4 VARCHAR(255) DEFAULT NULL");
+} catch(Throwable $e) {}
+
 /* ─── helpers de variantes ─────────────────────────────────────── */
 function sync_variants($pdo, int $pid, string $sizesCsv): void {
     $sizes = array_filter(array_map('trim', explode(',', $sizesCsv)));
@@ -145,29 +158,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $imgPath = $up;
     }
     if (!empty($_FILES['imagem2']['name']) && $_FILES['imagem2']['error'] === UPLOAD_ERR_OK) {
-        $up2 = upload_image_optimized('imagem2','uploads/products');
-        if ($up2 !== null) $imgPath2 = $up2;
+        $up2 = upload_image_optimized('imagem2','uploads/products'); if ($up2 !== null) $imgPath2 = $up2;
     }
     if (!empty($_FILES['imagem3']['name']) && $_FILES['imagem3']['error'] === UPLOAD_ERR_OK) {
-        $up3 = upload_image_optimized('imagem3','uploads/products');
-        if ($up3 !== null) $imgPath3 = $up3;
+        $up3 = upload_image_optimized('imagem3','uploads/products'); if ($up3 !== null) $imgPath3 = $up3;
     }
     if (!empty($_FILES['imagem4']['name']) && $_FILES['imagem4']['error'] === UPLOAD_ERR_OK) {
-        $up4 = upload_image_optimized('imagem4','uploads/products');
-        if ($up4 !== null) $imgPath4 = $up4;
+        $up4 = upload_image_optimized('imagem4','uploads/products'); if ($up4 !== null) $imgPath4 = $up4;
     }
-
-    try {
-        $cols = $pdo->query('SHOW COLUMNS FROM products')->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('referencia',$cols))  $pdo->exec("ALTER TABLE products ADD COLUMN referencia VARCHAR(100) DEFAULT NULL");
-        if (!in_array('cor',$cols))         $pdo->exec("ALTER TABLE products ADD COLUMN cor VARCHAR(80) DEFAULT NULL");
-        if (!in_array('estoque',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN estoque INT DEFAULT 0");
-        if (!in_array('desconto',$cols))    $pdo->exec("ALTER TABLE products ADD COLUMN desconto DECIMAL(5,2) DEFAULT 0");
-        if (!in_array('preco_custo',$cols)) $pdo->exec("ALTER TABLE products ADD COLUMN preco_custo DECIMAL(10,2) DEFAULT NULL");
-        if (!in_array('imagem2',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem2 VARCHAR(255) DEFAULT NULL");
-        if (!in_array('imagem3',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem3 VARCHAR(255) DEFAULT NULL");
-        if (!in_array('imagem4',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem4 VARCHAR(255) DEFAULT NULL");
-    } catch(Throwable $e) {}
 
     if ($id > 0) {
         $pdo->prepare('UPDATE products SET nome=?,descricao=?,preco=?,preco_custo=?,categoria=?,referencia=?,cor=?,estoque=?,desconto=?,sizes=?,imagem=?,imagem2=?,imagem3=?,imagem4=?,ativo=?,destaque=?,updated_at=NOW() WHERE id=? AND company_id=?')
@@ -825,7 +823,7 @@ include __DIR__ . '/views/partials/header.php';
         <div class="field">
           <label>Fotos do Produto <span style="font-weight:400;color:#94a3b8;text-transform:none;letter-spacing:0;">(até 4 · clique para adicionar)</span></label>
           <div class="img-grid">
-            <div class="img-slot" id="slot-1" onclick="document.getElementById('f-imagem').click()">
+            <div class="img-slot" id="slot-1" onclick="openFileSlot(1)">
               <span class="img-slot-main-badge">Principal</span>
               <img id="img-preview-1" src="" alt="">
               <span class="img-slot-icon">📷</span>
@@ -834,7 +832,7 @@ include __DIR__ . '/views/partials/header.php';
               <input type="hidden" name="current_image"  id="f-img"  value="">
               <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,1)">🗑 Remover</button></div>
             </div>
-            <div class="img-slot" id="slot-2" onclick="document.getElementById('f-imagem2').click()">
+            <div class="img-slot" id="slot-2" onclick="openFileSlot(2)">
               <img id="img-preview-2" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 2</span>
@@ -842,7 +840,7 @@ include __DIR__ . '/views/partials/header.php';
               <input type="hidden" name="current_image2" id="f-img2" value="">
               <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,2)">🗑 Remover</button></div>
             </div>
-            <div class="img-slot" id="slot-3" onclick="document.getElementById('f-imagem3').click()">
+            <div class="img-slot" id="slot-3" onclick="openFileSlot(3)">
               <img id="img-preview-3" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 3</span>
@@ -850,7 +848,7 @@ include __DIR__ . '/views/partials/header.php';
               <input type="hidden" name="current_image3" id="f-img3" value="">
               <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,3)">🗑 Remover</button></div>
             </div>
-            <div class="img-slot" id="slot-4" onclick="document.getElementById('f-imagem4').click()">
+            <div class="img-slot" id="slot-4" onclick="openFileSlot(4)">
               <img id="img-preview-4" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 4</span>
@@ -1035,28 +1033,47 @@ function previewSlot(input, n) {
   if (!input.files || !input.files[0]) return;
   const reader = new FileReader();
   reader.onload = e => {
-    const slot = document.getElementById('slot-' + n);
-    const img  = document.getElementById('img-preview-' + n);
-    img.src = e.target.result;
-    slot.classList.add('has-img');
-    slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = 'none');
+    setSlotImg(n, e.target.result);
   };
   reader.readAsDataURL(input.files[0]);
 }
 
-function clearSlot(e, n) {
-  e.stopPropagation();
+function setSlotImg(n, src) {
   const slot = document.getElementById('slot-' + n);
   const img  = document.getElementById('img-preview-' + n);
-  const hidId = n === 1 ? 'f-img' : 'f-img' + n;
+  if (!slot || !img) return;
+  img.src = src;
+  slot.classList.add('has-img');
+  // Esconde ícone e label
+  const icon  = slot.querySelector('.img-slot-icon');
+  const label = slot.querySelector('.img-slot-label');
+  if (icon)  icon.style.display  = 'none';
+  if (label) label.style.display = 'none';
+}
+
+function clearSlot(e, n) {
+  e.stopPropagation();
+  const slot   = document.getElementById('slot-' + n);
+  const img    = document.getElementById('img-preview-' + n);
+  const hidId  = n === 1 ? 'f-img' : 'f-img' + n;
   const fileId = n === 1 ? 'f-imagem' : 'f-imagem' + n;
+  if (!slot || !img) return;
   img.src = '';
   slot.classList.remove('has-img');
-  slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = '');
+  const icon  = slot.querySelector('.img-slot-icon');
+  const label = slot.querySelector('.img-slot-label');
+  if (icon)  icon.style.display  = '';
+  if (label) label.style.display = '';
   const hid = document.getElementById(hidId);
   if (hid) hid.value = '';
   const fi = document.getElementById(fileId);
   if (fi) fi.value = '';
+}
+
+function openFileSlot(n) {
+  const fileId = n === 1 ? 'f-imagem' : 'f-imagem' + n;
+  const fi = document.getElementById(fileId);
+  if (fi) fi.click();
 }
 
 function loadSlot(n, url) {
@@ -1064,15 +1081,19 @@ function loadSlot(n, url) {
   const img   = document.getElementById('img-preview-' + n);
   const hidId = n === 1 ? 'f-img' : 'f-img' + n;
   const hid   = document.getElementById(hidId);
+  if (!slot || !img) return;
   if (url) {
+    // Usa image_url equivalente: BASE_URL + '/' + path
     img.src = BASE_URL + '/' + url;
-    slot.classList.add('has-img');
-    slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = 'none');
+    setSlotImg(n, BASE_URL + '/' + url);
     if (hid) hid.value = url;
   } else {
     img.src = '';
     slot.classList.remove('has-img');
-    slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = '');
+    const icon  = slot.querySelector('.img-slot-icon');
+    const label = slot.querySelector('.img-slot-label');
+    if (icon)  icon.style.display  = '';
+    if (label) label.style.display = '';
     if (hid) hid.value = '';
   }
 }
