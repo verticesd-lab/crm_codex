@@ -142,22 +142,71 @@ if (!isset($_SESSION[$cartKey])) {
     </header>
 
     <main class="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+        <!-- ── Carrossel de fotos ── -->
         <div>
-            <div class="bg-white/5 border border-white/10 rounded-2xl p-3">
-                <img id="main-img"
-                     src="<?= sanitize($images[0]) ?>"
-                     alt="<?= sanitize($product['nome']) ?>"
-                     class="w-full h-auto rounded-xl object-contain bg-slate-900">
-            </div>
-
-            <?php if (count($images) > 1): ?>
-                <div class="mt-3 flex gap-3 overflow-x-auto">
+            <!-- Imagem principal com setas -->
+            <div class="relative bg-white/5 border border-white/10 rounded-2xl overflow-hidden" id="carousel-wrap">
+                <div class="relative" style="aspect-ratio:4/3;">
                     <?php foreach ($images as $idx => $img): ?>
-                        <img src="<?= sanitize($img) ?>"
-                             data-index="<?= $idx ?>"
-                             class="w-20 h-20 rounded-xl object-cover cursor-pointer border border-white/10 <?= $idx === 0 ? 'ring-2 ring-brand-500' : '' ?>">
+                    <img src="<?= sanitize($img) ?>"
+                         id="slide-<?= $idx ?>"
+                         alt="<?= sanitize($product['nome']) ?> - foto <?= $idx+1 ?>"
+                         class="absolute inset-0 w-full h-full object-contain bg-slate-900 transition-opacity duration-300 <?= $idx === 0 ? 'opacity-100 z-10' : 'opacity-0 z-0' ?>">
                     <?php endforeach; ?>
                 </div>
+
+                <?php if (count($images) > 1): ?>
+                <!-- Seta esquerda -->
+                <button id="btn-prev"
+                    class="absolute left-2 top-1/2 -translate-y-1/2 z-20
+                           w-9 h-9 rounded-full bg-black/50 border border-white/20
+                           flex items-center justify-center text-white
+                           hover:bg-brand-600 transition-colors backdrop-blur-sm">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <!-- Seta direita -->
+                <button id="btn-next"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 z-20
+                           w-9 h-9 rounded-full bg-black/50 border border-white/20
+                           flex items-center justify-center text-white
+                           hover:bg-brand-600 transition-colors backdrop-blur-sm">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+
+                <!-- Indicadores (dots) -->
+                <div class="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5 z-20">
+                    <?php foreach ($images as $idx => $_): ?>
+                    <button class="carousel-dot w-2 h-2 rounded-full transition-all duration-200
+                                   <?= $idx === 0 ? 'bg-white scale-125' : 'bg-white/40' ?>"
+                            data-dot="<?= $idx ?>"></button>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+
+                <!-- Badge contador -->
+                <?php if (count($images) > 1): ?>
+                <div id="slide-counter"
+                     class="absolute top-2 right-2 z-20 bg-black/50 backdrop-blur-sm
+                            text-white text-xs font-semibold px-2 py-1 rounded-full border border-white/20">
+                    1 / <?= count($images) ?>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Thumbnails -->
+            <?php if (count($images) > 1): ?>
+            <div class="mt-3 flex gap-2 overflow-x-auto pb-1">
+                <?php foreach ($images as $idx => $img): ?>
+                <button class="thumb-btn flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden
+                               border-2 transition-all duration-150
+                               <?= $idx === 0 ? 'border-brand-500 ring-2 ring-brand-500/30' : 'border-white/10 hover:border-white/40' ?>"
+                        data-thumb="<?= $idx ?>">
+                    <img src="<?= sanitize($img) ?>"
+                         class="w-full h-full object-cover"
+                         alt="Foto <?= $idx+1 ?>">
+                </button>
+                <?php endforeach; ?>
+            </div>
             <?php endif; ?>
         </div>
 
@@ -222,15 +271,60 @@ if (!isset($_SESSION[$cartKey])) {
 </div>
 
 <script>
-    const mainImg = document.getElementById('main-img');
-    const thumbs = document.querySelectorAll('[data-index]');
-    thumbs.forEach(thumb => {
-        thumb.addEventListener('click', () => {
-            mainImg.src = thumb.src;
-            thumbs.forEach(t => t.classList.remove('ring-2', 'ring-brand-500'));
-            thumb.classList.add('ring-2', 'ring-brand-500');
-        });
+(function () {
+    const total = <?= count($images) ?>;
+    if (total <= 1) return;
+
+    let current = 0;
+
+    const slides  = document.querySelectorAll('[id^="slide-"]');
+    const dots    = document.querySelectorAll('[data-dot]');
+    const thumbs  = document.querySelectorAll('[data-thumb]');
+    const counter = document.getElementById('slide-counter');
+
+    function goTo(n) {
+        // Limpa atual
+        slides[current].classList.replace('opacity-100','opacity-0');
+        slides[current].classList.replace('z-10','z-0');
+        dots[current].classList.remove('bg-white','scale-125');
+        dots[current].classList.add('bg-white/40');
+        thumbs[current].classList.remove('border-brand-500','ring-2','ring-brand-500/30');
+        thumbs[current].classList.add('border-white/10');
+
+        current = (n + total) % total;
+
+        // Ativa novo
+        slides[current].classList.replace('opacity-0','opacity-100');
+        slides[current].classList.replace('z-0','z-10');
+        dots[current].classList.add('bg-white','scale-125');
+        dots[current].classList.remove('bg-white/40');
+        thumbs[current].classList.add('border-brand-500','ring-2','ring-brand-500/30');
+        thumbs[current].classList.remove('border-white/10');
+
+        if (counter) counter.textContent = (current + 1) + ' / ' + total;
+    }
+
+    document.getElementById('btn-prev').addEventListener('click', () => goTo(current - 1));
+    document.getElementById('btn-next').addEventListener('click', () => goTo(current + 1));
+
+    dots.forEach(d => d.addEventListener('click', () => goTo(parseInt(d.dataset.dot))));
+    thumbs.forEach(t => t.addEventListener('click', () => goTo(parseInt(t.dataset.thumb))));
+
+    // Swipe touch
+    let tx = 0;
+    const wrap = document.getElementById('carousel-wrap');
+    wrap.addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, {passive:true});
+    wrap.addEventListener('touchend',   e => {
+        const dx = e.changedTouches[0].clientX - tx;
+        if (Math.abs(dx) > 40) goTo(dx < 0 ? current + 1 : current - 1);
     });
+
+    // Teclado
+    document.addEventListener('keydown', e => {
+        if (e.key === 'ArrowLeft')  goTo(current - 1);
+        if (e.key === 'ArrowRight') goTo(current + 1);
+    });
+})();
 </script>
 </body>
 </html>

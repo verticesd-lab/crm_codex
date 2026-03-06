@@ -134,30 +134,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ);
     }
 
-    $imgPath = $oldImage;
+    $imgPath  = $oldImage;
+    $imgPath2 = trim($_POST['current_image2'] ?? '');
+    $imgPath3 = trim($_POST['current_image3'] ?? '');
+    $imgPath4 = trim($_POST['current_image4'] ?? '');
+
     if (!empty($_FILES['imagem']['name']) && $_FILES['imagem']['error'] === UPLOAD_ERR_OK) {
         $up = upload_image_optimized('imagem','uploads/products');
         if ($up === null) { flash('error','Falha no upload da imagem.'); redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ); }
         $imgPath = $up;
     }
+    if (!empty($_FILES['imagem2']['name']) && $_FILES['imagem2']['error'] === UPLOAD_ERR_OK) {
+        $up2 = upload_image_optimized('imagem2','uploads/products');
+        if ($up2 !== null) $imgPath2 = $up2;
+    }
+    if (!empty($_FILES['imagem3']['name']) && $_FILES['imagem3']['error'] === UPLOAD_ERR_OK) {
+        $up3 = upload_image_optimized('imagem3','uploads/products');
+        if ($up3 !== null) $imgPath3 = $up3;
+    }
+    if (!empty($_FILES['imagem4']['name']) && $_FILES['imagem4']['error'] === UPLOAD_ERR_OK) {
+        $up4 = upload_image_optimized('imagem4','uploads/products');
+        if ($up4 !== null) $imgPath4 = $up4;
+    }
 
     try {
         $cols = $pdo->query('SHOW COLUMNS FROM products')->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('referencia',$cols)) $pdo->exec("ALTER TABLE products ADD COLUMN referencia VARCHAR(100) DEFAULT NULL");
-        if (!in_array('cor',$cols))        $pdo->exec("ALTER TABLE products ADD COLUMN cor VARCHAR(80) DEFAULT NULL");
-        if (!in_array('estoque',$cols))    $pdo->exec("ALTER TABLE products ADD COLUMN estoque INT DEFAULT 0");
-        if (!in_array('desconto',$cols))   $pdo->exec("ALTER TABLE products ADD COLUMN desconto DECIMAL(5,2) DEFAULT 0");
-        if (!in_array('preco_custo',$cols))$pdo->exec("ALTER TABLE products ADD COLUMN preco_custo DECIMAL(10,2) DEFAULT NULL");
+        if (!in_array('referencia',$cols))  $pdo->exec("ALTER TABLE products ADD COLUMN referencia VARCHAR(100) DEFAULT NULL");
+        if (!in_array('cor',$cols))         $pdo->exec("ALTER TABLE products ADD COLUMN cor VARCHAR(80) DEFAULT NULL");
+        if (!in_array('estoque',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN estoque INT DEFAULT 0");
+        if (!in_array('desconto',$cols))    $pdo->exec("ALTER TABLE products ADD COLUMN desconto DECIMAL(5,2) DEFAULT 0");
+        if (!in_array('preco_custo',$cols)) $pdo->exec("ALTER TABLE products ADD COLUMN preco_custo DECIMAL(10,2) DEFAULT NULL");
+        if (!in_array('imagem2',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem2 VARCHAR(255) DEFAULT NULL");
+        if (!in_array('imagem3',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem3 VARCHAR(255) DEFAULT NULL");
+        if (!in_array('imagem4',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem4 VARCHAR(255) DEFAULT NULL");
     } catch(Throwable $e) {}
 
     if ($id > 0) {
-        $pdo->prepare('UPDATE products SET nome=?,descricao=?,preco=?,preco_custo=?,categoria=?,referencia=?,cor=?,estoque=?,desconto=?,sizes=?,imagem=?,ativo=?,destaque=?,updated_at=NOW() WHERE id=? AND company_id=?')
-            ->execute([$nome,$descricao,$preco,$precoCusto,$catPost,$ref,$cor,$estoque,$desconto,$sizes,$imgPath,$ativo,$destaque,$id,$companyId]);
+        $pdo->prepare('UPDATE products SET nome=?,descricao=?,preco=?,preco_custo=?,categoria=?,referencia=?,cor=?,estoque=?,desconto=?,sizes=?,imagem=?,imagem2=?,imagem3=?,imagem4=?,ativo=?,destaque=?,updated_at=NOW() WHERE id=? AND company_id=?')
+            ->execute([$nome,$descricao,$preco,$precoCusto,$catPost,$ref,$cor,$estoque,$desconto,$sizes,$imgPath,$imgPath2,$imgPath3,$imgPath4,$ativo,$destaque,$id,$companyId]);
         sync_variants($pdo,$id,$sizes);
         flash('success','Produto atualizado.');
     } else {
-        $pdo->prepare('INSERT INTO products (company_id,nome,descricao,preco,preco_custo,categoria,referencia,cor,estoque,desconto,sizes,imagem,ativo,destaque,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),NOW())')
-            ->execute([$companyId,$nome,$descricao,$preco,$precoCusto,$catPost,$ref,$cor,$estoque,$desconto,$sizes,$imgPath,$ativo,$destaque]);
+        $pdo->prepare('INSERT INTO products (company_id,nome,descricao,preco,preco_custo,categoria,referencia,cor,estoque,desconto,sizes,imagem,imagem2,imagem3,imagem4,ativo,destaque,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),NOW())')
+            ->execute([$companyId,$nome,$descricao,$preco,$precoCusto,$catPost,$ref,$cor,$estoque,$desconto,$sizes,$imgPath,$imgPath2,$imgPath3,$imgPath4,$ativo,$destaque]);
         $newId = (int)$pdo->lastInsertId();
         sync_variants($pdo,$newId,$sizes);
         flash('success','Produto cadastrado com sucesso.');
@@ -287,6 +306,20 @@ include __DIR__ . '/views/partials/header.php';
 .panel-header h2 { font-size:.95rem; font-weight:700; color:#0f172a; }
 .panel-close { width:28px; height:28px; border-radius:7px; border:1.5px solid #e2e8f0; background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; color:#64748b; font-size:1rem; transition:all .15s; }
 .panel-close:hover { border-color:#ef4444; color:#ef4444; }
+
+/* ── Multi-image grid ── */
+.img-grid { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+.img-slot { position:relative; border:2px dashed #e2e8f0; border-radius:10px; aspect-ratio:1; overflow:hidden; background:#f8fafc; cursor:pointer; transition:all .2s; display:flex; align-items:center; justify-content:center; flex-direction:column; }
+.img-slot:hover { border-color:#6366f1; background:#f5f3ff; }
+.img-slot.has-img { border-style:solid; border-color:#e2e8f0; }
+.img-slot img { width:100%; height:100%; object-fit:cover; display:none; }
+.img-slot.has-img img { display:block; }
+.img-slot-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; margin-top:.35rem; pointer-events:none; }
+.img-slot-icon { font-size:1.4rem; pointer-events:none; }
+.img-slot .img-slot-overlay { display:none; position:absolute; inset:0; background:rgba(0,0,0,.45); align-items:center; justify-content:center; gap:.5rem; z-index:3; }
+.img-slot.has-img:hover .img-slot-overlay { display:flex; }
+.img-slot-del { background:rgba(239,68,68,.85); color:#fff; border:none; border-radius:6px; padding:.25rem .55rem; font-size:.7rem; font-weight:700; cursor:pointer; z-index:4; }
+.img-slot-main-badge { position:absolute; top:.35rem; left:.35rem; background:#6366f1; color:#fff; font-size:.58rem; font-weight:800; padding:.15rem .4rem; border-radius:4px; text-transform:uppercase; letter-spacing:.04em; z-index:4; }
 .panel-body { flex:1; overflow-y:auto; padding:1rem 1.25rem; }
 .panel-body::-webkit-scrollbar { width:3px; }
 .panel-body::-webkit-scrollbar-thumb { background:#e2e8f0; }
@@ -788,16 +821,43 @@ include __DIR__ . '/views/partials/header.php';
         <input type="hidden" name="return_per_page" value="<?= $perPage ?>">
         <input type="hidden" name="return_ativo" value="<?= htmlspecialchars($filterAt) ?>">
 
-        <!-- Imagem -->
+        <!-- Imagens (até 4 fotos) -->
         <div class="field">
-          <label>Foto do Produto</label>
-          <div class="img-preview-area" id="img-preview-area">
-            <div id="img-placeholder">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5" style="margin:0 auto .5rem;display:block;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              <p style="font-size:.75rem;color:#94a3b8;">Clique para adicionar foto</p>
+          <label>Fotos do Produto <span style="font-weight:400;color:#94a3b8;text-transform:none;letter-spacing:0;">(até 4 · clique para adicionar)</span></label>
+          <div class="img-grid">
+            <div class="img-slot" id="slot-1" onclick="document.getElementById('f-imagem').click()">
+              <span class="img-slot-main-badge">Principal</span>
+              <img id="img-preview-1" src="" alt="">
+              <span class="img-slot-icon">📷</span>
+              <span class="img-slot-label">Foto 1</span>
+              <input type="file" name="imagem"  id="f-imagem"  accept="image/*" style="display:none" onchange="previewSlot(this,1)">
+              <input type="hidden" name="current_image"  id="f-img"  value="">
+              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,1)">🗑 Remover</button></div>
             </div>
-            <img id="img-preview" src="" alt="" style="display:none;max-height:120px;max-width:100%;object-fit:contain;border-radius:6px;">
-            <input type="file" name="imagem" id="f-imagem" accept="image/*" onchange="previewImg(this)">
+            <div class="img-slot" id="slot-2" onclick="document.getElementById('f-imagem2').click()">
+              <img id="img-preview-2" src="" alt="">
+              <span class="img-slot-icon">📷</span>
+              <span class="img-slot-label">Foto 2</span>
+              <input type="file" name="imagem2" id="f-imagem2" accept="image/*" style="display:none" onchange="previewSlot(this,2)">
+              <input type="hidden" name="current_image2" id="f-img2" value="">
+              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,2)">🗑 Remover</button></div>
+            </div>
+            <div class="img-slot" id="slot-3" onclick="document.getElementById('f-imagem3').click()">
+              <img id="img-preview-3" src="" alt="">
+              <span class="img-slot-icon">📷</span>
+              <span class="img-slot-label">Foto 3</span>
+              <input type="file" name="imagem3" id="f-imagem3" accept="image/*" style="display:none" onchange="previewSlot(this,3)">
+              <input type="hidden" name="current_image3" id="f-img3" value="">
+              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,3)">🗑 Remover</button></div>
+            </div>
+            <div class="img-slot" id="slot-4" onclick="document.getElementById('f-imagem4').click()">
+              <img id="img-preview-4" src="" alt="">
+              <span class="img-slot-icon">📷</span>
+              <span class="img-slot-label">Foto 4</span>
+              <input type="file" name="imagem4" id="f-imagem4" accept="image/*" style="display:none" onchange="previewSlot(this,4)">
+              <input type="hidden" name="current_image4" id="f-img4" value="">
+              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,4)">🗑 Remover</button></div>
+            </div>
           </div>
         </div>
 
@@ -932,17 +992,11 @@ function openPanel(id) {
     document.getElementById('f-img').value         = p.imagem || '';
     document.getElementById('f-sizes').value       = p.sizes || '';
 
-    // Imagem preview
-    const prevImg = document.getElementById('img-preview');
-    const prevPh  = document.getElementById('img-placeholder');
-    if (p.imagem) {
-      prevImg.src = BASE_URL + '/' + p.imagem;
-      prevImg.style.display = 'block';
-      prevPh.style.display  = 'none';
-    } else {
-      prevImg.style.display = 'none';
-      prevPh.style.display  = 'block';
-    }
+    // Carrega as 4 imagens
+    loadSlot(1, p.imagem  || '');
+    loadSlot(2, p.imagem2 || '');
+    loadSlot(3, p.imagem3 || '');
+    loadSlot(4, p.imagem4 || '');
 
     // Sizes
     autoDetectSizes(p.sizes || '');
@@ -963,9 +1017,7 @@ function openPanel(id) {
     document.getElementById('panel-title').textContent = 'Novo Produto';
     document.getElementById('product-form').reset();
     document.getElementById('f-id').value = '0';
-    document.getElementById('f-img').value = '';
-    document.getElementById('img-preview').style.display = 'none';
-    document.getElementById('img-placeholder').style.display = 'block';
+    loadSlot(1,''); loadSlot(2,''); loadSlot(3,''); loadSlot(4,'');
     document.getElementById('sz-wrap').innerHTML = '';
     document.getElementById('f-sizes').value = '';
     document.getElementById('margem-preview').style.display = 'none';
@@ -978,17 +1030,51 @@ function closePanel() {
   document.querySelectorAll('.pr-table tbody tr, .mobile-card').forEach(r => r.classList.remove('selected'));
 }
 
-// ── Imagem preview ──
-function previewImg(input) {
+// ── Multi-image slots ──
+function previewSlot(input, n) {
   if (!input.files || !input.files[0]) return;
   const reader = new FileReader();
   reader.onload = e => {
-    const img = document.getElementById('img-preview');
+    const slot = document.getElementById('slot-' + n);
+    const img  = document.getElementById('img-preview-' + n);
     img.src = e.target.result;
-    img.style.display = 'block';
-    document.getElementById('img-placeholder').style.display = 'none';
+    slot.classList.add('has-img');
+    slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = 'none');
   };
   reader.readAsDataURL(input.files[0]);
+}
+
+function clearSlot(e, n) {
+  e.stopPropagation();
+  const slot = document.getElementById('slot-' + n);
+  const img  = document.getElementById('img-preview-' + n);
+  const hidId = n === 1 ? 'f-img' : 'f-img' + n;
+  const fileId = n === 1 ? 'f-imagem' : 'f-imagem' + n;
+  img.src = '';
+  slot.classList.remove('has-img');
+  slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = '');
+  const hid = document.getElementById(hidId);
+  if (hid) hid.value = '';
+  const fi = document.getElementById(fileId);
+  if (fi) fi.value = '';
+}
+
+function loadSlot(n, url) {
+  const slot  = document.getElementById('slot-' + n);
+  const img   = document.getElementById('img-preview-' + n);
+  const hidId = n === 1 ? 'f-img' : 'f-img' + n;
+  const hid   = document.getElementById(hidId);
+  if (url) {
+    img.src = BASE_URL + '/' + url;
+    slot.classList.add('has-img');
+    slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = 'none');
+    if (hid) hid.value = url;
+  } else {
+    img.src = '';
+    slot.classList.remove('has-img');
+    slot.querySelectorAll('.img-slot-icon, .img-slot-label').forEach(el => el.style.display = '');
+    if (hid) hid.value = '';
+  }
 }
 
 // ── Margem ──
