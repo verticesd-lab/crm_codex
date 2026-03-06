@@ -310,14 +310,17 @@ include __DIR__ . '/views/partials/header.php';
 .img-slot { position:relative; border:2px dashed #e2e8f0; border-radius:10px; aspect-ratio:1; overflow:hidden; background:#f8fafc; cursor:pointer; transition:all .2s; display:flex; align-items:center; justify-content:center; flex-direction:column; }
 .img-slot:hover { border-color:#6366f1; background:#f5f3ff; }
 .img-slot.has-img { border-style:solid; border-color:#e2e8f0; }
-.img-slot img { width:100%; height:100%; object-fit:cover; display:none; }
-.img-slot.has-img img { display:block; }
-.img-slot-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; margin-top:.35rem; pointer-events:none; }
-.img-slot-icon { font-size:1.4rem; pointer-events:none; }
-.img-slot .img-slot-overlay { display:none; position:absolute; inset:0; background:rgba(0,0,0,.45); align-items:center; justify-content:center; gap:.5rem; z-index:3; }
-.img-slot.has-img:hover .img-slot-overlay { display:flex; }
-.img-slot-del { background:rgba(239,68,68,.85); color:#fff; border:none; border-radius:6px; padding:.25rem .55rem; font-size:.7rem; font-weight:700; cursor:pointer; z-index:4; }
-.img-slot-main-badge { position:absolute; top:.35rem; left:.35rem; background:#6366f1; color:#fff; font-size:.58rem; font-weight:800; padding:.15rem .4rem; border-radius:4px; text-transform:uppercase; letter-spacing:.04em; z-index:4; }
+.img-slot img.slot-preview { width:100%; height:100%; object-fit:cover; display:none; position:absolute; inset:0; z-index:1; }
+.img-slot.has-img img.slot-preview { display:block; }
+.img-slot-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; margin-top:.35rem; pointer-events:none; z-index:0; }
+.img-slot-icon { font-size:1.4rem; pointer-events:none; z-index:0; }
+/* O input cobre o slot inteiro — dispara nativamente no mobile sem JS */
+.img-slot input[type=file] { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; z-index:2; }
+.img-slot .img-slot-overlay { display:none; position:absolute; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:5; }
+.img-slot.has-img:hover .img-slot-overlay,
+.img-slot.has-img.show-overlay .img-slot-overlay { display:flex; }
+.img-slot-del { background:rgba(239,68,68,.9); color:#fff; border:none; border-radius:7px; padding:.35rem .7rem; font-size:.72rem; font-weight:700; cursor:pointer; z-index:6; }
+.img-slot-main-badge { position:absolute; top:.35rem; left:.35rem; background:#6366f1; color:#fff; font-size:.58rem; font-weight:800; padding:.15rem .4rem; border-radius:4px; text-transform:uppercase; letter-spacing:.04em; z-index:4; pointer-events:none; }
 .panel-body { flex:1; overflow-y:auto; padding:1rem 1.25rem; }
 .panel-body::-webkit-scrollbar { width:3px; }
 .panel-body::-webkit-scrollbar-thumb { background:#e2e8f0; }
@@ -823,39 +826,65 @@ include __DIR__ . '/views/partials/header.php';
         <div class="field">
           <label>Fotos do Produto <span style="font-weight:400;color:#94a3b8;text-transform:none;letter-spacing:0;">(até 4 · clique para adicionar)</span></label>
           <div class="img-grid">
-            <div class="img-slot" id="slot-1" onclick="openFileSlot(1)">
+
+            <!-- Slot 1 — Principal -->
+            <div class="img-slot" id="slot-1">
               <span class="img-slot-main-badge">Principal</span>
-              <img id="img-preview-1" src="" alt="">
+              <img id="img-preview-1" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 1</span>
-              <input type="file" name="imagem"  id="f-imagem"  accept="image/*" style="display:none" onchange="previewSlot(this,1)">
-              <input type="hidden" name="current_image"  id="f-img"  value="">
-              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,1)">🗑 Remover</button></div>
+              <!-- Input cobre o slot inteiro: funciona no iOS/Android sem .click() -->
+              <input type="file" name="imagem" id="f-imagem" accept="image/*" capture="environment"
+                     onchange="previewSlot(this,1)">
+              <input type="hidden" name="current_image" id="f-img" value="">
+              <div class="img-slot-overlay">
+                <button type="button" class="img-slot-del"
+                        onclick="clearSlot(event,1)">🗑 Remover</button>
+              </div>
             </div>
-            <div class="img-slot" id="slot-2" onclick="openFileSlot(2)">
-              <img id="img-preview-2" src="" alt="">
+
+            <!-- Slot 2 -->
+            <div class="img-slot" id="slot-2">
+              <img id="img-preview-2" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 2</span>
-              <input type="file" name="imagem2" id="f-imagem2" accept="image/*" style="display:none" onchange="previewSlot(this,2)">
+              <input type="file" name="imagem2" id="f-imagem2" accept="image/*" capture="environment"
+                     onchange="previewSlot(this,2)">
               <input type="hidden" name="current_image2" id="f-img2" value="">
-              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,2)">🗑 Remover</button></div>
+              <div class="img-slot-overlay">
+                <button type="button" class="img-slot-del"
+                        onclick="clearSlot(event,2)">🗑 Remover</button>
+              </div>
             </div>
-            <div class="img-slot" id="slot-3" onclick="openFileSlot(3)">
-              <img id="img-preview-3" src="" alt="">
+
+            <!-- Slot 3 -->
+            <div class="img-slot" id="slot-3">
+              <img id="img-preview-3" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 3</span>
-              <input type="file" name="imagem3" id="f-imagem3" accept="image/*" style="display:none" onchange="previewSlot(this,3)">
+              <input type="file" name="imagem3" id="f-imagem3" accept="image/*" capture="environment"
+                     onchange="previewSlot(this,3)">
               <input type="hidden" name="current_image3" id="f-img3" value="">
-              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,3)">🗑 Remover</button></div>
+              <div class="img-slot-overlay">
+                <button type="button" class="img-slot-del"
+                        onclick="clearSlot(event,3)">🗑 Remover</button>
+              </div>
             </div>
-            <div class="img-slot" id="slot-4" onclick="openFileSlot(4)">
-              <img id="img-preview-4" src="" alt="">
+
+            <!-- Slot 4 -->
+            <div class="img-slot" id="slot-4">
+              <img id="img-preview-4" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 4</span>
-              <input type="file" name="imagem4" id="f-imagem4" accept="image/*" style="display:none" onchange="previewSlot(this,4)">
+              <input type="file" name="imagem4" id="f-imagem4" accept="image/*" capture="environment"
+                     onchange="previewSlot(this,4)">
               <input type="hidden" name="current_image4" id="f-img4" value="">
-              <div class="img-slot-overlay"><button type="button" class="img-slot-del" onclick="clearSlot(event,4)">🗑 Remover</button></div>
+              <div class="img-slot-overlay">
+                <button type="button" class="img-slot-del"
+                        onclick="clearSlot(event,4)">🗑 Remover</button>
+              </div>
             </div>
+
           </div>
         </div>
 
@@ -1032,9 +1061,7 @@ function closePanel() {
 function previewSlot(input, n) {
   if (!input.files || !input.files[0]) return;
   const reader = new FileReader();
-  reader.onload = e => {
-    setSlotImg(n, e.target.result);
-  };
+  reader.onload = e => { setSlotImg(n, e.target.result); };
   reader.readAsDataURL(input.files[0]);
 }
 
@@ -1044,36 +1071,45 @@ function setSlotImg(n, src) {
   if (!slot || !img) return;
   img.src = src;
   slot.classList.add('has-img');
-  // Esconde ícone e label
   const icon  = slot.querySelector('.img-slot-icon');
   const label = slot.querySelector('.img-slot-label');
-  if (icon)  icon.style.display  = 'none';
+  if (icon)  icon.style.display = 'none';
   if (label) label.style.display = 'none';
+  // Mobile: toque longo mostra overlay de remover
+  enableMobileOverlay(slot);
+}
+
+function enableMobileOverlay(slot) {
+  if (slot._mobSet) return;
+  slot._mobSet = true;
+  let t;
+  slot.addEventListener('touchstart', () => { t = setTimeout(() => slot.classList.add('show-overlay'), 600); }, {passive:true});
+  slot.addEventListener('touchend',   () => clearTimeout(t));
+  slot.addEventListener('touchmove',  () => clearTimeout(t), {passive:true});
+  document.addEventListener('touchstart', e => {
+    if (!slot.contains(e.target)) slot.classList.remove('show-overlay');
+  }, {passive:true});
 }
 
 function clearSlot(e, n) {
   e.stopPropagation();
+  e.preventDefault();
   const slot   = document.getElementById('slot-' + n);
   const img    = document.getElementById('img-preview-' + n);
   const hidId  = n === 1 ? 'f-img' : 'f-img' + n;
   const fileId = n === 1 ? 'f-imagem' : 'f-imagem' + n;
   if (!slot || !img) return;
   img.src = '';
-  slot.classList.remove('has-img');
+  slot.classList.remove('has-img', 'show-overlay');
   const icon  = slot.querySelector('.img-slot-icon');
   const label = slot.querySelector('.img-slot-label');
-  if (icon)  icon.style.display  = '';
+  if (icon)  icon.style.display = '';
   if (label) label.style.display = '';
   const hid = document.getElementById(hidId);
   if (hid) hid.value = '';
+  // Recria o input para limpar arquivo selecionado (cross-browser)
   const fi = document.getElementById(fileId);
-  if (fi) fi.value = '';
-}
-
-function openFileSlot(n) {
-  const fileId = n === 1 ? 'f-imagem' : 'f-imagem' + n;
-  const fi = document.getElementById(fileId);
-  if (fi) fi.click();
+  if (fi) { const nf = fi.cloneNode(true); fi.parentNode.replaceChild(nf, fi); }
 }
 
 function loadSlot(n, url) {
@@ -1083,20 +1119,20 @@ function loadSlot(n, url) {
   const hid   = document.getElementById(hidId);
   if (!slot || !img) return;
   if (url) {
-    // Usa image_url equivalente: BASE_URL + '/' + path
-    img.src = BASE_URL + '/' + url;
     setSlotImg(n, BASE_URL + '/' + url);
     if (hid) hid.value = url;
   } else {
     img.src = '';
-    slot.classList.remove('has-img');
+    slot.classList.remove('has-img', 'show-overlay');
     const icon  = slot.querySelector('.img-slot-icon');
     const label = slot.querySelector('.img-slot-label');
-    if (icon)  icon.style.display  = '';
+    if (icon)  icon.style.display = '';
     if (label) label.style.display = '';
     if (hid) hid.value = '';
   }
 }
+
+
 
 // ── Margem ──
 function fmt(v) { return parseFloat(v||0).toFixed(2).replace('.',','); }
