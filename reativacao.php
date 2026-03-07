@@ -2,1321 +2,516 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
+
 require_login();
-$pageTitle = 'Reativação de Clientes';
+
+$pdo       = get_pdo();
+$companyId = current_company_id();
+
+if (!$companyId) {
+    flash('error', 'Empresa não definida na sessão.');
+    redirect('dashboard.php');
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SETUP DE TABELAS — feito no PHP antes de qualquer render.
+   Assim as colunas já existem quando o JS chamar os endpoints.
+══════════════════════════════════════════════════════════════ */
+try {
+    $clientCols = $pdo->query('SHOW COLUMNS FROM clients')->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('reativ_status',       $clientCols)) $pdo->exec("ALTER TABLE clients ADD COLUMN reativ_status VARCHAR(30) DEFAULT 'elegivel'");
+    if (!in_array('reativ_ultimo_envio', $clientCols)) $pdo->exec("ALTER TABLE clients ADD COLUMN reativ_ultimo_envio DATETIME NULL");
+    if (!in_array('reativ_tentativas',   $clientCols)) $pdo->exec("ALTER TABLE clients ADD COLUMN reativ_tentativas TINYINT DEFAULT 0");
+} catch (Throwable $e) {}
+
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS reativacao_lotes (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        company_id INT UNSIGNED NOT NULL, criado_em DATETIME NOT NULL,
+        iniciado_em DATETIME NULL, concluido_em DATETIME NULL,
+        status VARCHAR(20) DEFAULT 'aguardando', contexto VARCHAR(20) DEFAULT 'misto',
+        total_clientes INT DEFAULT 0, enviados INT DEFAULT 0, erros INT DEFAULT 0,
+        mensagem_idx TINYINT DEFAULT 0, criado_por INT UNSIGNED NULL, observacoes TEXT NULL,
+        INDEX idx_company (company_id), INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Throwable $e) {}
+
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS reativacao_envios (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        lote_id INT UNSIGNED NOT NULL, client_id INT UNSIGNED NOT NULL,
+        company_id INT UNSIGNED NOT NULL, whatsapp VARCHAR(30) NOT NULL,
+        nome VARCHAR(120) NOT NULL, contexto VARCHAR(20) DEFAULT 'whatsapp',
+        mensagem TEXT NOT NULL, tentativa TINYINT DEFAULT 1,
+        status VARCHAR(20) DEFAULT 'pendente',
+        enviado_em DATETIME NULL, respondeu_em DATETIME NULL, erro_msg TEXT NULL,
+        INDEX idx_lote (lote_id), INDEX idx_client (client_id),
+        INDEX idx_company (company_id), INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Throwable $e) {}
+
+/* ── KPIs para o dashboard ── */
+$stats = ['total'=>0,'elegiveis'=>0,'responderam'=>0,'aguardando'=>0,'standby'=>0,'sem_resposta'=>0,'lote_ativo'=>null,'pode_enviar'=>true,'pode_enviar_em'=>null];
+try {
+    $rows = $pdo->prepare("SELECT COALESCE(reativ_status,'elegivel') as s, COUNT(*) as n FROM clients WHERE company_id=? AND whatsapp IS NOT NULL AND whatsapp != '' GROUP BY s");
+    $rows->execute([$companyId]);
+    $by = [];
+    foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $r) $by[$r['s']] = (int)$r['n'];
+    $stats['total']        = array_sum($by);
+    $stats['elegiveis']    = ($by['elegivel']??0) + ($by['']??0);
+    $stats['responderam']  = ($by['respondeu_1']??0) + ($by['respondeu_2']??0);
+    $stats['aguardando']   = ($by['aguardando_2']??0) + ($by['lote_enviado_1']??0) + ($by['lote_enviado_2']??0);
+    $stats['standby']      = $by['standby'] ?? 0;
+    $stats['sem_resposta'] = $by['sem_resposta'] ?? 0;
+
+    $la = $pdo->prepare("SELECT id,status,total_clientes,enviados,erros FROM reativacao_lotes WHERE company_id=? AND status IN ('aguardando','em_andamento') ORDER BY criado_em DESC LIMIT 1");
+    $la->execute([$companyId]);
+    $stats['lote_ativo'] = $la->fetch(PDO::FETCH_ASSOC) ?: null;
+
+    $ul = $pdo->prepare("SELECT concluido_em FROM reativacao_lotes WHERE company_id=? AND status='concluido' ORDER BY concluido_em DESC LIMIT 1");
+    $ul->execute([$companyId]);
+    $uc = $ul->fetchColumn();
+    if ($uc) {
+        $prox = strtotime($uc) + 86400;
+        if ($prox > time()) { $stats['pode_enviar'] = false; $stats['pode_enviar_em'] = date('d/m/Y \à\s H:i', $prox); }
+    }
+} catch (Throwable $e) {}
+
+include __DIR__ . '/views/partials/header.php';
+if ($m = get_flash('success')) echo '<div class="mb-4 p-3 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">'.sanitize($m).'</div>';
+if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text-red-700 border border-red-200">'.sanitize($m).'</div>';
 ?>
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title><?= $pageTitle ?> — Formen CRM</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root {
-  --bg:       #0f0f11;
-  --bg2:      #17171a;
-  --bg3:      #1e1e23;
-  --border:   #2a2a32;
-  --border2:  #35353f;
-  --text:     #e8e8ec;
-  --text2:    #9090a0;
-  --text3:    #55555f;
-  --accent:   #7c6af5;
-  --accent2:  #5b52d6;
-  --green:    #34d17a;
-  --green2:   #1a6b3e;
-  --yellow:   #f5c842;
-  --yellow2:  #7a6010;
-  --red:      #f55252;
-  --red2:     #6b1a1a;
-  --orange:   #f59b42;
-  --radius:   10px;
-  --radius-sm:6px;
-  --shadow:   0 4px 24px rgba(0,0,0,.45);
-}
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-body {
-  font-family: 'Inter', sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  display: flex;
-}
-
-/* ── SIDEBAR ── */
-.sidebar {
-  width: 220px;
-  min-height: 100vh;
-  background: var(--bg2);
-  border-right: 1px solid var(--border);
-  padding: 24px 0;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-}
-.sidebar-logo {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -.5px;
-  color: var(--text);
-  padding: 0 20px 24px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
-}
-.sidebar-logo span { color: var(--accent); }
-.sidebar-nav a {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 20px;
-  color: var(--text2);
-  text-decoration: none;
-  font-size: 13.5px;
-  transition: all .15s;
-  border-left: 3px solid transparent;
-}
-.sidebar-nav a:hover { color: var(--text); background: var(--bg3); }
-.sidebar-nav a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(124,106,245,.08); }
-
-/* ── MAIN ── */
-.main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 32px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg2);
-}
-.topbar-title { font-size: 17px; font-weight: 600; }
-.topbar-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
-.badge-evo { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
-.dot-green { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); }
-
-/* ── TABS ── */
-.tabs-bar {
-  display: flex;
-  gap: 2px;
-  padding: 0 32px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-}
-.tab-btn {
-  padding: 12px 20px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text2);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: all .15s;
-}
-.tab-btn:hover { color: var(--text); }
-.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-
-/* ── CONTENT ── */
-.content { padding: 28px 32px; flex: 1; overflow-y: auto; }
-.tab-panel { display: none; }
-.tab-panel.active { display: block; }
-
-/* ── KPI STRIP ── */
-.kpi-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 14px;
-  margin-bottom: 28px;
-}
-.kpi-card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  position: relative;
-  overflow: hidden;
-}
-.kpi-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
-  background: var(--color, var(--accent));
-}
-.kpi-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
-.kpi-value { font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace; line-height: 1; }
-.kpi-sub { font-size: 11px; color: var(--text3); margin-top: 4px; }
-
-/* ── FUNIL ── */
-.funil {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  margin-bottom: 28px;
-}
-.funil-title { font-size: 13px; font-weight: 600; color: var(--text2); margin-bottom: 16px; text-transform: uppercase; letter-spacing: .5px; }
-.funil-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-.funil-label { font-size: 12.5px; color: var(--text2); width: 150px; flex-shrink: 0; }
-.funil-bar-wrap { flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
-.funil-bar { height: 100%; border-radius: 4px; transition: width .6s ease; }
-.funil-count { font-size: 12px; font-family: 'JetBrains Mono'; color: var(--text); width: 40px; text-align: right; }
-
-/* ── LOTE ATIVO BANNER ── */
-.lote-banner {
-  background: linear-gradient(135deg, rgba(124,106,245,.12), rgba(124,106,245,.04));
-  border: 1px solid rgba(124,106,245,.3);
-  border-radius: var(--radius);
-  padding: 18px 24px;
-  margin-bottom: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-.lote-banner-info { flex: 1; }
-.lote-banner-title { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
-.lote-banner-sub { font-size: 12px; color: var(--text2); }
-.progress-bar-wrap { flex: 1; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
-.progress-bar { height: 100%; border-radius: 3px; background: var(--accent); transition: width .3s; }
-
-/* ── COOLDOWN ── */
-.cooldown-banner {
-  background: rgba(245,200,66,.06);
-  border: 1px solid rgba(245,200,66,.2);
-  border-radius: var(--radius);
-  padding: 14px 20px;
-  font-size: 13px;
-  color: var(--yellow);
-  margin-bottom: 20px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* ── CARDS / TABLES ── */
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-.section-title { font-size: 15px; font-weight: 600; }
-.section-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
-
-.filters-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  margin-bottom: 18px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 18px;
-}
-.filter-group { display: flex; flex-direction: column; gap: 5px; }
-.filter-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; }
-.filter-select, .filter-input {
-  background: var(--bg3);
-  border: 1px solid var(--border2);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  font-size: 13px;
-  padding: 7px 10px;
-  font-family: 'Inter', sans-serif;
-  min-width: 120px;
-}
-.filter-select:focus, .filter-input:focus { outline: none; border-color: var(--accent); }
-
-/* Tabela de clientes elegíveis */
-.clients-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.clients-table th {
-  text-align: left;
-  font-size: 11px;
-  color: var(--text3);
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  font-weight: 500;
-}
-.clients-table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-.clients-table tr:last-child td { border-bottom: none; }
-.clients-table tr:hover td { background: rgba(255,255,255,.025); }
-.clients-table input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
-
-.ctx-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
-  padding: 2px 8px;
-  border-radius: 20px;
-  font-weight: 500;
-}
-.ctx-pdv       { background: rgba(52,209,122,.12); color: var(--green); }
-.ctx-barbearia { background: rgba(124,106,245,.12); color: var(--accent); }
-.ctx-whatsapp  { background: rgba(245,200,66,.12); color: var(--yellow); }
-
-.dias-badge {
-  font-family: 'JetBrains Mono';
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-.dias-hot  { background: rgba(245,82,82,.12); color: var(--red); }
-.dias-warm { background: rgba(245,155,66,.12); color: var(--orange); }
-.dias-cold { background: rgba(144,144,160,.1); color: var(--text2); }
-
-/* Preview msg */
-.msg-preview {
-  font-size: 11.5px;
-  color: var(--text2);
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-style: italic;
-}
-
-/* ── BOTÕES ── */
-.btn {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 9px 18px;
-  border-radius: var(--radius-sm);
-  font-size: 13px; font-weight: 500;
-  font-family: 'Inter', sans-serif;
-  cursor: pointer;
-  border: none;
-  transition: all .15s;
-}
-.btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover { background: var(--accent2); }
-.btn-primary:disabled { opacity: .4; cursor: not-allowed; }
-.btn-danger  { background: rgba(245,82,82,.12); color: var(--red); border: 1px solid rgba(245,82,82,.25); }
-.btn-danger:hover  { background: rgba(245,82,82,.2); }
-.btn-ghost   { background: var(--bg3); color: var(--text2); border: 1px solid var(--border2); }
-.btn-ghost:hover   { color: var(--text); border-color: var(--border2); background: var(--bg2); }
-.btn-green   { background: rgba(52,209,122,.12); color: var(--green); border: 1px solid rgba(52,209,122,.25); }
-.btn-green:hover   { background: rgba(52,209,122,.2); }
-.btn-sm { padding: 6px 12px; font-size: 12px; }
-
-/* ── ENVIO EM PROGRESSO ── */
-.send-console {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12.5px;
-  overflow: hidden;
-}
-.send-console-header {
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text2);
-  font-size: 12px;
-}
-.dot-run { width: 8px; height: 8px; border-radius: 50%; animation: pulse 1.2s infinite; }
-.dot-run.green { background: var(--green); }
-.dot-run.gray  { background: var(--text3); animation: none; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-.send-console-body {
-  padding: 14px 16px;
-  max-height: 280px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.log-line {
-  display: flex; align-items: flex-start; gap: 8px;
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(255,255,255,.03);
-}
-.log-time { color: var(--text3); flex-shrink: 0; }
-.log-ok   { color: var(--green); flex-shrink: 0; }
-.log-err  { color: var(--red); flex-shrink: 0; }
-.log-info { color: var(--text2); flex-shrink: 0; }
-.log-text { color: var(--text2); flex: 1; }
-.log-name { color: var(--text); font-weight: 500; }
-
-/* ── LOTES HISTÓRICO ── */
-.lote-row {
-  display: grid;
-  grid-template-columns: 60px 1fr auto auto auto 120px;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-  transition: background .1s;
-}
-.lote-row:hover { background: rgba(255,255,255,.02); }
-.lote-row:last-child { border-bottom: none; }
-.lote-status-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 11px; padding: 3px 9px;
-  border-radius: 20px; font-weight: 500;
-}
-.status-aguardando { background: rgba(245,200,66,.1); color: var(--yellow); }
-.status-andamento  { background: rgba(124,106,245,.1); color: var(--accent); }
-.status-concluido  { background: rgba(52,209,122,.1);  color: var(--green); }
-.status-cancelado  { background: rgba(144,144,160,.1); color: var(--text2); }
-
-/* ── SEGMENTOS ── */
-.segment-tabs {
-  display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
-}
-.seg-btn {
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-size: 12px; font-weight: 500;
-  border: 1px solid var(--border2);
-  background: var(--bg2);
-  color: var(--text2);
-  cursor: pointer;
-  transition: all .15s;
-}
-.seg-btn:hover { color: var(--text); }
-.seg-btn.active { background: rgba(124,106,245,.12); border-color: var(--accent); color: var(--accent); }
-
-/* ── MODAL ── */
-.modal-overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.7);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-  opacity: 0; pointer-events: none;
-  transition: opacity .2s;
-}
-.modal-overlay.open { opacity: 1; pointer-events: all; }
-.modal {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  width: min(560px, 95vw);
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: var(--shadow);
-  transform: translateY(12px);
-  transition: transform .2s;
-}
-.modal-overlay.open .modal { transform: translateY(0); }
-.modal-header {
-  padding: 20px 24px 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.modal-title { font-size: 16px; font-weight: 600; }
-.modal-close {
-  width: 28px; height: 28px; border-radius: 6px;
-  background: var(--bg3); border: none; color: var(--text2);
-  cursor: pointer; font-size: 16px;
-  display: flex; align-items: center; justify-content: center;
-}
-.modal-body { padding: 20px 24px 24px; }
-.msg-preview-card {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text2);
-  white-space: pre-line;
-  margin-bottom: 16px;
-  font-style: italic;
-  border-left: 3px solid var(--accent);
-}
-.lote-config-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-}
-.lote-config-row:last-child { border-bottom: none; }
-.lote-config-label { font-size: 13px; color: var(--text2); flex: 1; }
-.lote-config-value { font-size: 13px; font-weight: 500; font-family: 'JetBrains Mono'; }
-
-/* ── SLIDER DELAY ── */
-input[type="range"] {
-  accent-color: var(--accent);
-  width: 120px;
-}
-
-/* ── TABLE WRAPPER ── */
-.table-wrap {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-/* ── EMPTY STATE ── */
-.empty-state {
-  text-align: center;
-  padding: 48px 24px;
-  color: var(--text2);
-}
-.empty-state .icon { font-size: 40px; margin-bottom: 12px; }
-.empty-state p { font-size: 14px; }
-
-/* ── SELEÇÃO ── */
-.selection-bar {
-  background: rgba(124,106,245,.1);
-  border: 1px solid rgba(124,106,245,.25);
-  border-radius: var(--radius-sm);
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-  font-size: 13px;
-  color: var(--accent);
-}
-
-/* scrollbar */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+.rv-tabs{display:flex;gap:.25rem;border-bottom:2px solid #e2e8f0;margin-bottom:1.5rem}
+.rv-tab{padding:.65rem 1.25rem;font-size:.85rem;font-weight:600;color:#64748b;text-decoration:none;border:none;background:none;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;transition:all .15s;border-radius:6px 6px 0 0;white-space:nowrap}
+.rv-tab:hover{color:#6366f1;background:#f5f3ff}
+.rv-tab.active{color:#6366f1;border-bottom-color:#6366f1;background:#f5f3ff}
+.rv-panel{display:none}.rv-panel.active{display:block}
+.rv-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1rem;margin-bottom:1.5rem}
+.rv-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1rem 1.25rem;position:relative;overflow:hidden}
+.rv-kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--c,#6366f1)}
+.rv-kpi-lbl{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:.4rem}
+.rv-kpi-val{font-size:1.8rem;font-weight:800;color:#0f172a;line-height:1}
+.rv-kpi-sub{font-size:.68rem;color:#94a3b8;margin-top:.25rem}
+.rv-card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;margin-bottom:1.25rem}
+.rv-card-hd{padding:.9rem 1.25rem;background:#f8fafc;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
+.rv-card-hd h3{font-size:.9rem;font-weight:700;color:#0f172a}
+.rv-card-bd{padding:1.25rem}
+.funil-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.funil-lbl{font-size:.78rem;color:#475569;width:160px;flex-shrink:0}
+.funil-bw{flex:1;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden}
+.funil-bar{height:100%;border-radius:4px;transition:width .6s ease}
+.funil-n{font-size:.72rem;font-family:monospace;color:#0f172a;width:30px;text-align:right}
+.lote-banner{background:#f5f3ff;border:1px solid #c7d2fe;border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.25rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.rv-filters{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.1rem 1.25rem;display:flex;gap:.85rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:1.25rem}
+.rv-fg{display:flex;flex-direction:column;gap:.3rem}
+.rv-fg label{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b}
+.rv-select{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;color:#0f172a;font-size:.82rem;padding:.55rem .8rem;outline:none;transition:border-color .15s;font-family:inherit}
+.rv-select:focus{border-color:#6366f1}
+.rv-sel-bar{background:#f5f3ff;border:1px solid #c7d2fe;border-radius:8px;padding:.75rem 1.1rem;display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;font-size:.82rem;color:#4338ca}
+.rv-table-wrap{background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden}
+.rv-table{width:100%;border-collapse:collapse;font-size:.875rem}
+.rv-table thead th{padding:.8rem 1rem;text-align:left;font-size:.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;background:#f8fafc;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+.rv-table tbody tr{border-bottom:1px solid #f8fafc;transition:background .1s}
+.rv-table tbody tr:last-child{border-bottom:none}
+.rv-table tbody tr:hover{background:#fafafe}
+.rv-table td{padding:.8rem 1rem;vertical-align:middle}
+.ctx-badge{display:inline-flex;align-items:center;gap:3px;font-size:.68rem;font-weight:600;padding:.2rem .55rem;border-radius:20px}
+.ctx-pdv{background:#fef9c3;color:#a16207}.ctx-barbearia{background:#ede9fe;color:#6d28d9}.ctx-whatsapp{background:#dcfce7;color:#15803d}
+.dias-badge{font-size:.72rem;padding:.2rem .5rem;border-radius:4px;font-family:monospace}
+.dias-hot{background:#fee2e2;color:#dc2626}.dias-warm{background:#fef3c7;color:#d97706}.dias-cold{background:#f1f5f9;color:#64748b}
+.rv-console{background:#0f172a;border:1px solid #1e293b;border-radius:12px;overflow:hidden}
+.rv-console-hd{background:#1e293b;padding:.75rem 1rem;display:flex;align-items:center;gap:.5rem;font-size:.72rem;color:#94a3b8;font-family:monospace}
+.rv-console-bd{padding:.85rem 1rem;max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.log-line{display:flex;gap:.5rem;font-size:.72rem;font-family:monospace;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.log-time{color:#475569;flex-shrink:0}.log-ok{color:#22c55e;flex-shrink:0}.log-err{color:#ef4444;flex-shrink:0}.log-info{color:#94a3b8;flex-shrink:0}.log-text{color:#94a3b8;flex:1}
+.dot-pulse{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-pulse.on{background:#22c55e;animation:pulse 1.2s infinite}.dot-pulse.off{background:#475569}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.lote-row{display:grid;grid-template-columns:50px 1fr auto auto 110px 90px;align-items:center;gap:.75rem;padding:.9rem 1.1rem;border-bottom:1px solid #f8fafc;font-size:.82rem;transition:background .1s}
+.lote-row:hover{background:#fafafe}.lote-row:last-child{border-bottom:none}
+.st-badge{font-size:.68rem;font-weight:700;padding:.25rem .6rem;border-radius:20px}
+.st-aguardando{background:#fef9c3;color:#a16207}.st-andamento{background:#ede9fe;color:#6d28d9}.st-concluido{background:#dcfce7;color:#15803d}.st-cancelado{background:#f1f5f9;color:#64748b}
+.seg-btns{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem}
+.seg-btn{padding:.4rem .9rem;border-radius:20px;font-size:.75rem;font-weight:600;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;transition:all .15s}
+.seg-btn:hover{color:#6366f1}.seg-btn.active{background:#f5f3ff;border-color:#6366f1;color:#6366f1}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.6rem 1.1rem;border-radius:9px;font-size:.82rem;font-weight:600;cursor:pointer;border:none;font-family:inherit;text-decoration:none;transition:all .15s;white-space:nowrap}
+.btn-primary{background:#6366f1;color:#fff}.btn-primary:hover{background:#4f46e5}.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.btn-green{background:#f0fdf4;color:#16a34a;border:1.5px solid #bbf7d0}.btn-green:hover{background:#dcfce7}
+.btn-danger{background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca}.btn-danger:hover{background:#fee2e2}
+.btn-ghost{background:#f8fafc;color:#475569;border:1.5px solid #e2e8f0}.btn-ghost:hover{color:#0f172a;border-color:#94a3b8}
+.btn-sm{padding:.4rem .75rem;font-size:.75rem}
+.rv-modal-ov{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+.rv-modal-ov.open{display:flex}
+.rv-modal{background:#fff;border-radius:16px;width:min(520px,95vw);max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.18);padding:1.75rem}
+.rv-modal h2{font-size:1.05rem;font-weight:700;color:#0f172a;margin-bottom:1.25rem}
+.rv-msg-preview{background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #6366f1;border-radius:8px;padding:.85rem 1rem;font-size:.82rem;color:#475569;white-space:pre-line;font-style:italic;margin-bottom:1rem;line-height:1.6}
+.rv-cfg-row{display:flex;justify-content:space-between;padding:.65rem 0;border-bottom:1px solid #f1f5f9;font-size:.82rem}
+.rv-cfg-row:last-child{border-bottom:none}
+.rv-cfg-lbl{color:#64748b}.rv-cfg-val{font-weight:600;font-family:monospace}
+.rv-obs{width:100%;padding:.6rem .85rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;color:#0f172a;font-family:inherit;resize:none;outline:none;background:#f8fafc;transition:border-color .15s;margin-bottom:1.25rem}
+.rv-obs:focus{border-color:#6366f1;background:#fff}
+.rv-empty{text-align:center;padding:3rem 1rem;color:#94a3b8;font-size:.875rem}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:2px}
 </style>
-</head>
-<body>
 
-<!-- SIDEBAR -->
-<nav class="sidebar">
-  <div class="sidebar-logo">For<span>men</span> CRM</div>
-  <div class="sidebar-nav">
-    <a href="/index.php">🏠 Dashboard</a>
-    <a href="/clients.php">👥 Clientes</a>
-    <a href="/calendar_barbearia.php">✂️ Barbearia</a>
-    <a href="/reativacao.php" class="active">🔁 Reativação</a>
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem">
+  <div>
+    <h1 style="font-size:1.4rem;font-weight:700;color:#0f172a">🔁 Reativação de Clientes</h1>
+    <p style="font-size:.82rem;color:#64748b;margin-top:.15rem">Reconecte clientes inativos com cadência e controle total</p>
   </div>
-</nav>
+  <div style="display:flex;align-items:center;gap:.5rem;font-size:.78rem;color:#64748b">
+    <span style="width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 5px #22c55e"></span>
+    Evolution API conectada
+  </div>
+</div>
 
-<!-- MAIN -->
-<div class="main">
+<div class="rv-tabs">
+  <button class="rv-tab active" data-tab="dashboard">📊 Dashboard</button>
+  <button class="rv-tab" data-tab="criar">📤 Criar Lote</button>
+  <button class="rv-tab" data-tab="lotes">📋 Histórico</button>
+  <button class="rv-tab" data-tab="segmentos">🗂️ Segmentos</button>
+</div>
 
-  <!-- TOPBAR -->
-  <div class="topbar">
+<!-- ═══ DASHBOARD ═══ -->
+<div id="tab-dashboard" class="rv-panel active">
+
+  <?php if (!$stats['pode_enviar']): ?>
+  <div style="background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:.85rem 1.25rem;font-size:.82rem;color:#a16207;margin-bottom:1.25rem;display:flex;align-items:center;gap:.5rem">
+    ⏱️ Cooldown ativo — próximo lote disponível em: <strong><?= $stats['pode_enviar_em'] ?></strong>
+  </div>
+  <?php endif; ?>
+
+  <?php if ($stats['lote_ativo']): $la=$stats['lote_ativo']; $pct=$la['total_clientes']>0?round($la['enviados']/$la['total_clientes']*100):0; ?>
+  <div class="lote-banner">
     <div>
-      <div class="topbar-title">🔁 Reativação de Clientes</div>
-      <div class="topbar-sub">Reconecte clientes inativos com cadência e controle</div>
+      <div style="font-size:.875rem;font-weight:700;color:#4338ca;margin-bottom:.2rem">⚡ Lote em andamento</div>
+      <div style="font-size:.75rem;color:#6366f1"><?= (int)$la['enviados'] ?>/<?= (int)$la['total_clientes'] ?> enviados · <?= (int)$la['erros'] ?> erros</div>
     </div>
-    <div class="badge-evo">
-      <div class="dot-green"></div>
-      Evolution API conectada
+    <div style="flex:1;max-width:180px">
+      <div style="height:6px;background:#e0e7ff;border-radius:3px;overflow:hidden"><div style="height:100%;background:#6366f1;width:<?= $pct ?>%;transition:width .3s"></div></div>
+      <div style="font-size:.68rem;color:#6366f1;margin-top:4px;text-align:right"><?= $pct ?>%</div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="switchTab('lotes')">Ver lote →</button>
+  </div>
+  <?php endif; ?>
+
+  <div class="rv-kpis">
+    <div class="rv-kpi" style="--c:#94a3b8"><div class="rv-kpi-lbl">Base c/ WhatsApp</div><div class="rv-kpi-val"><?= number_format($stats['total'],0,'.','.') ?></div><div class="rv-kpi-sub">clientes</div></div>
+    <div class="rv-kpi" style="--c:#6366f1"><div class="rv-kpi-lbl">Elegíveis</div><div class="rv-kpi-val"><?= number_format($stats['elegiveis'],0,'.','.') ?></div><div class="rv-kpi-sub">prontos para contato</div></div>
+    <div class="rv-kpi" style="--c:#22c55e"><div class="rv-kpi-lbl">Responderam</div><div class="rv-kpi-val"><?= $stats['responderam'] ?></div><div class="rv-kpi-sub">1ª ou 2ª tentativa</div></div>
+    <div class="rv-kpi" style="--c:#f59e0b"><div class="rv-kpi-lbl">Em espera</div><div class="rv-kpi-val"><?= $stats['aguardando'] ?></div><div class="rv-kpi-sub">enviado / aguardando</div></div>
+    <div class="rv-kpi" style="--c:#ef4444"><div class="rv-kpi-lbl">Standby</div><div class="rv-kpi-val"><?= $stats['standby'] ?></div><div class="rv-kpi-sub">não pertuba mais</div></div>
+  </div>
+
+  <div class="rv-card">
+    <div class="rv-card-hd"><h3>Funil de Reativação</h3></div>
+    <div class="rv-card-bd">
+      <?php $t=max($stats['total'],1);
+      foreach([['Elegíveis',$stats['elegiveis'],'#6366f1'],['Aguardando / Enviado',$stats['aguardando'],'#f59e0b'],['Responderam ✅',$stats['responderam'],'#22c55e'],['Sem resposta',$stats['sem_resposta'],'#ef4444'],['Standby',$stats['standby'],'#94a3b8']] as [$l,$v,$c]): ?>
+      <div class="funil-row">
+        <span class="funil-lbl"><?= $l ?></span>
+        <div class="funil-bw"><div class="funil-bar" style="width:<?= round($v/$t*100,1) ?>%;background:<?= $c ?>"></div></div>
+        <span class="funil-n"><?= $v ?></span>
+      </div>
+      <?php endforeach; ?>
     </div>
   </div>
 
-  <!-- TABS -->
-  <div class="tabs-bar">
-    <button class="tab-btn active" data-tab="dashboard">📊 Dashboard</button>
-    <button class="tab-btn" data-tab="criar">📤 Criar Lote</button>
-    <button class="tab-btn" data-tab="lotes">📋 Histórico</button>
-    <button class="tab-btn" data-tab="segmentos">🗂️ Segmentos</button>
+  <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+    <button class="btn btn-primary" onclick="switchTab('criar')">＋ Criar novo lote</button>
+    <button class="btn btn-ghost" onclick="switchTab('segmentos')">🗂️ Ver segmentos</button>
+    <button class="btn btn-ghost btn-sm" onclick="location.reload()" style="margin-left:auto">↻ Atualizar</button>
+  </div>
+</div>
+
+<!-- ═══ CRIAR LOTE ═══ -->
+<div id="tab-criar" class="rv-panel">
+  <div style="margin-bottom:1.25rem">
+    <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Selecionar clientes para o lote</h2>
+    <p style="font-size:.78rem;color:#64748b;margin-top:.15rem">Filtre, revise as mensagens e crie o lote para envio</p>
   </div>
 
-  <!-- CONTENT -->
-  <div class="content">
+  <div class="rv-filters">
+    <div class="rv-fg"><label>Dias sem visita</label>
+      <select class="rv-select" id="f-dias">
+        <option value="30">Mais de 30 dias</option>
+        <option value="60" selected>Mais de 60 dias</option>
+        <option value="90">Mais de 90 dias</option>
+        <option value="180">Mais de 180 dias</option>
+      </select>
+    </div>
+    <div class="rv-fg"><label>Contexto</label>
+      <select class="rv-select" id="f-contexto">
+        <option value="todos">Todos</option>
+        <option value="pdv">Loja física (PDV)</option>
+        <option value="barbearia">Barbearia</option>
+        <option value="whatsapp">Só WhatsApp</option>
+      </select>
+    </div>
+    <div class="rv-fg"><label>Tentativa</label>
+      <select class="rv-select" id="f-tentativa">
+        <option value="1">1ª mensagem</option>
+        <option value="2">2ª mensagem</option>
+      </select>
+    </div>
+    <div class="rv-fg"><label>Tamanho</label>
+      <select class="rv-select" id="f-limite">
+        <option value="15">15 clientes</option>
+        <option value="20" selected>20 clientes</option>
+        <option value="30">30 clientes</option>
+      </select>
+    </div>
+    <div class="rv-fg" style="justify-content:flex-end;padding-top:18px">
+      <button class="btn btn-primary" onclick="loadEligible()">🔍 Buscar</button>
+    </div>
+  </div>
 
-    <!-- ══════════════ TAB: DASHBOARD ══════════════ -->
-    <div id="tab-dashboard" class="tab-panel active">
+  <div id="rv-sel-bar" class="rv-sel-bar" style="display:none">
+    <span><strong id="rv-sel-count">0</strong> clientes selecionados</span>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn btn-ghost btn-sm" onclick="selectAll(true)">Todos</button>
+      <button class="btn btn-ghost btn-sm" onclick="selectAll(false)">Limpar</button>
+      <button class="btn btn-primary btn-sm" onclick="openModal()">Criar lote →</button>
+    </div>
+  </div>
 
-      <div id="cooldown-banner" class="cooldown-banner" style="display:none">
-        ⏱️ <span id="cooldown-msg"></span>
-      </div>
+  <div class="rv-table-wrap">
+    <div id="rv-eligible-loading" class="rv-empty">Clique em <strong>Buscar</strong> para carregar os clientes elegíveis.</div>
+    <table class="rv-table" id="rv-eligible-table" style="display:none">
+      <thead><tr>
+        <th style="width:36px"><input type="checkbox" id="check-all" onchange="toggleAll(this)"></th>
+        <th>Nome</th><th>WhatsApp</th><th>Contexto</th><th>Sem visita</th><th>Prévia da mensagem</th>
+      </tr></thead>
+      <tbody id="rv-eligible-tbody"></tbody>
+    </table>
+  </div>
+</div>
 
-      <div id="lote-ativo-banner" class="lote-banner" style="display:none">
-        <div class="lote-banner-info">
-          <div class="lote-banner-title">Lote em andamento</div>
-          <div class="lote-banner-sub" id="lote-ativo-sub">carregando...</div>
-        </div>
-        <div style="flex:1; max-width:200px">
-          <div class="progress-bar-wrap">
-            <div class="progress-bar" id="lote-ativo-progress" style="width:0%"></div>
+<!-- ═══ HISTÓRICO ═══ -->
+<div id="tab-lotes" class="rv-panel">
+  <div id="rv-send-panel" style="display:none;margin-bottom:1.5rem">
+    <div class="rv-card">
+      <div class="rv-card-hd">
+        <h3>📡 Envio em andamento</h3>
+        <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:.5rem">
+            <label style="font-size:.72rem;font-weight:600;color:#64748b;white-space:nowrap">Intervalo:</label>
+            <input type="range" id="delay-range" min="30" max="180" value="60" oninput="document.getElementById('delay-val').textContent=this.value+'s'" style="width:90px;accent-color:#6366f1">
+            <span id="delay-val" style="font-size:.78rem;color:#6366f1;font-family:monospace;width:32px">60s</span>
           </div>
-          <div style="font-size:11px;color:var(--text2);margin-top:5px;text-align:right" id="lote-ativo-counts"></div>
-        </div>
-        <a href="#" onclick="switchTab('lotes'); return false" class="btn btn-ghost btn-sm">Ver lote</a>
-      </div>
-
-      <!-- KPIs -->
-      <div class="kpi-strip" id="kpi-strip">
-        <div class="kpi-card" style="--color:var(--text3)">
-          <div class="kpi-label">Base total</div>
-          <div class="kpi-value" id="kpi-total">—</div>
-          <div class="kpi-sub">c/ WhatsApp cadastrado</div>
-        </div>
-        <div class="kpi-card" style="--color:var(--accent)">
-          <div class="kpi-label">Elegíveis</div>
-          <div class="kpi-value" id="kpi-elegiveis">—</div>
-          <div class="kpi-sub">prontos para contato</div>
-        </div>
-        <div class="kpi-card" style="--color:var(--green)">
-          <div class="kpi-label">Responderam</div>
-          <div class="kpi-value" id="kpi-responderam">—</div>
-          <div class="kpi-sub">1ª ou 2ª tentativa</div>
-        </div>
-        <div class="kpi-card" style="--color:var(--yellow)">
-          <div class="kpi-label">Aguardando</div>
-          <div class="kpi-value" id="kpi-aguardando">—</div>
-          <div class="kpi-sub">em espera para 2ª tentativa</div>
-        </div>
-        <div class="kpi-card" style="--color:var(--red)">
-          <div class="kpi-label">Standby</div>
-          <div class="kpi-value" id="kpi-standby">—</div>
-          <div class="kpi-sub">não pertuba mais</div>
+          <button class="btn btn-green btn-sm" id="btn-start" onclick="startSending()">▶ Iniciar</button>
+          <button class="btn btn-ghost btn-sm" id="btn-stop" onclick="stopSending()" style="display:none">⏸ Pausar</button>
+          <button class="btn btn-danger btn-sm" onclick="cancelLote()">✕ Cancelar lote</button>
         </div>
       </div>
-
-      <!-- Funil -->
-      <div class="funil">
-        <div class="funil-title">Funil de Reativação</div>
-        <div id="funil-body">
-          <div style="color:var(--text3);font-size:13px">Carregando...</div>
+      <div class="rv-console">
+        <div class="rv-console-hd">
+          <div class="dot-pulse off" id="dot-pulse"></div>
+          <span id="console-status">Aguardando início</span>
+          <span style="margin-left:auto;font-size:.68rem" id="console-prog"></span>
         </div>
-      </div>
-
-      <!-- Ações rápidas -->
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="switchTab('criar')">
-          ＋ Criar novo lote
-        </button>
-        <button class="btn btn-ghost" onclick="switchTab('segmentos')">
-          🗂️ Ver segmentos
-        </button>
-        <button class="btn btn-ghost btn-sm" onclick="loadDashboard()" style="margin-left:auto">
-          ↻ Atualizar
-        </button>
+        <div class="rv-console-bd" id="console-log">
+          <div class="log-line"><span class="log-info">›</span><span class="log-text" style="margin-left:.3rem">Console inicializado. Configure o intervalo e clique em Iniciar.</span></div>
+        </div>
       </div>
     </div>
+  </div>
 
-    <!-- ══════════════ TAB: CRIAR LOTE ══════════════ -->
-    <div id="tab-criar" class="tab-panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+    <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Histórico de Lotes</h2>
+    <button class="btn btn-ghost btn-sm" onclick="loadLotes()">↻ Atualizar</button>
+  </div>
+  <div class="rv-table-wrap" id="rv-lotes-wrap"><div class="rv-empty">Carregando lotes...</div></div>
+</div>
 
-      <div class="section-header">
-        <div>
-          <div class="section-title">Selecionar clientes para o lote</div>
-          <div class="section-sub">Filtre, revise as mensagens e crie o lote para envio</div>
-        </div>
-      </div>
-
-      <!-- Filtros -->
-      <div class="filters-row">
-        <div class="filter-group">
-          <div class="filter-label">Dias sem visita</div>
-          <select class="filter-select" id="f-dias">
-            <option value="30">Mais de 30 dias</option>
-            <option value="60" selected>Mais de 60 dias</option>
-            <option value="90">Mais de 90 dias</option>
-            <option value="180">Mais de 180 dias</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <div class="filter-label">Contexto</div>
-          <select class="filter-select" id="f-contexto">
-            <option value="todos">Todos</option>
-            <option value="pdv">Loja física (PDV)</option>
-            <option value="barbearia">Barbearia</option>
-            <option value="whatsapp">Só WhatsApp</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <div class="filter-label">Tentativa</div>
-          <select class="filter-select" id="f-tentativa">
-            <option value="1">1ª mensagem</option>
-            <option value="2">2ª mensagem (aguardando)</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <div class="filter-label">Tamanho do lote</div>
-          <select class="filter-select" id="f-limite">
-            <option value="15">15 clientes</option>
-            <option value="20" selected>20 clientes</option>
-            <option value="30">30 clientes</option>
-          </select>
-        </div>
-        <div class="filter-group" style="justify-content:flex-end;padding-top:16px">
-          <button class="btn btn-ghost" onclick="loadEligible()">🔍 Buscar</button>
-        </div>
-      </div>
-
-      <!-- Seleção -->
-      <div id="selection-bar" class="selection-bar" style="display:none">
-        <span><strong id="sel-count">0</strong> clientes selecionados</span>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost btn-sm" onclick="selectAll(true)">Selecionar todos</button>
-          <button class="btn btn-ghost btn-sm" onclick="selectAll(false)">Limpar</button>
-          <button class="btn btn-primary btn-sm" onclick="openCreateModal()">Criar lote →</button>
-        </div>
-      </div>
-
-      <!-- Tabela de elegíveis -->
-      <div class="table-wrap">
-        <div id="eligible-loading" style="padding:40px;text-align:center;color:var(--text2)">
-          Clique em <strong>Buscar</strong> para carregar os clientes elegíveis
-        </div>
-        <table class="clients-table" id="eligible-table" style="display:none">
-          <thead>
-            <tr>
-              <th style="width:36px"><input type="checkbox" id="check-all" onchange="toggleAll(this)"></th>
-              <th>Nome</th>
-              <th>WhatsApp</th>
-              <th>Contexto</th>
-              <th>Sem visita</th>
-              <th>Mensagem (prévia)</th>
-            </tr>
-          </thead>
-          <tbody id="eligible-tbody"></tbody>
-        </table>
-      </div>
+<!-- ═══ SEGMENTOS ═══ -->
+<div id="tab-segmentos" class="rv-panel">
+  <div style="margin-bottom:1rem">
+    <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Segmentos de Reativação</h2>
+    <p style="font-size:.78rem;color:#64748b;margin-top:.15rem">Gerencie clientes por estágio no funil</p>
+  </div>
+  <div class="seg-btns">
+    <button class="seg-btn active" onclick="loadSeg('respondeu_1',this)">✅ Responderam (1ª)</button>
+    <button class="seg-btn" onclick="loadSeg('respondeu_2',this)">✅ Responderam (2ª)</button>
+    <button class="seg-btn" onclick="loadSeg('aguardando_2',this)">⏳ Aguardando 2ª</button>
+    <button class="seg-btn" onclick="loadSeg('sem_resposta',this)">⚠️ Sem resposta</button>
+    <button class="seg-btn" onclick="loadSeg('standby',this)">🔕 Standby</button>
+    <button class="seg-btn" onclick="loadSeg('numero_invalido',this)">❌ Nº inválido</button>
+  </div>
+  <div id="seg-sel-bar" class="rv-sel-bar" style="display:none">
+    <span><strong id="seg-sel-count">0</strong> selecionados</span>
+    <div style="display:flex;align-items:center;gap:.5rem">
+      <span style="font-size:.75rem;color:#64748b">Mover para:</span>
+      <select class="rv-select" id="seg-move-to">
+        <option value="elegivel">Elegível (reiniciar)</option>
+        <option value="aguardando_2">Aguardando 2ª</option>
+        <option value="standby">Standby</option>
+        <option value="numero_invalido">Nº inválido</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="moveSegSelected()">Mover</button>
+      <button class="btn btn-ghost btn-sm" onclick="segSelectAll(false)">Limpar</button>
     </div>
+  </div>
+  <div class="rv-table-wrap" id="seg-wrap"><div class="rv-empty">Selecione um segmento acima</div></div>
+</div>
 
-    <!-- ══════════════ TAB: HISTÓRICO ══════════════ -->
-    <div id="tab-lotes" class="tab-panel">
-
-      <div class="section-header">
-        <div>
-          <div class="section-title">Histórico de Lotes</div>
-          <div class="section-sub">Todos os lotes de reativação enviados</div>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="loadLotes()">↻ Atualizar</button>
-      </div>
-
-      <!-- Envio progressivo (aparece quando há lote ativo) -->
-      <div id="send-panel" style="display:none;margin-bottom:24px">
-        <div class="section-header" style="margin-bottom:12px">
-          <div class="section-title">📡 Envio em andamento</div>
-          <div style="display:flex;gap:8px">
-            <div class="filter-group">
-              <div class="filter-label">Intervalo entre msgs</div>
-              <div style="display:flex;align-items:center;gap:8px">
-                <input type="range" id="delay-range" min="30" max="180" value="60" oninput="document.getElementById('delay-val').textContent=this.value+'s'">
-                <span id="delay-val" style="font-size:12px;color:var(--accent);font-family:'JetBrains Mono';width:35px">60s</span>
-              </div>
-            </div>
-            <button class="btn btn-green btn-sm" id="btn-start-send" onclick="startSending()">▶ Iniciar envio</button>
-            <button class="btn btn-danger btn-sm" id="btn-stop-send" onclick="stopSending()" style="display:none">⏸ Pausar</button>
-            <button class="btn btn-danger btn-sm" id="btn-cancel-lote" onclick="cancelLote()">✕ Cancelar lote</button>
-          </div>
-        </div>
-
-        <div class="send-console">
-          <div class="send-console-header">
-            <div class="dot-run gray" id="console-dot"></div>
-            <span id="console-status">Aguardando início</span>
-            <span style="margin-left:auto;font-size:11px" id="console-progress"></span>
-          </div>
-          <div class="send-console-body" id="console-log">
-            <div class="log-line">
-              <span class="log-info">›</span>
-              <span class="log-text">Console de envio inicializado. Configure o intervalo e clique em Iniciar.</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Lista de lotes -->
-      <div class="table-wrap" id="lotes-wrap">
-        <div style="padding:40px;text-align:center;color:var(--text2)">Carregando lotes...</div>
-      </div>
+<!-- MODAL -->
+<div class="rv-modal-ov" id="rv-modal" onclick="if(event.target===this)closeModal()">
+  <div class="rv-modal">
+    <h2>Confirmar criação do lote</h2>
+    <div id="modal-summary" style="font-size:.82rem;color:#64748b;margin-bottom:1rem"></div>
+    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.4rem">Prévia da mensagem</p>
+    <div class="rv-msg-preview" id="modal-preview"></div>
+    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.4rem">Configuração</p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem">
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Clientes</span><span class="rv-cfg-val" id="cfg-total">—</span></div>
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Tentativa</span><span class="rv-cfg-val" id="cfg-tent">—</span></div>
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Intervalo</span><span class="rv-cfg-val">45–180s randomizado</span></div>
+      <div class="rv-cfg-row" style="border:none"><span class="rv-cfg-lbl">Horário permitido</span><span class="rv-cfg-val">09:00 – 20:00</span></div>
     </div>
-
-    <!-- ══════════════ TAB: SEGMENTOS ══════════════ -->
-    <div id="tab-segmentos" class="tab-panel">
-
-      <div class="section-header">
-        <div>
-          <div class="section-title">Segmentos de Reativação</div>
-          <div class="section-sub">Gerencie clientes por estágio no funil</div>
-        </div>
-      </div>
-
-      <div class="segment-tabs">
-        <button class="seg-btn active" data-seg="respondeu_1" onclick="loadSegment('respondeu_1',this)">✅ Responderam (1ª)</button>
-        <button class="seg-btn" data-seg="respondeu_2" onclick="loadSegment('respondeu_2',this)">✅ Responderam (2ª)</button>
-        <button class="seg-btn" data-seg="aguardando_2" onclick="loadSegment('aguardando_2',this)">⏳ Aguardando 2ª</button>
-        <button class="seg-btn" data-seg="sem_resposta" onclick="loadSegment('sem_resposta',this)">⚠️ Sem resposta</button>
-        <button class="seg-btn" data-seg="standby" onclick="loadSegment('standby',this)">🔕 Standby</button>
-        <button class="seg-btn" data-seg="numero_invalido" onclick="loadSegment('numero_invalido',this)">❌ Nº inválido</button>
-      </div>
-
-      <div id="seg-selection-bar" class="selection-bar" style="display:none">
-        <span><strong id="seg-sel-count">0</strong> selecionados</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <span style="font-size:12px;color:var(--text2)">Mover para:</span>
-          <select class="filter-select" id="seg-move-to" style="min-width:150px">
-            <option value="elegivel">Elegível</option>
-            <option value="aguardando_2">Aguardando 2ª</option>
-            <option value="standby">Standby</option>
-            <option value="numero_invalido">Nº inválido</option>
-          </select>
-          <button class="btn btn-primary btn-sm" onclick="moveSelected()">Mover</button>
-          <button class="btn btn-ghost btn-sm" onclick="selectSegAll(false)">Limpar</button>
-        </div>
-      </div>
-
-      <div class="table-wrap" id="seg-table-wrap">
-        <div style="padding:40px;text-align:center;color:var(--text2)">Selecione um segmento acima</div>
-      </div>
-    </div>
-
-  </div><!-- /content -->
-</div><!-- /main -->
-
-<!-- MODAL: Confirmar criação do lote -->
-<div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
-  <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title">Confirmar lote</div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="modal-summary" style="font-size:13px;color:var(--text2);margin-bottom:16px"></div>
-
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Prévia da mensagem (1º cliente)</div>
-      <div class="msg-preview-card" id="modal-msg-preview"></div>
-
-      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Configuração</div>
-      <div style="background:var(--bg3);border-radius:var(--radius);padding:12px 16px;margin-bottom:20px">
-        <div class="lote-config-row">
-          <span class="lote-config-label">Clientes selecionados</span>
-          <span class="lote-config-value" id="cfg-total">—</span>
-        </div>
-        <div class="lote-config-row">
-          <span class="lote-config-label">Tentativa</span>
-          <span class="lote-config-value" id="cfg-tentativa">—</span>
-        </div>
-        <div class="lote-config-row">
-          <span class="lote-config-label">Intervalo (defina no painel de envio)</span>
-          <span class="lote-config-value">45–180s randomizado</span>
-        </div>
-        <div class="lote-config-row" style="border:none">
-          <span class="lote-config-label">Horário permitido</span>
-          <span class="lote-config-value">09:00 – 20:00</span>
-        </div>
-      </div>
-
-      <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Observação (opcional)</div>
-      <textarea id="lote-obs" rows="2" placeholder="Ex: Campanha março, clientes barbearia..." style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;padding:9px 12px;font-family:Inter;resize:none;margin-bottom:16px"></textarea>
-
-      <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-primary" id="btn-confirm-lote" onclick="confirmCreateLote()">Criar lote</button>
-      </div>
+    <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem">Observação (opcional)</p>
+    <textarea class="rv-obs" id="modal-obs" rows="2" placeholder="Ex: Campanha março, clientes barbearia..."></textarea>
+    <div style="display:flex;gap:.6rem;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirm" onclick="confirmLote()">Criar lote</button>
     </div>
   </div>
 </div>
 
 <script>
-/* ═══════════════════════════════════════
-   ESTADO GLOBAL
-═══════════════════════════════════════ */
-let state = {
-  eligibleClients: [],
-  selectedIds: new Set(),
-  activeLoteId: null,
-  sending: false,
-  sendTimer: null,
-  currentSegment: 'respondeu_1',
-  segSelected: new Set(),
-};
+const API='reativacao_api.php';
+let ST={eligible:[],selected:new Set(),activeLoteId:<?= $stats['lote_ativo']?(int)$stats['lote_ativo']['id']:'null' ?>,sending:false,timer:null,seg:'respondeu_1',segSel:new Set()};
 
-const API = 'reativacao_api.php';
-
-/* ═══════════════════════════════════════
-   TABS
-═══════════════════════════════════════ */
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
-});
-function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
-  if (tab === 'lotes')     loadLotes();
-  if (tab === 'segmentos') loadSegment(state.currentSegment);
+document.querySelectorAll('.rv-tab').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+function switchTab(tab){
+  document.querySelectorAll('.rv-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  document.querySelectorAll('.rv-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+tab));
+  if(tab==='lotes')loadLotes();
+  if(tab==='segmentos')loadSeg(ST.seg);
 }
 
-/* ═══════════════════════════════════════
-   SETUP + DASHBOARD
-═══════════════════════════════════════ */
-async function setup() {
-  await fetch(`${API}?action=setup_tables`);
-  loadDashboard();
+async function loadEligible(){
+  const dias=document.getElementById('f-dias').value,ctx=document.getElementById('f-contexto').value,tent=document.getElementById('f-tentativa').value,limite=document.getElementById('f-limite').value;
+  const loading=document.getElementById('rv-eligible-loading');
+  loading.innerHTML='<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Buscando...</div>';
+  loading.style.display='block';
+  document.getElementById('rv-eligible-table').style.display='none';
+  try{
+    const r=await fetch(`${API}?action=get_eligible&dias=${dias}&contexto=${ctx}&tentativa=${tent}&limite=${limite}`);
+    const d=await r.json();
+    if(!d.ok){loading.innerHTML=`<div class="rv-empty">❌ Erro: ${esc(d.error||'Falha')}</div>`;return;}
+    ST.eligible=d.clients||[];
+    ST.selected=new Set(ST.eligible.map(c=>parseInt(c.id)));
+    renderEligible();
+  }catch(e){loading.innerHTML='<div class="rv-empty">❌ Erro de comunicação.</div>';}
 }
-
-async function loadDashboard() {
-  const data = await fetch(`${API}?action=get_stats`).then(r=>r.json()).catch(()=>({}));
-
-  const s = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val ?? '—'; };
-  s('kpi-total',       data.total_base);
-  s('kpi-elegiveis',   data.elegiveis);
-  s('kpi-responderam', data.responderam);
-  s('kpi-aguardando',  (data.aguardando_2 || 0) + (data.lote_1_enviado || 0) + (data.lote_2_enviado || 0));
-  s('kpi-standby',     data.standby);
-
-  // Cooldown
-  const cb = document.getElementById('cooldown-banner');
-  if (data.pode_enviar_em) {
-    const dt = new Date(data.pode_enviar_em.replace(' ','T') + '-04:00');
-    cb.style.display = 'flex';
-    document.getElementById('cooldown-msg').textContent =
-      `Próximo lote disponível em: ${dt.toLocaleString('pt-BR', {timeZone:'America/Cuiaba'})}`;
-  } else { cb.style.display = 'none'; }
-
-  // Lote ativo banner
-  const lab = document.getElementById('lote-ativo-banner');
-  if (data.lote_ativo) {
-    const l = data.lote_ativo;
-    state.activeLoteId = l.id;
-    lab.style.display = 'flex';
-    document.getElementById('lote-ativo-sub').textContent =
-      `${l.enviados}/${l.total_clientes} enviados · ${l.erros} erros`;
-    const pct = l.total_clientes > 0 ? (l.enviados / l.total_clientes * 100) : 0;
-    document.getElementById('lote-ativo-progress').style.width = pct + '%';
-    document.getElementById('lote-ativo-counts').textContent = `${pct.toFixed(0)}%`;
-  } else {
-    lab.style.display = 'none';
-    state.activeLoteId = null;
-  }
-
-  // Funil
-  const total = data.total_base || 1;
-  const funilRows = [
-    { label: 'Elegíveis',       val: data.elegiveis    || 0, color: 'var(--accent)' },
-    { label: '1ª msg enviada',  val: (data.lote_1_enviado||0), color: 'var(--yellow)' },
-    { label: 'Aguardando 2ª',  val: data.aguardando_2  || 0, color: 'var(--orange)' },
-    { label: '2ª msg enviada',  val: (data.lote_2_enviado||0), color: 'var(--yellow)' },
-    { label: 'Responderam ✅', val: data.responderam   || 0, color: 'var(--green)' },
-    { label: 'Sem resposta',    val: data.sem_resposta  || 0, color: 'var(--red)' },
-    { label: 'Standby',         val: data.standby       || 0, color: 'var(--text3)' },
-  ];
-  document.getElementById('funil-body').innerHTML = funilRows.map(r => `
-    <div class="funil-row">
-      <div class="funil-label">${r.label}</div>
-      <div class="funil-bar-wrap">
-        <div class="funil-bar" style="width:${(r.val/total*100).toFixed(1)}%;background:${r.color}"></div>
-      </div>
-      <div class="funil-count">${r.val}</div>
-    </div>
-  `).join('');
-}
-
-/* ═══════════════════════════════════════
-   CRIAR LOTE — buscar elegíveis
-═══════════════════════════════════════ */
-async function loadEligible() {
-  const dias      = document.getElementById('f-dias').value;
-  const contexto  = document.getElementById('f-contexto').value;
-  const tentativa = document.getElementById('f-tentativa').value;
-  const limite    = document.getElementById('f-limite').value;
-
-  document.getElementById('eligible-loading').textContent = 'Buscando...';
-  document.getElementById('eligible-table').style.display = 'none';
-  document.getElementById('eligible-loading').style.display = 'block';
-
-  const data = await fetch(`${API}?action=get_eligible&dias=${dias}&contexto=${contexto}&tentativa=${tentativa}&limite=${limite}`)
-    .then(r=>r.json()).catch(()=>({ok:false}));
-
-  if (!data.ok) {
-    document.getElementById('eligible-loading').textContent = 'Erro ao buscar clientes.';
-    return;
-  }
-
-  state.eligibleClients = data.clients || [];
-  state.selectedIds     = new Set(state.eligibleClients.map(c => c.id));
-  renderEligibleTable();
-}
-
-function renderEligibleTable() {
-  const tbody = document.getElementById('eligible-tbody');
-  if (!state.eligibleClients.length) {
-    document.getElementById('eligible-loading').textContent = 'Nenhum cliente elegível com os filtros selecionados.';
-    document.getElementById('eligible-table').style.display = 'none';
-    document.getElementById('eligible-loading').style.display = 'block';
-    return;
-  }
-
-  document.getElementById('eligible-loading').style.display = 'none';
-  document.getElementById('eligible-table').style.display = 'table';
-
-  tbody.innerHTML = state.eligibleClients.map(c => {
-    const ctx = c.contexto_detectado || 'whatsapp';
-    const ctxLabel = {pdv:'PDV',barbearia:'Barbearia',whatsapp:'WhatsApp'}[ctx] || ctx;
-    const diasCls = c.dias_ausente >= 180 ? 'dias-hot' : c.dias_ausente >= 90 ? 'dias-warm' : 'dias-cold';
-    const wa = (c.whatsapp||'').substring(0,4) + '****' + (c.whatsapp||'').slice(-4);
-    const msgPrev = (c.msg_preview||'').replace(/\n/g,' ');
-    return `<tr>
-      <td><input type="checkbox" class="row-check" data-id="${c.id}" ${state.selectedIds.has(parseInt(c.id))?'checked':''} onchange="toggleRow(${c.id},this)"></td>
-      <td style="font-weight:500">${esc(c.nome)}</td>
-      <td style="font-family:'JetBrains Mono';font-size:12px;color:var(--text2)">${wa}</td>
-      <td><span class="ctx-badge ctx-${ctx}">${ctxLabel}</span></td>
-      <td><span class="dias-badge ${diasCls}">${c.dias_ausente >= 999 ? 'nunca' : c.dias_ausente+'d'}</span></td>
-      <td><div class="msg-preview" title="${esc(c.msg_preview)}">${esc(msgPrev)}</div></td>
-    </tr>`;
+function renderEligible(){
+  const loading=document.getElementById('rv-eligible-loading'),table=document.getElementById('rv-eligible-table'),tbody=document.getElementById('rv-eligible-tbody');
+  if(!ST.eligible.length){loading.innerHTML='<div class="rv-empty">Nenhum cliente elegível com estes filtros.</div>';loading.style.display='block';table.style.display='none';return;}
+  loading.style.display='none';table.style.display='table';
+  tbody.innerHTML=ST.eligible.map(c=>{
+    const ctx=c.contexto_detectado||'whatsapp',dias=c.dias_ausente>=999?'nunca':c.dias_ausente+'d',diasC=c.dias_ausente>=180?'dias-hot':c.dias_ausente>=90?'dias-warm':'dias-cold';
+    const wa=(c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4),ctxN={pdv:'PDV',barbearia:'Barbearia',whatsapp:'WhatsApp'}[ctx]||ctx;
+    const prev=(c.msg_preview||'').replace(/\n/g,' '),chk=ST.selected.has(parseInt(c.id))?'checked':'';
+    return `<tr><td><input type="checkbox" class="row-ck" data-id="${c.id}" ${chk} onchange="toggleRow(${c.id},this)"></td><td style="font-weight:600;color:#0f172a">${esc(c.nome)}</td><td style="font-family:monospace;font-size:.78rem;color:#64748b">${wa}</td><td><span class="ctx-badge ctx-${ctx}">${ctxN}</span></td><td><span class="dias-badge ${diasC}">${dias}</span></td><td style="font-size:.75rem;color:#64748b;font-style:italic;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.msg_preview)}">${esc(prev)}</td></tr>`;
   }).join('');
+  updateSelBar();
+}
+function toggleRow(id,cb){if(cb.checked)ST.selected.add(parseInt(id));else ST.selected.delete(parseInt(id));updateSelBar();}
+function toggleAll(cb){ST.eligible.forEach(c=>{if(cb.checked)ST.selected.add(parseInt(c.id));else ST.selected.delete(parseInt(c.id));});document.querySelectorAll('.row-ck').forEach(c=>c.checked=cb.checked);updateSelBar();}
+function selectAll(v){document.getElementById('check-all').checked=v;toggleAll({checked:v});}
+function updateSelBar(){document.getElementById('rv-sel-count').textContent=ST.selected.size;document.getElementById('rv-sel-bar').style.display=ST.selected.size>0?'flex':'none';}
 
-  updateSelectionBar();
+function openModal(){
+  if(!ST.selected.size)return;
+  const tent=parseInt(document.getElementById('f-tentativa').value),first=ST.eligible.find(c=>ST.selected.has(parseInt(c.id)));
+  document.getElementById('cfg-total').textContent=ST.selected.size+' clientes';
+  document.getElementById('cfg-tent').textContent=tent+'ª mensagem';
+  document.getElementById('modal-preview').textContent=first?first.msg_preview:'';
+  document.getElementById('modal-summary').textContent=`Lote com ${ST.selected.size} clientes para a ${tent}ª mensagem de reativação.`;
+  document.getElementById('rv-modal').classList.add('open');
+}
+function closeModal(){document.getElementById('rv-modal').classList.remove('open');}
+async function confirmLote(){
+  const btn=document.getElementById('btn-confirm');btn.disabled=true;btn.textContent='Criando...';
+  const tent=parseInt(document.getElementById('f-tentativa').value),obs=document.getElementById('modal-obs').value,ctx=document.getElementById('f-contexto').value;
+  try{
+    const r=await fetch(`${API}?action=create_lote`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_ids:[...ST.selected],tentativa:tent,observacoes:obs,contexto:ctx})});
+    const d=await r.json();closeModal();
+    if(d.ok){ST.activeLoteId=d.lote_id;alert(`✅ Lote criado com ${d.total} clientes!\n\nVá para Histórico para iniciar o envio.`);switchTab('lotes');}
+    else alert('Erro: '+(d.error||'Falha'));
+  }catch(e){alert('Erro de comunicação.');}
+  btn.disabled=false;btn.textContent='Criar lote';
 }
 
-function toggleRow(id, cb) {
-  if (cb.checked) state.selectedIds.add(parseInt(id));
-  else state.selectedIds.delete(parseInt(id));
-  updateSelectionBar();
-}
-function toggleAll(cb) {
-  state.eligibleClients.forEach(c => {
-    if (cb.checked) state.selectedIds.add(parseInt(c.id));
-    else state.selectedIds.delete(parseInt(c.id));
-  });
-  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
-  updateSelectionBar();
-}
-function selectAll(val) {
-  document.getElementById('check-all').checked = val;
-  toggleAll({checked:val});
-}
-function updateSelectionBar() {
-  const bar = document.getElementById('selection-bar');
-  document.getElementById('sel-count').textContent = state.selectedIds.size;
-  bar.style.display = state.selectedIds.size > 0 ? 'flex' : 'none';
-}
-
-/* ═══════════════════════════════════════
-   MODAL CRIAR LOTE
-═══════════════════════════════════════ */
-function openCreateModal() {
-  if (!state.selectedIds.size) return;
-  const tentativa = parseInt(document.getElementById('f-tentativa').value);
-  const firstClient = state.eligibleClients.find(c => state.selectedIds.has(parseInt(c.id)));
-
-  document.getElementById('cfg-total').textContent = state.selectedIds.size + ' clientes';
-  document.getElementById('cfg-tentativa').textContent = tentativa === 1 ? '1ª mensagem' : '2ª mensagem';
-  document.getElementById('modal-summary').textContent =
-    `Você está criando um lote com ${state.selectedIds.size} clientes para receber a ${tentativa}ª mensagem de reativação.`;
-  document.getElementById('modal-msg-preview').textContent = firstClient ? firstClient.msg_preview : '';
-  document.getElementById('modal-overlay').classList.add('open');
-}
-function closeModal() {
-  document.getElementById('modal-overlay').classList.remove('open');
-}
-
-async function confirmCreateLote() {
-  const btn = document.getElementById('btn-confirm-lote');
-  btn.disabled = true;
-  btn.textContent = 'Criando...';
-
-  const tentativa = parseInt(document.getElementById('f-tentativa').value);
-  const obs = document.getElementById('lote-obs').value;
-
-  const body = {
-    client_ids: [...state.selectedIds],
-    tentativa,
-    observacoes: obs,
-    contexto: document.getElementById('f-contexto').value,
-  };
-
-  const data = await fetch(`${API}?action=create_lote`, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(body),
-  }).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de rede'}));
-
-  btn.disabled = false;
-  btn.textContent = 'Criar lote';
-  closeModal();
-
-  if (data.ok) {
-    state.activeLoteId = data.lote_id;
-    alert(`✅ Lote criado com ${data.total} clientes!\n\nVá para a aba Histórico para iniciar o envio.`);
-    switchTab('lotes');
-  } else {
-    alert('Erro: ' + (data.error || 'Falha ao criar lote'));
-  }
-}
-
-/* ═══════════════════════════════════════
-   HISTÓRICO DE LOTES
-═══════════════════════════════════════ */
-async function loadLotes() {
-  const data = await fetch(`${API}?action=get_lotes`).then(r=>r.json()).catch(()=>({ok:false,lotes:[]}));
-  const wrap = document.getElementById('lotes-wrap');
-
-  // Verifica lote ativo para mostrar painel de envio
-  const loteAtivo = (data.lotes||[]).find(l => l.status === 'aguardando' || l.status === 'em_andamento');
-  const sendPanel = document.getElementById('send-panel');
-  if (loteAtivo) {
-    state.activeLoteId = loteAtivo.id;
-    sendPanel.style.display = 'block';
-    document.getElementById('btn-cancel-lote').dataset.id = loteAtivo.id;
-  } else {
-    sendPanel.style.display = 'none';
-  }
-
-  if (!data.lotes?.length) {
-    wrap.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>Nenhum lote ainda. Crie um na aba "Criar Lote".</p></div>';
-    return;
-  }
-
-  wrap.innerHTML = data.lotes.map(l => {
-    const pct = l.total_clientes > 0 ? Math.round(l.enviados/l.total_clientes*100) : 0;
-    const dataFmt = new Date(l.criado_em.replace(' ','T')+'Z').toLocaleString('pt-BR',{timeZone:'America/Cuiaba',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-    return `<div class="lote-row">
-      <div style="font-size:12px;font-family:'JetBrains Mono';color:var(--text3)">#${l.id}</div>
-      <div>
-        <div style="font-size:13px;font-weight:500">${esc(l.observacoes||'Lote #'+l.id)}</div>
-        <div style="font-size:11.5px;color:var(--text2);margin-top:2px">${dataFmt} · ${l.total_clientes} clientes · ${l.erros} erros · ${l.responderam||0} respostas</div>
-      </div>
-      <div>${pct}%</div>
-      <div>
-        <div style="width:80px;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden">
-          <div style="height:100%;background:var(--accent);width:${pct}%;transition:width .3s"></div>
-        </div>
-      </div>
-      <div><span class="lote-status-badge status-${l.status}">${l.status}</span></div>
-      <div style="text-align:right">
-        ${(l.status==='aguardando'||l.status==='em_andamento') ?
-          `<button class="btn btn-ghost btn-sm" onclick="loadLoteDetail(${l.id})">Detalhes</button>` :
-          `<button class="btn btn-ghost btn-sm" onclick="loadLoteDetail(${l.id})">Ver</button>`}
-      </div>
-    </div>`;
+async function loadLotes(){
+  const d=await fetch(`${API}?action=get_lotes`).then(r=>r.json()).catch(()=>({ok:false,lotes:[]}));
+  const wrap=document.getElementById('rv-lotes-wrap'),sp=document.getElementById('rv-send-panel');
+  const la=(d.lotes||[]).find(l=>l.status==='aguardando'||l.status==='em_andamento');
+  if(la){ST.activeLoteId=la.id;sp.style.display='block';}else sp.style.display='none';
+  if(!d.lotes?.length){wrap.innerHTML='<div class="rv-empty">Nenhum lote ainda. Crie um na aba "Criar Lote".</div>';return;}
+  wrap.innerHTML=d.lotes.map(l=>{
+    const pct=l.total_clientes>0?Math.round(l.enviados/l.total_clientes*100):0;
+    const dt=new Date(l.criado_em.replace(' ','T')+'Z').toLocaleString('pt-BR',{timeZone:'America/Cuiaba',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const stC={aguardando:'st-aguardando',em_andamento:'st-andamento',concluido:'st-concluido',cancelado:'st-cancelado'}[l.status]||'st-cancelado';
+    return `<div class="lote-row"><span style="font-size:.7rem;font-family:monospace;color:#94a3b8">#${l.id}</span><div><div style="font-weight:600;color:#0f172a">${esc(l.observacoes||'Lote #'+l.id)}</div><div style="font-size:.72rem;color:#94a3b8;margin-top:2px">${dt} · ${l.total_clientes} clientes · ${l.erros} erros · ${l.responderam||0} respostas</div></div><div style="font-size:.75rem;font-family:monospace">${pct}%</div><div style="width:60px;height:4px;background:#f1f5f9;border-radius:2px;overflow:hidden"><div style="height:100%;background:#6366f1;width:${pct}%"></div></div><span class="st-badge ${stC}">${l.status}</span><div style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="loadLoteDetail(${l.id})">Detalhes</button></div></div>`;
   }).join('');
 }
-
-async function loadLoteDetail(loteId) {
-  const data = await fetch(`${API}?action=get_lote&id=${loteId}`).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!data.ok) return alert('Erro ao carregar detalhes.');
-  // mostra no console
-  const log = document.getElementById('console-log');
-  if (log && data.envios) {
-    log.innerHTML = data.envios.slice(0,50).map(e => {
-      const icon = e.status==='enviado' ? '✓' : e.status==='erro' ? '✗' : e.status==='respondeu' ? '↩' : '○';
-      const cls  = e.status==='enviado'?'log-ok':e.status==='erro'?'log-err':'log-info';
-      return `<div class="log-line">
-        <span class="${cls}">${icon}</span>
-        <span class="log-name">${esc(e.nome)}</span>
-        <span class="log-text" style="margin-left:8px">${esc(e.msg_preview||'')}...</span>
-      </div>`;
-    }).join('');
-  }
+async function loadLoteDetail(id){
+  const d=await fetch(`${API}?action=get_lote&id=${id}`).then(r=>r.json()).catch(()=>({ok:false}));
+  if(!d.ok)return;
+  const log=document.getElementById('console-log');
+  if(log&&d.envios){log.innerHTML=d.envios.slice(0,40).map(e=>{const ico=e.status==='enviado'?'✓':e.status==='erro'?'✗':e.status==='respondeu'?'↩':'○';const cls=e.status==='enviado'?'log-ok':e.status==='erro'?'log-err':'log-info';return `<div class="log-line"><span class="${cls}">${ico}</span><span style="color:#e2e8f0;margin:0 .4rem">${esc(e.nome)}</span><span class="log-text">${esc(e.msg_preview||'')}...</span></div>`;}).join('');log.scrollTop=log.scrollHeight;}
 }
 
-/* ═══════════════════════════════════════
-   ENVIO PROGRESSIVO
-═══════════════════════════════════════ */
-function startSending() {
-  if (!state.activeLoteId) return alert('Nenhum lote ativo.');
-  const h = new Date().getHours();
-  if (h < 9 || h >= 20) return alert('⚠️ Envio permitido apenas entre 09:00 e 20:00.');
+function startSending(){
+  if(!ST.activeLoteId)return alert('Nenhum lote ativo.');
+  const h=new Date().getHours();if(h<9||h>=20)return alert('⚠️ Envio permitido apenas entre 09:00 e 20:00.');
+  ST.sending=true;
+  document.getElementById('btn-start').style.display='none';document.getElementById('btn-stop').style.display='inline-flex';
+  document.getElementById('dot-pulse').className='dot-pulse on';document.getElementById('console-status').textContent='Enviando...';
+  addLog('info','▶','Envio iniciado');scheduleNext();
+}
+function stopSending(){
+  ST.sending=false;clearTimeout(ST.timer);
+  document.getElementById('btn-start').style.display='inline-flex';document.getElementById('btn-stop').style.display='none';
+  document.getElementById('dot-pulse').className='dot-pulse off';document.getElementById('console-status').textContent='Pausado';
+  addLog('info','⏸','Pausado pelo usuário');
+}
+function scheduleNext(){if(!ST.sending)return;const base=parseInt(document.getElementById('delay-range').value),jitter=Math.floor(Math.random()*60)-30;ST.timer=setTimeout(sendOne,Math.max(15,base+jitter)*1000);}
+async function sendOne(){
+  if(!ST.sending)return;
+  const h=new Date().getHours();if(h<9||h>=20){stopSending();addLog('info','⏰','Fora do horário. Pausado.');return;}
+  const fd=new FormData();fd.append('lote_id',ST.activeLoteId);
+  const d=await fetch(`${API}?action=send_next`,{method:'POST',body:fd}).then(r=>r.json()).catch(()=>({ok:false,error:'Erro'}));
+  if(!d.ok){if(d.paused){stopSending();addLog('info','⏰',d.error||'');return;}addLog('err','✗',d.error||'Erro');scheduleNext();return;}
+  if(d.done){ST.sending=false;document.getElementById('dot-pulse').className='dot-pulse off';document.getElementById('console-status').textContent='Concluído ✅';document.getElementById('btn-start').style.display='inline-flex';document.getElementById('btn-stop').style.display='none';addLog('ok','✓','Lote concluído!');document.getElementById('rv-send-panel').style.display='none';return;}
+  addLog(d.enviado?'ok':'err',d.enviado?'✓':'✗',`${d.nome} ${d.whatsapp} — ${(d.msg_preview||'').slice(0,50)}... (${d.restantes} restantes)`);
+  document.getElementById('console-prog').textContent=`${d.restantes} pendentes`;scheduleNext();
+}
+async function cancelLote(){if(!confirm('Cancelar o lote?'))return;stopSending();const fd=new FormData();fd.append('lote_id',ST.activeLoteId);await fetch(`${API}?action=cancel_lote`,{method:'POST',body:fd});ST.activeLoteId=null;loadLotes();}
+function addLog(type,ico,text){const log=document.getElementById('console-log'),t=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),cls=type==='ok'?'log-ok':type==='err'?'log-err':'log-info',d=document.createElement('div');d.className='log-line';d.innerHTML=`<span class="log-time">${t}</span><span class="${cls}" style="margin:0 .3rem">${ico}</span><span class="log-text">${esc(text)}</span>`;log.appendChild(d);log.scrollTop=log.scrollHeight;}
 
-  state.sending = true;
-  document.getElementById('btn-start-send').style.display = 'none';
-  document.getElementById('btn-stop-send').style.display  = 'inline-flex';
-  document.getElementById('console-dot').className = 'dot-run green';
-  document.getElementById('console-status').textContent = 'Enviando...';
-  logLine('info', '▶', 'Envio iniciado');
-  scheduleNext();
+async function loadSeg(status,btn){
+  ST.seg=status;ST.segSel.clear();document.getElementById('seg-sel-bar').style.display='none';
+  if(btn){document.querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}
+  document.getElementById('seg-wrap').innerHTML='<div class="rv-empty">Carregando...</div>';
+  const d=await fetch(`${API}?action=get_clients_by_status&status=${status}`).then(r=>r.json()).catch(()=>({ok:false,clients:[]}));
+  if(!d.clients?.length){document.getElementById('seg-wrap').innerHTML='<div class="rv-empty">✨ Nenhum cliente neste segmento.</div>';return;}
+  document.getElementById('seg-wrap').innerHTML=`<table class="rv-table"><thead><tr><th style="width:36px"><input type="checkbox" onchange="segAll(this)"></th><th>Nome</th><th>WhatsApp</th><th>Tentativas</th><th>Último envio</th><th>Sem visita</th></tr></thead><tbody>${d.clients.map(c=>{const envio=c.reativ_ultimo_envio?new Date(c.reativ_ultimo_envio.replace(' ','T')+'Z').toLocaleDateString('pt-BR',{timeZone:'America/Cuiaba'}):'—';const dias=c.ultimo_atendimento_em?Math.floor((Date.now()-new Date(c.ultimo_atendimento_em.replace(' ','T')+'Z'))/86400000):999;const diasC=dias>=180?'dias-hot':dias>=90?'dias-warm':'dias-cold';const wa=(c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4);return `<tr><td><input type="checkbox" class="seg-ck" data-id="${c.id}" onchange="segToggle(${c.id},this)"></td><td style="font-weight:600;color:#0f172a">${esc(c.nome)}</td><td style="font-family:monospace;font-size:.78rem;color:#64748b">${wa}</td><td style="font-family:monospace;font-size:.78rem">${c.reativ_tentativas||0}×</td><td style="font-size:.75rem;color:#64748b">${envio}</td><td><span class="dias-badge ${diasC}">${dias>=999?'nunca':dias+'d'}</span></td></tr>`;}).join('')}</tbody></table>`;
+}
+function segToggle(id,cb){if(cb.checked)ST.segSel.add(parseInt(id));else ST.segSel.delete(parseInt(id));const bar=document.getElementById('seg-sel-bar');bar.style.display=ST.segSel.size>0?'flex':'none';document.getElementById('seg-sel-count').textContent=ST.segSel.size;}
+function segAll(cb){document.querySelectorAll('.seg-ck').forEach(c=>{c.checked=cb.checked;segToggle(parseInt(c.dataset.id),c);})}
+function segSelectAll(v){document.querySelectorAll('.seg-ck').forEach(c=>{c.checked=v;segToggle(parseInt(c.dataset.id),c);})}
+async function moveSegSelected(){
+  if(!ST.segSel.size)return;
+  const ns=document.getElementById('seg-move-to').value;
+  const d=await fetch(`${API}?action=update_client_status`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_ids:[...ST.segSel],status:ns})}).then(r=>r.json()).catch(()=>({ok:false}));
+  if(d.ok)loadSeg(ST.seg);else alert('Erro: '+(d.error||'Falha'));
 }
 
-function stopSending() {
-  state.sending = false;
-  clearTimeout(state.sendTimer);
-  document.getElementById('btn-start-send').style.display = 'inline-flex';
-  document.getElementById('btn-stop-send').style.display  = 'none';
-  document.getElementById('console-dot').className = 'dot-run gray';
-  document.getElementById('console-status').textContent = 'Pausado';
-  logLine('info', '⏸', 'Envio pausado pelo usuário');
-}
-
-function scheduleNext() {
-  if (!state.sending) return;
-  const base  = parseInt(document.getElementById('delay-range').value);
-  const jitter = Math.floor(Math.random() * 60) - 30; // ±30s
-  const delay = Math.max(20, base + jitter) * 1000;
-  state.sendTimer = setTimeout(sendOne, delay);
-}
-
-async function sendOne() {
-  if (!state.sending || !state.activeLoteId) return;
-
-  const h = new Date().getHours();
-  if (h < 9 || h >= 20) {
-    stopSending();
-    logLine('info', '⏰', 'Fora do horário permitido (09:00–20:00). Envio pausado.');
-    return;
-  }
-
-  const fd = new FormData();
-  fd.append('lote_id', state.activeLoteId);
-  const data = await fetch(`${API}?action=send_next`, { method:'POST', body:fd })
-    .then(r=>r.json()).catch(()=>({ok:false,error:'Erro de rede'}));
-
-  if (!data.ok) {
-    if (data.paused) { stopSending(); logLine('info','⏰',data.error||'Pausado'); return; }
-    logLine('err','✗', data.error||'Erro desconhecido');
-    scheduleNext();
-    return;
-  }
-
-  if (data.done) {
-    state.sending = false;
-    document.getElementById('console-dot').className = 'dot-run gray';
-    document.getElementById('console-status').textContent = 'Concluído ✅';
-    document.getElementById('btn-start-send').style.display = 'inline-flex';
-    document.getElementById('btn-stop-send').style.display  = 'none';
-    logLine('ok','✓','Lote concluído! Todas as mensagens enviadas.');
-    document.getElementById('send-panel').style.display = 'none';
-    loadDashboard();
-    return;
-  }
-
-  const icon = data.enviado ? '✓' : '✗';
-  const cls  = data.enviado ? 'log-ok' : 'log-err';
-  const restTxt = `(${data.restantes} restantes)`;
-  logLine(data.enviado?'ok':'err', icon,
-    `${data.nome} ${data.whatsapp} — ${(data.msg_preview||'').substring(0,50)}... ${restTxt}`);
-
-  document.getElementById('console-progress').textContent = `${data.restantes} pendentes`;
-  scheduleNext();
-}
-
-async function cancelLote() {
-  if (!state.activeLoteId) return;
-  if (!confirm('Cancelar o lote ativo? Os envios já realizados não serão desfeitos.')) return;
-  stopSending();
-  const fd = new FormData();
-  fd.append('lote_id', state.activeLoteId);
-  await fetch(`${API}?action=cancel_lote`, {method:'POST',body:fd});
-  state.activeLoteId = null;
-  loadLotes();
-  loadDashboard();
-}
-
-function logLine(type, icon, text) {
-  const log = document.getElementById('console-log');
-  const now = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  const cls = type==='ok'?'log-ok':type==='err'?'log-err':'log-info';
-  const div = document.createElement('div');
-  div.className = 'log-line';
-  div.innerHTML = `<span class="log-time">${now}</span><span class="${cls}">${icon}</span><span class="log-text">${esc(text)}</span>`;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-}
-
-/* ═══════════════════════════════════════
-   SEGMENTOS
-═══════════════════════════════════════ */
-async function loadSegment(status, btn) {
-  state.currentSegment = status;
-  state.segSelected.clear();
-  document.getElementById('seg-selection-bar').style.display = 'none';
-
-  if (btn) {
-    document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  }
-
-  const wrap = document.getElementById('seg-table-wrap');
-  wrap.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text2)">Carregando...</div>';
-
-  const data = await fetch(`${API}?action=get_clients_by_status&status=${status}`)
-    .then(r=>r.json()).catch(()=>({ok:false,clients:[]}));
-
-  if (!data.clients?.length) {
-    wrap.innerHTML = '<div class="empty-state"><div class="icon">✨</div><p>Nenhum cliente neste segmento.</p></div>';
-    return;
-  }
-
-  wrap.innerHTML = `<table class="clients-table">
-    <thead><tr>
-      <th style="width:36px"><input type="checkbox" onchange="segToggleAll(this)"></th>
-      <th>Nome</th><th>WhatsApp</th><th>Tentativas</th><th>Último envio</th><th>Sem visita</th>
-    </tr></thead>
-    <tbody>
-      ${data.clients.map(c => {
-        const envioFmt = c.reativ_ultimo_envio ?
-          new Date(c.reativ_ultimo_envio.replace(' ','T')+'Z').toLocaleDateString('pt-BR',{timeZone:'America/Cuiaba'}) : '—';
-        const diasAus = c.ultimo_atendimento_em ?
-          Math.floor((Date.now()-new Date(c.ultimo_atendimento_em.replace(' ','T')+'Z'))/86400000) : 999;
-        return `<tr>
-          <td><input type="checkbox" class="seg-check" data-id="${c.id}" onchange="segToggleRow(${c.id},this)"></td>
-          <td style="font-weight:500">${esc(c.nome)}</td>
-          <td style="font-family:'JetBrains Mono';font-size:12px;color:var(--text2)">${(c.whatsapp||'').substring(0,4)}****${(c.whatsapp||'').slice(-4)}</td>
-          <td style="font-family:'JetBrains Mono';font-size:12px">${c.reativ_tentativas||0}×</td>
-          <td style="font-size:12px;color:var(--text2)">${envioFmt}</td>
-          <td><span class="dias-badge ${diasAus>=180?'dias-hot':diasAus>=90?'dias-warm':'dias-cold'}">${diasAus>=999?'nunca':diasAus+'d'}</span></td>
-        </tr>`;
-      }).join('')}
-    </tbody>
-  </table>`;
-}
-
-function segToggleRow(id, cb) {
-  if (cb.checked) state.segSelected.add(parseInt(id));
-  else state.segSelected.delete(parseInt(id));
-  const bar = document.getElementById('seg-selection-bar');
-  bar.style.display = state.segSelected.size > 0 ? 'flex' : 'none';
-  document.getElementById('seg-sel-count').textContent = state.segSelected.size;
-}
-function segToggleAll(cb) {
-  document.querySelectorAll('.seg-check').forEach(c => { c.checked = cb.checked; segToggleRow(parseInt(c.dataset.id), c); });
-}
-function selectSegAll(val) { document.querySelectorAll('.seg-check').forEach(c => { c.checked = val; segToggleRow(parseInt(c.dataset.id),c); }); }
-
-async function moveSelected() {
-  if (!state.segSelected.size) return;
-  const novoStatus = document.getElementById('seg-move-to').value;
-  const data = await fetch(`${API}?action=update_client_status`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({client_ids:[...state.segSelected], status:novoStatus}),
-  }).then(r=>r.json()).catch(()=>({ok:false}));
-
-  if (data.ok) {
-    loadSegment(state.currentSegment);
-    loadDashboard();
-  } else {
-    alert('Erro: ' + (data.error||'Falha'));
-  }
-}
-
-/* ═══════════════════════════════════════
-   UTILS
-═══════════════════════════════════════ */
-function esc(str) {
-  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-/* ═══════════════════════════════════════
-   INIT
-═══════════════════════════════════════ */
-setup();
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 </script>
-</body>
-</html>
+<?php include __DIR__ . '/views/partials/footer.php'; ?>
