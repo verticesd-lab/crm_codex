@@ -170,7 +170,7 @@ include __DIR__ . '/views/partials/header.php';
 .kpi-sub { font-size:.67rem; color:#94a3b8; margin-top:.3rem; }
 
 /* ── Actions ── */
-.act-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.85rem; margin-bottom:1.4rem; }
+.act-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:.85rem; margin-bottom:1.4rem; }
 .act-btn { border-radius:14px; padding:1rem 1.25rem; color:#fff; text-decoration:none; display:flex; align-items:center; justify-content:space-between; transition:filter .15s,transform .1s; }
 .act-btn:hover { filter:brightness(1.08); transform:translateY(-2px); }
 .act-btn-title { font-size:.95rem; font-weight:700; }
@@ -286,6 +286,10 @@ include __DIR__ . '/views/partials/header.php';
   </a>
   <a href="<?= BASE_URL ?>/promotions.php?action=create" class="act-btn" style="background:linear-gradient(135deg,#22c55e,#16a34a);">
     <div><p class="act-btn-title">Criar Promoção</p><p class="act-btn-sub">Landing page rápida</p></div>
+    <span style="font-size:1.2rem;opacity:.7;">→</span>
+  </a>
+  <a href="<?= BASE_URL ?>/reativacao.php" class="act-btn" style="background:linear-gradient(135deg,#7c6af5,#5b52d6);">
+    <div><p class="act-btn-title">🔁 Reativar Clientes</p><p class="act-btn-sub">Reconecte inativos</p></div>
     <span style="font-size:1.2rem;opacity:.7;">→</span>
   </a>
 </div>
