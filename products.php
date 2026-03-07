@@ -307,19 +307,20 @@ include __DIR__ . '/views/partials/header.php';
 
 /* ── Multi-image grid ── */
 .img-grid { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+/* Slot é um <label> — clique/toque nativo abre o file picker no iOS/Android */
 .img-slot { position:relative; border:2px dashed #e2e8f0; border-radius:10px; aspect-ratio:1; overflow:hidden; background:#f8fafc; cursor:pointer; transition:all .2s; display:flex; align-items:center; justify-content:center; flex-direction:column; }
 .img-slot:hover { border-color:#6366f1; background:#f5f3ff; }
 .img-slot.has-img { border-style:solid; border-color:#e2e8f0; }
 .img-slot img.slot-preview { width:100%; height:100%; object-fit:cover; display:none; position:absolute; inset:0; z-index:1; }
 .img-slot.has-img img.slot-preview { display:block; }
-.img-slot-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; margin-top:.35rem; pointer-events:none; z-index:0; }
-.img-slot-icon { font-size:1.4rem; pointer-events:none; z-index:0; }
-/* O input cobre o slot inteiro — dispara nativamente no mobile sem JS */
-.img-slot input[type=file] { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; z-index:2; }
-.img-slot .img-slot-overlay { display:none; position:absolute; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:5; }
+.img-slot-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; margin-top:.35rem; }
+.img-slot-icon { font-size:1.4rem; }
+/* Input fica FORA do slot, display:none — label for="id" dispara sem JS */
+.img-file-input { display:none; }
+.img-slot .img-slot-overlay { display:none; position:absolute; inset:0; background:rgba(0,0,0,.52); align-items:center; justify-content:center; z-index:5; }
 .img-slot.has-img:hover .img-slot-overlay,
 .img-slot.has-img.show-overlay .img-slot-overlay { display:flex; }
-.img-slot-del { background:rgba(239,68,68,.9); color:#fff; border:none; border-radius:7px; padding:.35rem .7rem; font-size:.72rem; font-weight:700; cursor:pointer; z-index:6; }
+.img-slot-del { background:rgba(239,68,68,.9); color:#fff; border:none; border-radius:7px; padding:.4rem .8rem; font-size:.75rem; font-weight:700; cursor:pointer; z-index:6; }
 .img-slot-main-badge { position:absolute; top:.35rem; left:.35rem; background:#6366f1; color:#fff; font-size:.58rem; font-weight:800; padding:.15rem .4rem; border-radius:4px; text-transform:uppercase; letter-spacing:.04em; z-index:4; pointer-events:none; }
 .panel-body { flex:1; overflow-y:auto; padding:1rem 1.25rem; }
 .panel-body::-webkit-scrollbar { width:3px; }
@@ -825,65 +826,59 @@ include __DIR__ . '/views/partials/header.php';
         <!-- Imagens (até 4 fotos) -->
         <div class="field">
           <label>Fotos do Produto <span style="font-weight:400;color:#94a3b8;text-transform:none;letter-spacing:0;">(até 4 · clique para adicionar)</span></label>
+
+          <!-- Inputs FORA dos slots — display:none ativado via label for="id" (funciona iOS/Android) -->
+          <input type="file" name="imagem"  id="f-imagem"  class="img-file-input" accept="image/*" onchange="previewSlot(this,1)">
+          <input type="file" name="imagem2" id="f-imagem2" class="img-file-input" accept="image/*" onchange="previewSlot(this,2)">
+          <input type="file" name="imagem3" id="f-imagem3" class="img-file-input" accept="image/*" onchange="previewSlot(this,3)">
+          <input type="file" name="imagem4" id="f-imagem4" class="img-file-input" accept="image/*" onchange="previewSlot(this,4)">
+          <input type="hidden" name="current_image"  id="f-img"  value="">
+          <input type="hidden" name="current_image2" id="f-img2" value="">
+          <input type="hidden" name="current_image3" id="f-img3" value="">
+          <input type="hidden" name="current_image4" id="f-img4" value="">
+
           <div class="img-grid">
 
-            <!-- Slot 1 — Principal -->
-            <div class="img-slot" id="slot-1">
+            <!-- Slot 1 — Principal: label for="f-imagem" abre o picker nativamente -->
+            <label class="img-slot" id="slot-1" for="f-imagem">
               <span class="img-slot-main-badge">Principal</span>
               <img id="img-preview-1" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 1</span>
-              <!-- Input cobre o slot inteiro: funciona no iOS/Android sem .click() -->
-              <input type="file" name="imagem" id="f-imagem" accept="image/*"
-                     onchange="previewSlot(this,1)">
-              <input type="hidden" name="current_image" id="f-img" value="">
               <div class="img-slot-overlay">
-                <button type="button" class="img-slot-del"
-                        onclick="clearSlot(event,1)">🗑 Remover</button>
+                <button type="button" class="img-slot-del" onclick="clearSlot(event,1)">🗑 Remover</button>
               </div>
-            </div>
+            </label>
 
             <!-- Slot 2 -->
-            <div class="img-slot" id="slot-2">
+            <label class="img-slot" id="slot-2" for="f-imagem2">
               <img id="img-preview-2" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 2</span>
-              <input type="file" name="imagem2" id="f-imagem2" accept="image/*"
-                     onchange="previewSlot(this,2)">
-              <input type="hidden" name="current_image2" id="f-img2" value="">
               <div class="img-slot-overlay">
-                <button type="button" class="img-slot-del"
-                        onclick="clearSlot(event,2)">🗑 Remover</button>
+                <button type="button" class="img-slot-del" onclick="clearSlot(event,2)">🗑 Remover</button>
               </div>
-            </div>
+            </label>
 
             <!-- Slot 3 -->
-            <div class="img-slot" id="slot-3">
+            <label class="img-slot" id="slot-3" for="f-imagem3">
               <img id="img-preview-3" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 3</span>
-              <input type="file" name="imagem3" id="f-imagem3" accept="image/*"
-                     onchange="previewSlot(this,3)">
-              <input type="hidden" name="current_image3" id="f-img3" value="">
               <div class="img-slot-overlay">
-                <button type="button" class="img-slot-del"
-                        onclick="clearSlot(event,3)">🗑 Remover</button>
+                <button type="button" class="img-slot-del" onclick="clearSlot(event,3)">🗑 Remover</button>
               </div>
-            </div>
+            </label>
 
             <!-- Slot 4 -->
-            <div class="img-slot" id="slot-4">
+            <label class="img-slot" id="slot-4" for="f-imagem4">
               <img id="img-preview-4" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 4</span>
-              <input type="file" name="imagem4" id="f-imagem4" accept="image/*"
-                     onchange="previewSlot(this,4)">
-              <input type="hidden" name="current_image4" id="f-img4" value="">
               <div class="img-slot-overlay">
-                <button type="button" class="img-slot-del"
-                        onclick="clearSlot(event,4)">🗑 Remover</button>
+                <button type="button" class="img-slot-del" onclick="clearSlot(event,4)">🗑 Remover</button>
               </div>
-            </div>
+            </label>
 
           </div>
         </div>
@@ -1075,7 +1070,7 @@ function setSlotImg(n, src) {
   const label = slot.querySelector('.img-slot-label');
   if (icon)  icon.style.display = 'none';
   if (label) label.style.display = 'none';
-  // Mobile: toque longo mostra overlay de remover
+  // Mobile: toque longo (600ms) mostra botão Remover
   enableMobileOverlay(slot);
 }
 
@@ -1086,9 +1081,18 @@ function enableMobileOverlay(slot) {
   slot.addEventListener('touchstart', () => { t = setTimeout(() => slot.classList.add('show-overlay'), 600); }, {passive:true});
   slot.addEventListener('touchend',   () => clearTimeout(t));
   slot.addEventListener('touchmove',  () => clearTimeout(t), {passive:true});
+  // Toque fora remove o overlay
   document.addEventListener('touchstart', e => {
     if (!slot.contains(e.target)) slot.classList.remove('show-overlay');
   }, {passive:true});
+  // Quando slot já tem imagem: bloqueia o label de abrir o file picker novamente
+  // (usuário precisa remover primeiro via botão Remover)
+  slot.addEventListener('click', e => {
+    if (slot.classList.contains('has-img')) {
+      e.preventDefault();
+      slot.classList.add('show-overlay');
+    }
+  });
 }
 
 function clearSlot(e, n) {
@@ -1102,14 +1106,23 @@ function clearSlot(e, n) {
   img.src = '';
   slot.classList.remove('has-img', 'show-overlay');
   const icon  = slot.querySelector('.img-slot-icon');
-  const label = slot.querySelector('.img-slot-label');
-  if (icon)  icon.style.display = '';
-  if (label) label.style.display = '';
+  const lbl   = slot.querySelector('.img-slot-label');
+  if (icon) icon.style.display = '';
+  if (lbl)  lbl.style.display  = '';
   const hid = document.getElementById(hidId);
   if (hid) hid.value = '';
-  // Recria o input para limpar arquivo selecionado (cross-browser)
+  // Recria o input para limpar o arquivo (cross-browser)
   const fi = document.getElementById(fileId);
-  if (fi) { const nf = fi.cloneNode(true); fi.parentNode.replaceChild(nf, fi); }
+  if (fi) {
+    const nf = document.createElement('input');
+    nf.type     = 'file';
+    nf.name     = fi.name;
+    nf.id       = fi.id;
+    nf.className = fi.className;
+    nf.accept   = 'image/*';
+    nf.setAttribute('onchange', `previewSlot(this,${n})`);
+    fi.parentNode.replaceChild(nf, fi);
+  }
 }
 
 function loadSlot(n, url) {
@@ -1131,7 +1144,6 @@ function loadSlot(n, url) {
     if (hid) hid.value = '';
   }
 }
-
 
 
 // ── Margem ──
