@@ -14,7 +14,7 @@ $ALL_MENU = [
     ['clientes',             'Clientes',             $base . '/clients.php',             false],
     ['funil',                'Funil / Oportunidades',$base . '/opportunities.php',       false],
     ['atendimento',          'Atendimento',          $base . '/atendimento.php',         false],
-    ['produtos',             'Produtos/Serviços',    $base . '/products.php',            false],
+    ['produtos',             'Produtos',    $base . '/products.php',            false],
     ['cadastro_inteligente', 'Cadastro Inteligente', $base . '/products_imports.php',    false],
     ['pedidos',              'Pedidos',              $base . '/orders.php',              false],
     ['promocoes',            'Promoções',            $base . '/promotions.php',          false],
@@ -26,7 +26,7 @@ $ALL_MENU = [
     ['agenda_barbearia',     'Agenda Barbearia',     $base . '/calendar_barbearia.php',  false],
     ['servicos_barbearia',   'Serviços Barbearia',   $base . '/services_admin.php',      false],
     ['equipe',               'Equipe',               $base . '/staff.php',               false],
-    ['reativacao',           '🔁 Reativação',        $base . '/reativacao.php',          false], // ← NOVO
+    ['reativacao',           'Reativação',        $base . '/reativacao.php',          false], // ← NOVO
     ['configuracoes',        'Configurações',        $base . '/settings.php',            false], // ← SEMPRE visível para quem tem acesso admin
 ];
 
