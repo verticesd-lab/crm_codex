@@ -3,6 +3,10 @@
  * webhook_evolution.php
  * Recebe POSTs do ActivePieces → salva interactions no CRM
  *
+ * [v2 - integrado com sistema de Reativação de Clientes]
+ * Quando um cliente responde qualquer mensagem e está em campanha
+ * de reativação, o status é atualizado automaticamente.
+ *
  * Payload do ActivePieces:
  * {
  *   "data": {
@@ -108,6 +112,79 @@ function normalizar_intent(?string $raw): array {
     return ['intent' => 'outro', 'titulo' => $raw, 'confidence' => 0.7];
 }
 
+// ════════════════════════════════════════════════════════════════
+// REATIVAÇÃO — marca cliente como "respondeu" se estava em campanha
+// ════════════════════════════════════════════════════════════════
+/**
+ * Verifica se o remetente é um cliente em campanha de reativação
+ * e, se for, atualiza os status correspondentes.
+ * Encapsulado em try/catch — nunca quebra o fluxo principal.
+ */
+function reativacao_check_response(PDO $pdo, int $companyId, string $rawPhone): void
+{
+    $digits = preg_replace('/\D/', '', $rawPhone);
+    if (!$digits) return;
+
+    $wa55 = str_starts_with($digits, '55') ? $digits : '55' . $digits;
+    $waLc = str_starts_with($digits, '55') ? substr($digits, 2) : $digits;
+
+    try {
+        // Busca cliente pelo número (testa com e sem DDI)
+        $stmt = $pdo->prepare("
+            SELECT id, reativ_status, reativ_tentativas
+            FROM clients
+            WHERE company_id = ?
+              AND (whatsapp = ? OR whatsapp = ?
+                   OR telefone_principal = ? OR telefone_principal = ?)
+            LIMIT 1
+        ");
+        $stmt->execute([$companyId, $wa55, $waLc, $wa55, $waLc]);
+        $client = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$client) return;
+
+        $currentStatus = (string)($client['reativ_status'] ?? '');
+        $tentativas    = (int)($client['reativ_tentativas'] ?? 0);
+
+        // Só processa se estava aguardando resposta de algum lote
+        if (!in_array($currentStatus, ['lote_enviado_1', 'lote_enviado_2', 'aguardando_2'], true)) {
+            return;
+        }
+
+        $novoStatus = $tentativas <= 1 ? 'respondeu_1' : 'respondeu_2';
+
+        // Atualiza o cliente
+        $pdo->prepare("
+            UPDATE clients
+               SET reativ_status = ?,
+                   updated_at    = NOW()
+             WHERE id = ? AND company_id = ?
+        ")->execute([$novoStatus, $client['id'], $companyId]);
+
+        // Marca o envio mais recente como respondido
+        $pdo->prepare("
+            UPDATE reativacao_envios
+               SET status       = 'respondeu',
+                   respondeu_em = NOW()
+             WHERE client_id  = ?
+               AND company_id = ?
+               AND status     = 'enviado'
+             ORDER BY id DESC
+             LIMIT 1
+        ")->execute([$client['id'], $companyId]);
+
+        error_log(sprintf(
+            '[reativacao] Cliente #%d (%s) respondeu. %s → %s',
+            $client['id'], $rawPhone, $currentStatus, $novoStatus
+        ));
+
+    } catch (Throwable $e) {
+        // Nunca deixa o patch quebrar o fluxo principal do webhook
+        error_log('[reativacao_check_response] Erro: ' . $e->getMessage());
+    }
+}
+// ════════════════════════════════════════════════════════════════
+
 $intentData = normalizar_intent($crmIntent ?: $msgText);
 $intent     = $intentData['intent'];
 $titulo     = $intentData['titulo'];
@@ -186,11 +263,9 @@ try {
     // Adiciona ou corrige colunas faltantes
     if (!$hasCanal)  $pdo->exec("ALTER TABLE interactions ADD COLUMN canal  VARCHAR(50) DEFAULT 'whatsapp'");
     if (!$hasOrigem) $pdo->exec("ALTER TABLE interactions ADD COLUMN origem VARCHAR(50) DEFAULT 'bot'");
-    // Garante tamanho suficiente (caso tenha sido criada com tamanho menor)
     try { $pdo->exec("ALTER TABLE interactions MODIFY COLUMN origem VARCHAR(50)"); } catch(Throwable $e) {}
     try { $pdo->exec("ALTER TABLE interactions MODIFY COLUMN canal  VARCHAR(50)"); } catch(Throwable $e) {}
 
-    // Trunca valores para caber nas colunas (segurança extra)
     $crmOrigemSafe = substr($crmOrigem, 0, 50);
 
     // ── Salva interação ──────────────────────────────────────────
@@ -207,6 +282,10 @@ try {
     }
 
     $interactionId = (int)$pdo->lastInsertId();
+
+    // ── Reativação: verifica se cliente estava em campanha ───────
+    // Chamada após salvar interação — nunca bloqueia o retorno
+    reativacao_check_response($pdo, $companyId, $whatsapp);
 
     echo json_encode([
         'ok'             => true,

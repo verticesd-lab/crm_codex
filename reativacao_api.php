@@ -1,0 +1,686 @@
+<?php
+/**
+ * reativacao_api.php
+ * ─────────────────────────────────────────────────────────────────
+ * Endpoints AJAX para o sistema de reativação de clientes.
+ * Todos os endpoints retornam JSON.
+ *
+ * Actions:
+ *   setup_tables     — cria tabelas se não existirem
+ *   get_stats        — dashboard KPIs
+ *   get_eligible     — lista clientes elegíveis com filtros
+ *   create_lote      — cria um lote para revisão
+ *   get_lote         — detalhes de um lote
+ *   get_lotes        — histórico de lotes
+ *   send_next        — envia próxima mensagem pendente do lote ativo
+ *   cancel_lote      — cancela lote
+ *   get_clients_by_status — segmentos por status de reativação
+ *   update_client_status  — atualiza status manualmente
+ *   mark_responded   — webhook interno: cliente respondeu
+ * ─────────────────────────────────────────────────────────────────
+ */
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/db.php';
+
+header('Content-Type: application/json; charset=utf-8');
+
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+// Auth básica
+if (!isset($_SESSION['user_id'])) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Não autenticado.']);
+    exit;
+}
+
+$pdo       = get_pdo();
+$companyId = current_company_id();
+$userId    = (int)($_SESSION['user_id'] ?? 0);
+
+if (!$companyId) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Empresa não encontrada.']);
+    exit;
+}
+
+$action = $_GET['action'] ?? $_POST['action'] ?? '';
+
+/* ═══════════════════════════════════════════════════
+   MENSAGENS — 3 contextos × variações
+═══════════════════════════════════════════════════ */
+function get_messages(): array {
+    return [
+        /* ── PDV: comprou na loja física ── */
+        'pdv' => [
+            1 => [
+                "Oi {nome}! Tudo bem? 😊\n\nAqui é da Formen Store. Faz um tempinho que você não passa por aqui — qualquer coisa que precisar é só chamar!",
+                "{nome}! Sumido(a) hein 😄\n\nAqui é a equipe da Formen. Lançamos algumas novidades essa semana, se quiser dar uma olhada é só falar!",
+                "Oi {nome}, tudo certo?\n\nAqui é da Formen Store, lembrando que estamos por aqui sempre que precisar 🙂\n\nAbraço!",
+            ],
+            2 => [
+                "Oi {nome}! Passando só pra dizer que ainda estamos por aqui caso precise de qualquer coisa 😊\n\nFormen Store — pode chamar!",
+                "{nome}, oi! Uma última passagem aqui pra dizer que a gente não esqueceu de você 😄\n\nQualquer coisa é só dar um oi!",
+            ],
+        ],
+        /* ── Barbearia: teve agendamento ── */
+        'barbearia' => [
+            1 => [
+                "Oi {nome}! Tudo bem? ✂️\n\nAqui é da Formen Barbearia. Faz um tempo que você não passa por aqui — se quiser agendar é só mandar mensagem!",
+                "{nome}! Sumido(a) por aqui né 😄\n\nAqui é a equipe da Formen. Sua agenda está em aberto, qualquer horário é só chamar!",
+                "Oi {nome}, tudo certo?\n\nAqui é da Formen Barbearia 🙂 Sempre que precisar de um horário é só falar, temos disponibilidade essa semana!",
+            ],
+            2 => [
+                "Oi {nome}! Passando só pra dizer que a Formen Barbearia ainda está por aqui sempre que você precisar ✂️\n\nAbraço!",
+                "{nome}, oi! Uma última passagem aqui — qualquer horário que precisar pode chamar 😊",
+            ],
+        ],
+        /* ── WhatsApp: só interagiu pelo chat ── */
+        'whatsapp' => [
+            1 => [
+                "Oi {nome}! Tudo bem? 😊\n\nAqui é da Formen. Faz um tempinho que não conversamos — qualquer coisa que precisar pode chamar!",
+                "{nome}! Sumido(a) 😄\n\nAqui é a equipe da Formen, passando pra dizer que estamos por aqui! Qualquer dúvida ou pedido é só falar.",
+                "Oi {nome}, tudo certo?\n\nAqui é da Formen 🙂 Lembrando que estamos por aqui sempre que precisar!\n\nAbraço!",
+            ],
+            2 => [
+                "Oi {nome}! Passando só pra dizer que a Formen ainda está por aqui caso precise de qualquer coisa 😊",
+                "{nome}, oi! Última mensagem aqui — se um dia precisar de algo é só chamar, tá? Abraço! 😄",
+            ],
+        ],
+    ];
+}
+
+/**
+ * Detecta o contexto de reativação do cliente com base nas tags/histórico
+ */
+function detect_context(array $client): string {
+    $tags = strtolower((string)($client['tags'] ?? ''));
+    if (str_contains($tags, 'barbearia') || !empty($client['has_appt'])) return 'barbearia';
+    if (str_contains($tags, 'pdv') || str_contains($tags, 'reativacao')) return 'pdv';
+    return 'whatsapp';
+}
+
+/**
+ * Monta a mensagem com variação e substitui {nome}
+ */
+function build_message(string $context, int $tentativa, string $nome, int $varIdx = -1): string {
+    $msgs = get_messages();
+    $pool = $msgs[$context][$tentativa] ?? $msgs['whatsapp'][1];
+    $idx  = $varIdx >= 0 ? ($varIdx % count($pool)) : array_rand($pool);
+    $msg  = $pool[$idx];
+    // usa o primeiro nome, mantém capitalização original do cadastro
+    $firstName = explode(' ', trim($nome))[0];
+    return str_replace('{nome}', $firstName, $msg);
+}
+
+/**
+ * Retorna configuração da Evolution API
+ */
+function get_evolution_config(): array {
+    // tenta buscar de constants, env ou config.php
+    $base     = defined('EVOLUTION_API_URL')  ? EVOLUTION_API_URL  : (getenv('EVOLUTION_API_URL')  ?: '');
+    $key      = defined('EVOLUTION_API_KEY')  ? EVOLUTION_API_KEY  : (getenv('EVOLUTION_API_KEY')  ?: '');
+    $instance = defined('EVOLUTION_INSTANCE') ? EVOLUTION_INSTANCE : (getenv('EVOLUTION_INSTANCE') ?: '');
+    return ['base' => rtrim($base, '/'), 'key' => $key, 'instance' => $instance];
+}
+
+/**
+ * Envia mensagem via Evolution API
+ * Retorna ['ok'=>true] ou ['ok'=>false,'error'=>'msg']
+ */
+function send_whatsapp(string $number, string $text): array {
+    $cfg = get_evolution_config();
+    if (!$cfg['base'] || !$cfg['key'] || !$cfg['instance']) {
+        return ['ok' => false, 'error' => 'Evolution API não configurada.'];
+    }
+
+    // Normaliza número: apenas dígitos, garante DDI 55
+    $digits = preg_replace('/\D/', '', $number);
+    if (!str_starts_with($digits, '55')) $digits = '55' . $digits;
+
+    $url = "{$cfg['base']}/message/sendText/{$cfg['instance']}";
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => [
+            'Content-Type: application/json',
+            'apikey: ' . $cfg['key'],
+        ],
+        CURLOPT_POSTFIELDS     => json_encode([
+            'number' => $digits,
+            'text'   => $text,
+        ]),
+        CURLOPT_TIMEOUT        => 20,
+    ]);
+
+    $resp    = curl_exec($ch);
+    $httpCode= curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr) return ['ok' => false, 'error' => 'cURL: ' . $curlErr];
+    if ($httpCode >= 200 && $httpCode < 300) return ['ok' => true, 'response' => $resp];
+    return ['ok' => false, 'error' => "HTTP {$httpCode}: " . $resp];
+}
+
+/* ═══════════════════════════════════════════════════
+   SETUP TABLES
+═══════════════════════════════════════════════════ */
+if ($action === 'setup_tables') {
+    $errors = [];
+
+    // Colunas na tabela clients
+    $clientCols = ['reativ_status','reativ_ultimo_envio','reativ_tentativas'];
+    try {
+        $existing = $pdo->query('SHOW COLUMNS FROM clients')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('reativ_status', $existing)) {
+            $pdo->exec("ALTER TABLE clients ADD COLUMN reativ_status VARCHAR(30) DEFAULT 'elegivel'");
+        }
+        if (!in_array('reativ_ultimo_envio', $existing)) {
+            $pdo->exec("ALTER TABLE clients ADD COLUMN reativ_ultimo_envio DATETIME NULL");
+        }
+        if (!in_array('reativ_tentativas', $existing)) {
+            $pdo->exec("ALTER TABLE clients ADD COLUMN reativ_tentativas TINYINT DEFAULT 0");
+        }
+    } catch(Throwable $e) { $errors[] = 'clients: ' . $e->getMessage(); }
+
+    // Tabela de lotes
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS reativacao_lotes (
+            id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            company_id     INT UNSIGNED NOT NULL,
+            criado_em      DATETIME NOT NULL,
+            iniciado_em    DATETIME NULL,
+            concluido_em   DATETIME NULL,
+            status         VARCHAR(20) DEFAULT 'aguardando',
+            contexto       VARCHAR(20) DEFAULT 'misto',
+            total_clientes INT DEFAULT 0,
+            enviados       INT DEFAULT 0,
+            erros          INT DEFAULT 0,
+            mensagem_idx   TINYINT DEFAULT 0,
+            criado_por     INT UNSIGNED NULL,
+            observacoes    TEXT NULL,
+            INDEX idx_company (company_id),
+            INDEX idx_status  (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch(Throwable $e) { $errors[] = 'reativacao_lotes: ' . $e->getMessage(); }
+
+    // Tabela de envios individuais
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS reativacao_envios (
+            id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            lote_id      INT UNSIGNED NOT NULL,
+            client_id    INT UNSIGNED NOT NULL,
+            company_id   INT UNSIGNED NOT NULL,
+            whatsapp     VARCHAR(30) NOT NULL,
+            nome         VARCHAR(120) NOT NULL,
+            contexto     VARCHAR(20) DEFAULT 'whatsapp',
+            mensagem     TEXT NOT NULL,
+            tentativa    TINYINT DEFAULT 1,
+            status       VARCHAR(20) DEFAULT 'pendente',
+            enviado_em   DATETIME NULL,
+            respondeu_em DATETIME NULL,
+            erro_msg     TEXT NULL,
+            INDEX idx_lote    (lote_id),
+            INDEX idx_client  (client_id),
+            INDEX idx_company (company_id),
+            INDEX idx_status  (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch(Throwable $e) { $errors[] = 'reativacao_envios: ' . $e->getMessage(); }
+
+    echo json_encode(['ok' => empty($errors), 'errors' => $errors]);
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   GET STATS
+═══════════════════════════════════════════════════ */
+if ($action === 'get_stats') {
+    $stats = [];
+    try {
+        $rows = $pdo->prepare("
+            SELECT reativ_status, COUNT(*) as total
+            FROM clients
+            WHERE company_id = ?
+              AND whatsapp IS NOT NULL AND whatsapp != ''
+            GROUP BY reativ_status
+        ");
+        $rows->execute([$companyId]);
+        $byStatus = [];
+        foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $byStatus[$r['reativ_status'] ?? 'elegivel'] = (int)$r['total'];
+        }
+
+        $stats['total_base']        = array_sum($byStatus);
+        $stats['elegiveis']         = ($byStatus['elegivel']         ?? 0) + ($byStatus['']  ?? 0) + ($byStatus[null] ?? 0);
+        $stats['lote_1_enviado']    = $byStatus['lote_enviado_1']    ?? 0;
+        $stats['responderam']       = ($byStatus['respondeu_1']      ?? 0) + ($byStatus['respondeu_2'] ?? 0);
+        $stats['aguardando_2']      = $byStatus['aguardando_2']       ?? 0;
+        $stats['lote_2_enviado']    = $byStatus['lote_enviado_2']    ?? 0;
+        $stats['sem_resposta']      = $byStatus['sem_resposta']      ?? 0;
+        $stats['standby']           = $byStatus['standby']           ?? 0;
+        $stats['numero_invalido']   = $byStatus['numero_invalido']   ?? 0;
+
+        // Lote ativo
+        $loteAtivo = $pdo->prepare("
+            SELECT id, status, total_clientes, enviados, erros, criado_em
+            FROM reativacao_lotes
+            WHERE company_id = ? AND status IN ('aguardando','em_andamento')
+            ORDER BY criado_em DESC LIMIT 1
+        ");
+        $loteAtivo->execute([$companyId]);
+        $stats['lote_ativo'] = $loteAtivo->fetch(PDO::FETCH_ASSOC) ?: null;
+
+        // Cooldown: último lote concluído + 24h
+        $ultimo = $pdo->prepare("
+            SELECT concluido_em FROM reativacao_lotes
+            WHERE company_id = ? AND status = 'concluido'
+            ORDER BY concluido_em DESC LIMIT 1
+        ");
+        $ultimo->execute([$companyId]);
+        $ultimoConcluido = $ultimo->fetchColumn();
+        $stats['pode_enviar_em'] = null;
+        if ($ultimoConcluido) {
+            $proximoPermitido = strtotime($ultimoConcluido) + 86400;
+            if ($proximoPermitido > time()) {
+                $stats['pode_enviar_em'] = date('Y-m-d H:i:s', $proximoPermitido);
+            }
+        }
+
+    } catch (Throwable $e) {
+        $stats['error'] = $e->getMessage();
+    }
+    echo json_encode($stats);
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   GET ELIGIBLE
+═══════════════════════════════════════════════════ */
+if ($action === 'get_eligible') {
+    $diasSemVisita = (int)($_GET['dias'] ?? 60);
+    $limite        = min((int)($_GET['limite'] ?? 30), 50);
+    $contexto      = $_GET['contexto'] ?? 'todos';
+    $tentativa     = (int)($_GET['tentativa'] ?? 1);
+
+    try {
+        $where  = "c.company_id = ? AND c.whatsapp IS NOT NULL AND c.whatsapp != ''";
+        $params = [$companyId];
+
+        if ($tentativa === 1) {
+            $where .= " AND (c.reativ_status IS NULL OR c.reativ_status = '' OR c.reativ_status = 'elegivel')";
+        } elseif ($tentativa === 2) {
+            $where .= " AND c.reativ_status = 'aguardando_2'";
+        }
+
+        // Dias sem visita/compra
+        $cutoff = date('Y-m-d H:i:s', strtotime("-{$diasSemVisita} days"));
+        $where .= " AND (c.ultimo_atendimento_em IS NULL OR c.ultimo_atendimento_em < ?)";
+        $params[] = $cutoff;
+
+        // Filtro de contexto via tags
+        if ($contexto === 'pdv') {
+            $where .= " AND c.tags LIKE '%pdv%'";
+        } elseif ($contexto === 'barbearia') {
+            $where .= " AND (c.tags LIKE '%barbearia%' OR EXISTS(SELECT 1 FROM appointments a WHERE a.client_id=c.id AND a.company_id=c.company_id LIMIT 1))";
+        } elseif ($contexto === 'whatsapp') {
+            $where .= " AND c.tags LIKE '%whatsapp%' AND c.tags NOT LIKE '%pdv%' AND c.tags NOT LIKE '%barbearia%'";
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT c.id, c.nome, c.whatsapp, c.tags, c.ultimo_atendimento_em,
+                   c.reativ_status, c.reativ_tentativas,
+                   (SELECT COUNT(*) FROM appointments a WHERE a.client_id=c.id AND a.company_id=c.company_id) as has_appt
+            FROM clients c
+            WHERE {$where}
+            ORDER BY c.ultimo_atendimento_em ASC
+            LIMIT {$limite}
+        ");
+        $stmt->execute($params);
+        $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Adiciona contexto detectado e preview da mensagem
+        $msgs = get_messages();
+        foreach ($clients as &$cl) {
+            $ctx      = detect_context($cl);
+            $cl['contexto_detectado'] = $ctx;
+            $cl['msg_preview'] = build_message($ctx, $tentativa, $cl['nome'], 0);
+            // dias sem visita
+            if ($cl['ultimo_atendimento_em']) {
+                $cl['dias_ausente'] = (int)(new DateTime('today'))->diff(new DateTime($cl['ultimo_atendimento_em']))->days;
+            } else {
+                $cl['dias_ausente'] = 999;
+            }
+        }
+        unset($cl);
+
+        echo json_encode(['ok' => true, 'clients' => $clients, 'total' => count($clients)]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   CREATE LOTE
+═══════════════════════════════════════════════════ */
+if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $body      = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+    $clientIds = array_map('intval', $body['client_ids'] ?? []);
+    $tentativa = (int)($body['tentativa'] ?? 1);
+    $observ    = trim($body['observacoes'] ?? '');
+    $contexto  = trim($body['contexto']   ?? 'misto');
+
+    if (empty($clientIds)) {
+        echo json_encode(['ok' => false, 'error' => 'Nenhum cliente selecionado.']);
+        exit;
+    }
+
+    // Verifica se já existe lote ativo
+    $existing = $pdo->prepare("SELECT id FROM reativacao_lotes WHERE company_id=? AND status IN ('aguardando','em_andamento') LIMIT 1");
+    $existing->execute([$companyId]);
+    if ($existing->fetchColumn()) {
+        echo json_encode(['ok' => false, 'error' => 'Já existe um lote ativo. Conclua ou cancele-o antes de criar um novo.']);
+        exit;
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        // Cria o lote
+        $pdo->prepare("
+            INSERT INTO reativacao_lotes (company_id, criado_em, status, contexto, total_clientes, criado_por, observacoes)
+            VALUES (?, NOW(), 'aguardando', ?, ?, ?, ?)
+        ")->execute([$companyId, $contexto, count($clientIds), $userId, $observ ?: null]);
+        $loteId = (int)$pdo->lastInsertId();
+
+        // Busca dados dos clientes selecionados
+        $placeholders = implode(',', array_fill(0, count($clientIds), '?'));
+        $stmt = $pdo->prepare("
+            SELECT id, nome, whatsapp, tags,
+                   (SELECT COUNT(*) FROM appointments a WHERE a.client_id=clients.id LIMIT 1) as has_appt
+            FROM clients
+            WHERE id IN ($placeholders) AND company_id = ?
+        ");
+        $stmt->execute([...$clientIds, $companyId]);
+        $clientsData = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Insere os envios individuais com mensagens já definidas
+        $varIdx = 0;
+        foreach ($clientsData as $cl) {
+            $ctx = detect_context($cl);
+            $msg = build_message($ctx, $tentativa, $cl['nome'], $varIdx);
+            $varIdx++;
+
+            $pdo->prepare("
+                INSERT INTO reativacao_envios
+                    (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente')
+            ")->execute([$loteId, $cl['id'], $companyId, $cl['whatsapp'], $cl['nome'], $ctx, $msg, $tentativa]);
+        }
+
+        $pdo->commit();
+        echo json_encode(['ok' => true, 'lote_id' => $loteId, 'total' => count($clientsData)]);
+
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   GET LOTE (detalhes + progresso)
+═══════════════════════════════════════════════════ */
+if ($action === 'get_lote') {
+    $loteId = (int)($_GET['id'] ?? 0);
+    try {
+        $lote = $pdo->prepare("SELECT * FROM reativacao_lotes WHERE id=? AND company_id=?");
+        $lote->execute([$loteId, $companyId]);
+        $loteData = $lote->fetch(PDO::FETCH_ASSOC);
+        if (!$loteData) { echo json_encode(['ok'=>false,'error'=>'Lote não encontrado']); exit; }
+
+        $envios = $pdo->prepare("
+            SELECT re.id, re.nome, re.whatsapp, re.contexto, re.tentativa,
+                   re.status, re.enviado_em, re.erro_msg,
+                   LEFT(re.mensagem, 80) as msg_preview
+            FROM reativacao_envios re
+            WHERE re.lote_id = ?
+            ORDER BY re.id ASC
+        ");
+        $envios->execute([$loteId]);
+
+        echo json_encode([
+            'ok'     => true,
+            'lote'   => $loteData,
+            'envios' => $envios->fetchAll(PDO::FETCH_ASSOC),
+        ]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   GET LOTES (histórico)
+═══════════════════════════════════════════════════ */
+if ($action === 'get_lotes') {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT l.*,
+                   (SELECT COUNT(*) FROM reativacao_envios WHERE lote_id=l.id AND status='respondeu') as responderam
+            FROM reativacao_lotes l
+            WHERE l.company_id = ?
+            ORDER BY l.criado_em DESC
+            LIMIT 50
+        ");
+        $stmt->execute([$companyId]);
+        echo json_encode(['ok' => true, 'lotes' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   SEND NEXT — envia UMA mensagem pendente do lote ativo
+   O frontend chama isso em loop com delay randomizado
+═══════════════════════════════════════════════════ */
+if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $loteId = (int)($_POST['lote_id'] ?? 0);
+
+    // Valida horário permitido (09:00 - 20:00)
+    $hora = (int)date('H');
+    if ($hora < 9 || $hora >= 20) {
+        echo json_encode(['ok' => false, 'error' => 'Fora do horário permitido (09:00–20:00)', 'paused' => true]);
+        exit;
+    }
+
+    try {
+        // Pega próximo pendente
+        $stmt = $pdo->prepare("
+            SELECT * FROM reativacao_envios
+            WHERE lote_id = ? AND status = 'pendente'
+            ORDER BY id ASC
+            LIMIT 1
+            FOR UPDATE
+        ");
+        $pdo->beginTransaction();
+        $stmt->execute([$loteId]);
+        $envio = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$envio) {
+            // Lote concluído
+            $pdo->prepare("UPDATE reativacao_lotes SET status='concluido', concluido_em=NOW() WHERE id=?")->execute([$loteId]);
+            $pdo->commit();
+            echo json_encode(['ok' => true, 'done' => true, 'msg' => 'Lote concluído!']);
+            exit;
+        }
+
+        // Marca como lote em andamento
+        $pdo->prepare("UPDATE reativacao_lotes SET status='em_andamento', iniciado_em=COALESCE(iniciado_em,NOW()) WHERE id=?")->execute([$loteId]);
+
+        // Tenta enviar
+        $result = send_whatsapp($envio['whatsapp'], $envio['mensagem']);
+
+        if ($result['ok']) {
+            // Sucesso
+            $pdo->prepare("UPDATE reativacao_envios SET status='enviado', enviado_em=NOW() WHERE id=?")->execute([$envio['id']]);
+            $pdo->prepare("UPDATE reativacao_lotes SET enviados=enviados+1 WHERE id=?")->execute([$loteId]);
+
+            // Atualiza status do cliente
+            $novoStatus = $envio['tentativa'] == 1 ? 'lote_enviado_1' : 'lote_enviado_2';
+            $pdo->prepare("
+                UPDATE clients
+                   SET reativ_status      = ?,
+                       reativ_ultimo_envio = NOW(),
+                       reativ_tentativas   = tentativa
+                WHERE id = ? AND company_id = ?
+            ")->execute([$novoStatus, $envio['client_id'], $companyId]);
+
+        } else {
+            // Erro de envio
+            $pdo->prepare("UPDATE reativacao_envios SET status='erro', erro_msg=? WHERE id=?")->execute([$result['error'], $envio['id']]);
+            $pdo->prepare("UPDATE reativacao_lotes SET erros=erros+1 WHERE id=?")->execute([$loteId]);
+        }
+
+        $pdo->commit();
+
+        // Conta quantos pendentes ainda restam
+        $restantes = (int)$pdo->prepare("SELECT COUNT(*) FROM reativacao_envios WHERE lote_id=? AND status='pendente'")->execute([$loteId]) ? 
+            $pdo->query("SELECT COUNT(*) FROM reativacao_envios WHERE lote_id={$loteId} AND status='pendente'")->fetchColumn() : 0;
+
+        echo json_encode([
+            'ok'        => true,
+            'done'      => false,
+            'enviado'   => $result['ok'],
+            'nome'      => $envio['nome'],
+            'whatsapp'  => substr($envio['whatsapp'], 0, 4) . '****' . substr($envio['whatsapp'], -4),
+            'msg_preview' => mb_substr($envio['mensagem'], 0, 60) . '...',
+            'restantes' => (int)$restantes,
+            'erro'      => $result['ok'] ? null : $result['error'],
+        ]);
+
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   CANCEL LOTE
+═══════════════════════════════════════════════════ */
+if ($action === 'cancel_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $loteId = (int)($_POST['lote_id'] ?? 0);
+    try {
+        $pdo->prepare("UPDATE reativacao_lotes SET status='cancelado' WHERE id=? AND company_id=?")->execute([$loteId, $companyId]);
+        echo json_encode(['ok' => true]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   GET CLIENTS BY STATUS
+═══════════════════════════════════════════════════ */
+if ($action === 'get_clients_by_status') {
+    $status = $_GET['status'] ?? 'sem_resposta';
+    $page   = max(1, (int)($_GET['page'] ?? 1));
+    $pp     = 25;
+    $offset = ($page - 1) * $pp;
+
+    try {
+        $total = (int)$pdo->prepare("SELECT COUNT(*) FROM clients WHERE company_id=? AND reativ_status=?")->execute([$companyId,$status]) ?
+            $pdo->query("SELECT COUNT(*) FROM clients WHERE company_id={$companyId} AND reativ_status='{$status}'")->fetchColumn() : 0;
+
+        $stmt = $pdo->prepare("
+            SELECT id, nome, whatsapp, tags, reativ_status, reativ_tentativas, reativ_ultimo_envio, ultimo_atendimento_em
+            FROM clients
+            WHERE company_id=? AND reativ_status=?
+            ORDER BY reativ_ultimo_envio DESC
+            LIMIT {$pp} OFFSET {$offset}
+        ");
+        $stmt->execute([$companyId, $status]);
+        echo json_encode(['ok'=>true,'clients'=>$stmt->fetchAll(PDO::FETCH_ASSOC),'total'=>(int)$total,'page'=>$page]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   UPDATE CLIENT STATUS (manual)
+═══════════════════════════════════════════════════ */
+if ($action === 'update_client_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $body      = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+    $clientIds = array_map('intval', (array)($body['client_ids'] ?? []));
+    $novoStatus= trim($body['status'] ?? '');
+    $allowed   = ['elegivel','standby','numero_invalido','aguardando_2','sem_resposta'];
+
+    if (!in_array($novoStatus, $allowed) || empty($clientIds)) {
+        echo json_encode(['ok'=>false,'error'=>'Status ou IDs inválidos.']); exit;
+    }
+    try {
+        $pl = implode(',', array_fill(0, count($clientIds), '?'));
+        $pdo->prepare("UPDATE clients SET reativ_status=? WHERE id IN ($pl) AND company_id=?")
+            ->execute([$novoStatus, ...$clientIds, $companyId]);
+        echo json_encode(['ok'=>true,'updated'=>count($clientIds)]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   MARK RESPONDED — chamado pelo webhook quando cliente responde
+═══════════════════════════════════════════════════ */
+if ($action === 'mark_responded') {
+    $whatsapp = preg_replace('/\D/', '', $_POST['whatsapp'] ?? '');
+    if (!$whatsapp) { echo json_encode(['ok'=>false]); exit; }
+
+    // tenta com e sem DDI
+    $wa55 = str_starts_with($whatsapp,'55') ? $whatsapp : '55'.$whatsapp;
+    $waLc = str_starts_with($whatsapp,'55') ? substr($whatsapp,2) : $whatsapp;
+
+    try {
+        // Atualiza último envio pendente para 'respondeu'
+        $pdo->prepare("
+            UPDATE reativacao_envios re
+            JOIN clients c ON c.id = re.client_id
+            SET re.status = 'respondeu', re.respondeu_em = NOW()
+            WHERE (c.whatsapp = ? OR c.whatsapp = ?)
+              AND c.company_id = ?
+              AND re.status = 'enviado'
+              AND re.id = (
+                SELECT MAX(re2.id) FROM reativacao_envios re2
+                JOIN clients c2 ON c2.id = re2.client_id
+                WHERE (c2.whatsapp = ? OR c2.whatsapp = ?) AND c2.company_id = ? AND re2.status='enviado'
+              )
+        ")->execute([$wa55,$waLc,$companyId,$wa55,$waLc,$companyId]);
+
+        // Atualiza status do cliente
+        $stmt = $pdo->prepare("
+            SELECT id, reativ_tentativas FROM clients
+            WHERE (whatsapp = ? OR whatsapp = ?) AND company_id = ? LIMIT 1
+        ");
+        $stmt->execute([$wa55,$waLc,$companyId]);
+        $cl = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($cl) {
+            $novoStatus = (int)$cl['reativ_tentativas'] <= 1 ? 'respondeu_1' : 'respondeu_2';
+            $pdo->prepare("UPDATE clients SET reativ_status=? WHERE id=?")->execute([$novoStatus,$cl['id']]);
+        }
+
+        echo json_encode(['ok'=>true]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+    }
+    exit;
+}
+
+/* ── 404 ── */
+http_response_code(404);
+echo json_encode(['error' => 'Ação não encontrada: ' . htmlspecialchars($action)]);
