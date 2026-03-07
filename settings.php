@@ -34,6 +34,7 @@ $ALL_MODULES = [
     ['cadastro_inteligente', 'Cadastro Inteligente', 'Importação de mercadoria via CSV/planilha.',               'products_imports.php',   '📤', 'vendas',    false],
     ['pedidos',              'Pedidos',              'Gestão de pedidos e histórico de vendas.',                  'orders.php',             '🧾', 'vendas',    false],
     ['promocoes',            'Promoções',            'Criação e gestão de campanhas promocionais.',               'promotions.php',         '🏷️','marketing', false],
+    ['reativacao',           'Reativação',           'Reconecte clientes inativos com cadência e WhatsApp.',     'reativacao.php',         '🔁', 'marketing', false], // ← NOVO
     ['kpis',                 'KPIs',                 'Indicadores de performance e metas.',                       'kpis.php',               '📈', 'analytics', false],
     ['analytics',            'Analytics',            'Análise de dados e relatórios avançados.',                  'analytics.php',          '📉', 'analytics', false],
     ['canais',               'Canais',               'Configuração de integrações (WhatsApp, Instagram).',        'integrations.php',       '🔗', 'config',    false],
@@ -115,7 +116,7 @@ $activeTab    = $_GET['tab'] ?? 'empresa';
 $groups = [
     'core'      => ['label'=>'Core',              'icon'=>'⭐', 'desc'=>'Funcionalidades essenciais'],
     'vendas'    => ['label'=>'Vendas & Estoque',  'icon'=>'🛍️','desc'=>'PDV, produtos, pedidos e funil'],
-    'marketing' => ['label'=>'Marketing',         'icon'=>'📣', 'desc'=>'Promoções e campanhas'],
+    'marketing' => ['label'=>'Marketing',         'icon'=>'📣', 'desc'=>'Promoções, campanhas e reativação'],
     'analytics' => ['label'=>'Analytics & IA',   'icon'=>'📊', 'desc'=>'Relatórios, KPIs e inteligência artificial'],
     'agenda'    => ['label'=>'Agenda',            'icon'=>'📅', 'desc'=>'Calendários e agendamentos'],
     'config'    => ['label'=>'Configurações',     'icon'=>'⚙️', 'desc'=>'Canais, equipe e sistema'],
@@ -130,7 +131,7 @@ foreach ($ALL_MODULES as $m) {
     if (!empty($activeModules[$m[0]])) $groupCounts[$g]['active']++;
 }
 
-// Stats gerais — calculadas AQUI antes do HTML (nunca null)
+// Stats gerais
 $totalMods = count($ALL_MODULES);
 $activeCnt = count(array_filter($activeModules, fn($v) => (bool)$v));
 
