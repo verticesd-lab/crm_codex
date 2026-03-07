@@ -834,7 +834,7 @@ include __DIR__ . '/views/partials/header.php';
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 1</span>
               <!-- Input cobre o slot inteiro: funciona no iOS/Android sem .click() -->
-              <input type="file" name="imagem" id="f-imagem" accept="image/*" capture="environment"
+              <input type="file" name="imagem" id="f-imagem" accept="image/*"
                      onchange="previewSlot(this,1)">
               <input type="hidden" name="current_image" id="f-img" value="">
               <div class="img-slot-overlay">
@@ -848,7 +848,7 @@ include __DIR__ . '/views/partials/header.php';
               <img id="img-preview-2" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 2</span>
-              <input type="file" name="imagem2" id="f-imagem2" accept="image/*" capture="environment"
+              <input type="file" name="imagem2" id="f-imagem2" accept="image/*"
                      onchange="previewSlot(this,2)">
               <input type="hidden" name="current_image2" id="f-img2" value="">
               <div class="img-slot-overlay">
@@ -862,7 +862,7 @@ include __DIR__ . '/views/partials/header.php';
               <img id="img-preview-3" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 3</span>
-              <input type="file" name="imagem3" id="f-imagem3" accept="image/*" capture="environment"
+              <input type="file" name="imagem3" id="f-imagem3" accept="image/*"
                      onchange="previewSlot(this,3)">
               <input type="hidden" name="current_image3" id="f-img3" value="">
               <div class="img-slot-overlay">
@@ -876,7 +876,7 @@ include __DIR__ . '/views/partials/header.php';
               <img id="img-preview-4" class="slot-preview" src="" alt="">
               <span class="img-slot-icon">📷</span>
               <span class="img-slot-label">Foto 4</span>
-              <input type="file" name="imagem4" id="f-imagem4" accept="image/*" capture="environment"
+              <input type="file" name="imagem4" id="f-imagem4" accept="image/*"
                      onchange="previewSlot(this,4)">
               <input type="hidden" name="current_image4" id="f-img4" value="">
               <div class="img-slot-overlay">
@@ -976,7 +976,7 @@ include __DIR__ . '/views/partials/header.php';
     </div>
     <div class="panel-footer">
       <button type="button" class="btn-cancel" onclick="closePanel()">Cancelar</button>
-      <button type="submit" form="product-form" class="btn-save green">💾 Salvar Produto</button>
+      <button type="button" class="btn-save green" onclick="document.getElementById('product-form').submit()">💾 Salvar Produto</button>
     </div>
   </div>
 
