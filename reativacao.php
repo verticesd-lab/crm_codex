@@ -390,6 +390,45 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
 
 <!-- ═══ MENSAGENS ═══ -->
 <div id="tab-mensagens" class="rv-panel">
+
+  <!-- Evolution API Config Card -->
+  <div id="evolution-config-card" style="background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:1.25rem 1.5rem;margin-bottom:1.5rem">
+    <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;gap:1rem" onclick="toggleEvolutionCard()">
+      <div style="display:flex;align-items:center;gap:.6rem">
+        <span style="font-size:1.15rem">⚡</span>
+        <div>
+          <h3 style="font-size:.9rem;font-weight:700;color:#0f172a">Configuração da Evolution API</h3>
+          <p id="evo-status-line" style="font-size:.72rem;color:#94a3b8;margin-top:.1rem">Carregando...</p>
+        </div>
+      </div>
+      <span id="evo-card-arrow" style="font-size:.8rem;color:#94a3b8;transition:transform .2s">▼</span>
+    </div>
+    <div id="evo-config-body" style="display:none;margin-top:1rem;border-top:1px solid #f1f5f9;padding-top:1rem">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.85rem;margin-bottom:1rem">
+        <div>
+          <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:block;margin-bottom:.3rem">URL da API</label>
+          <input id="evo-api-url" type="text" placeholder="https://api.evolution.io" 
+            style="width:100%;padding:.5rem .75rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;outline:none;font-family:inherit;background:#f8fafc;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:block;margin-bottom:.3rem">API Key</label>
+          <input id="evo-api-key" type="password" placeholder="••••••••••••••••"
+            style="width:100%;padding:.5rem .75rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;outline:none;font-family:inherit;background:#f8fafc;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:block;margin-bottom:.3rem">Instância</label>
+          <input id="evo-instance" type="text" placeholder="loja_oficial"
+            style="width:100%;padding:.5rem .75rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;outline:none;font-family:inherit;background:#f8fafc;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary" onclick="saveEvolutionConfig()" id="btn-save-evo">💾 Salvar configuração</button>
+        <button class="btn" onclick="testEvolutionConnection()" id="btn-test-evo" style="background:#f0fdf4;color:#16a34a;border:1.5px solid #bbf7d0">🔌 Testar conexão</button>
+        <span id="evo-feedback" style="font-size:.78rem;color:#64748b"></span>
+      </div>
+    </div>
+  </div>
+
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem">
     <div>
       <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Mensagens de Reativação</h2>
@@ -583,6 +622,84 @@ async function moveSegSelected(){
 }
 
 
+
+/* ══════════════════════════════════
+   EVOLUTION CONFIG
+══════════════════════════════════ */
+let evoCardOpen = false;
+
+async function loadEvolutionConfig() {
+  const d = await fetch(`${API}?action=get_evolution_config`).then(r=>r.json()).catch(()=>({ok:false}));
+  const line = document.getElementById('evo-status-line');
+  if (d.ok) {
+    document.getElementById('evo-api-url').value  = d.api_url  || '';
+    document.getElementById('evo-api-key').value  = d.api_key  || '';
+    document.getElementById('evo-instance').value = d.instance || '';
+    const configured = d.api_url && d.api_key && d.instance;
+    if (line) line.innerHTML = configured
+      ? '<span style="color:#16a34a;font-weight:600">✅ Configurada — '+d.instance+'</span>'
+      : '<span style="color:#f59e0b;font-weight:600">⚠️ Não configurada — clique para preencher</span>';
+    if (!configured) openEvolutionCard();
+  } else {
+    if (line) line.textContent = 'Erro ao carregar configuração';
+  }
+}
+
+function toggleEvolutionCard() {
+  evoCardOpen ? closeEvolutionCard() : openEvolutionCard();
+}
+function openEvolutionCard() {
+  evoCardOpen = true;
+  const body = document.getElementById('evo-config-body');
+  const arrow = document.getElementById('evo-card-arrow');
+  if (body)  body.style.display  = 'block';
+  if (arrow) arrow.style.transform = 'rotate(180deg)';
+}
+function closeEvolutionCard() {
+  evoCardOpen = false;
+  const body = document.getElementById('evo-config-body');
+  const arrow = document.getElementById('evo-card-arrow');
+  if (body)  body.style.display  = 'none';
+  if (arrow) arrow.style.transform = 'rotate(0deg)';
+}
+
+async function saveEvolutionConfig() {
+  const btn = document.getElementById('btn-save-evo');
+  const fb  = document.getElementById('evo-feedback');
+  const payload = {
+    api_url:  document.getElementById('evo-api-url').value.trim(),
+    api_key:  document.getElementById('evo-api-key').value.trim(),
+    instance: document.getElementById('evo-instance').value.trim(),
+  };
+  btn.disabled = true; btn.textContent = '⏳ Salvando...';
+  const d = await fetch(`${API}?action=save_evolution_config`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+  btn.disabled = false; btn.textContent = '💾 Salvar configuração';
+  if (d.ok) {
+    if (fb) { fb.style.color='#16a34a'; fb.textContent = '✅ Salvo!'; setTimeout(()=>{fb.textContent=''},3000); }
+    await loadEvolutionConfig();
+    closeEvolutionCard();
+  } else {
+    if (fb) { fb.style.color='#dc2626'; fb.textContent = '❌ ' + (d.error||'Falha'); }
+  }
+}
+
+async function testEvolutionConnection() {
+  const btn = document.getElementById('btn-test-evo');
+  const fb  = document.getElementById('evo-feedback');
+  // Save first then test
+  await saveEvolutionConfig();
+  btn.disabled = true; btn.textContent = '⏳ Testando...';
+  const d = await fetch(`${API}?action=test_evolution_connection`).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de rede'}));
+  btn.disabled = false; btn.textContent = '🔌 Testar conexão';
+  if (fb) {
+    fb.style.color = d.ok ? '#16a34a' : '#dc2626';
+    fb.textContent  = d.ok ? (d.message || '✅ Conectado!') : ('❌ ' + (d.error||'Falha'));
+    setTimeout(()=>{if(fb)fb.textContent=''},6000);
+  }
+}
+
 /* ══════════════════════════════════
    MENSAGENS
 ══════════════════════════════════ */
@@ -596,6 +713,7 @@ const CTX_INFO = {
 };
 
 async function loadMessages() {
+  await loadEvolutionConfig();
   document.getElementById('msg-list').innerHTML = '<div class="rv-empty">Carregando...</div>';
   const d = await fetch(`${API}?action=get_messages_config`).then(r=>r.json()).catch(()=>({ok:false}));
   if (!d.ok) { document.getElementById('msg-list').innerHTML = '<div class="rv-empty">❌ Erro ao carregar mensagens.</div>'; return; }

@@ -138,11 +138,33 @@ function build_message(string $context, int $tentativa, string $nome, int $varId
 /**
  * Retorna configuração da Evolution API
  */
-function get_evolution_config(): array {
-    // tenta buscar de constants, env ou config.php
+function get_evolution_config(?PDO $pdo = null, ?int $companyId = null): array {
+    // 1. Tenta constantes / env
     $base     = defined('EVOLUTION_API_URL')  ? EVOLUTION_API_URL  : (getenv('EVOLUTION_API_URL')  ?: '');
     $key      = defined('EVOLUTION_API_KEY')  ? EVOLUTION_API_KEY  : (getenv('EVOLUTION_API_KEY')  ?: '');
     $instance = defined('EVOLUTION_INSTANCE') ? EVOLUTION_INSTANCE : (getenv('EVOLUTION_INSTANCE') ?: '');
+
+    // 2. Fallback: lê da tabela companies (colunas opcionais)
+    if ((!$base || !$key || !$instance) && $pdo && $companyId) {
+        try {
+            $cols = $pdo->query('SHOW COLUMNS FROM companies')->fetchAll(PDO::FETCH_COLUMN);
+            $sel  = [];
+            if (in_array('evolution_api_url',  $cols)) $sel[] = 'evolution_api_url';
+            if (in_array('evolution_api_key',  $cols)) $sel[] = 'evolution_api_key';
+            if (in_array('evolution_instance', $cols)) $sel[] = 'evolution_instance';
+            if ($sel) {
+                $row = $pdo->prepare('SELECT ' . implode(',', $sel) . ' FROM companies WHERE id=? LIMIT 1');
+                $row->execute([$companyId]);
+                $r = $row->fetch(PDO::FETCH_ASSOC);
+                if ($r) {
+                    if (!$base     && !empty($r['evolution_api_url']))  $base     = $r['evolution_api_url'];
+                    if (!$key      && !empty($r['evolution_api_key']))  $key      = $r['evolution_api_key'];
+                    if (!$instance && !empty($r['evolution_instance'])) $instance = $r['evolution_instance'];
+                }
+            }
+        } catch (Throwable $e) {}
+    }
+
     return ['base' => rtrim($base, '/'), 'key' => $key, 'instance' => $instance];
 }
 
@@ -150,8 +172,8 @@ function get_evolution_config(): array {
  * Envia mensagem via Evolution API
  * Retorna ['ok'=>true] ou ['ok'=>false,'error'=>'msg']
  */
-function send_whatsapp(string $number, string $text): array {
-    $cfg = get_evolution_config();
+function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $companyId = null): array {
+    $cfg = get_evolution_config($pdo, $companyId);
     if (!$cfg['base'] || !$cfg['key'] || !$cfg['instance']) {
         return ['ok' => false, 'error' => 'Evolution API não configurada.'];
     }
@@ -577,7 +599,7 @@ if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("UPDATE reativacao_lotes SET status='em_andamento', iniciado_em=COALESCE(iniciado_em,NOW()) WHERE id=?")->execute([$loteId]);
 
         // Tenta enviar
-        $result = send_whatsapp($envio['whatsapp'], $envio['mensagem']);
+        $result = send_whatsapp($envio['whatsapp'], $envio['mensagem'], $pdo, $companyId);
 
         if ($result['ok']) {
             // Sucesso
@@ -848,8 +870,85 @@ if ($action === 'send_test') {
     }
     if (!str_starts_with($whatsapp, '55')) $whatsapp = '55' . $whatsapp;
 
-    $result = send_whatsapp($whatsapp, $mensagem);
+    $result = send_whatsapp($whatsapp, $mensagem, $pdo, $companyId);
     echo json_encode($result);
+    exit;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   GET / SAVE EVOLUTION CONFIG
+═══════════════════════════════════════════════════ */
+if ($action === 'get_evolution_config') {
+    // Garante colunas na tabela companies
+    try {
+        $cols = $pdo->query('SHOW COLUMNS FROM companies')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('evolution_api_url',  $cols)) $pdo->exec("ALTER TABLE companies ADD COLUMN evolution_api_url  VARCHAR(255) NULL");
+        if (!in_array('evolution_api_key',  $cols)) $pdo->exec("ALTER TABLE companies ADD COLUMN evolution_api_key  VARCHAR(255) NULL");
+        if (!in_array('evolution_instance', $cols)) $pdo->exec("ALTER TABLE companies ADD COLUMN evolution_instance VARCHAR(100) NULL");
+    } catch (Throwable $e) {}
+
+    try {
+        $row = $pdo->prepare("SELECT evolution_api_url, evolution_api_key, evolution_instance FROM companies WHERE id=? LIMIT 1");
+        $row->execute([$companyId]);
+        $cfg = $row->fetch(PDO::FETCH_ASSOC) ?: [];
+        echo json_encode(['ok' => true,
+            'api_url'  => $cfg['evolution_api_url']  ?? '',
+            'api_key'  => $cfg['evolution_api_key']  ?? '',
+            'instance' => $cfg['evolution_instance'] ?? '',
+        ]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'save_evolution_config') {
+    $body = json_decode(file_get_contents('php://input'), true) ?? [];
+    $api_url  = trim($body['api_url']  ?? '');
+    $api_key  = trim($body['api_key']  ?? '');
+    $instance = trim($body['instance'] ?? '');
+
+    try {
+        // Garante colunas
+        $cols = $pdo->query('SHOW COLUMNS FROM companies')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('evolution_api_url',  $cols)) $pdo->exec("ALTER TABLE companies ADD COLUMN evolution_api_url  VARCHAR(255) NULL");
+        if (!in_array('evolution_api_key',  $cols)) $pdo->exec("ALTER TABLE companies ADD COLUMN evolution_api_key  VARCHAR(255) NULL");
+        if (!in_array('evolution_instance', $cols)) $pdo->exec("ALTER TABLE companies ADD COLUMN evolution_instance VARCHAR(100) NULL");
+
+        $pdo->prepare("UPDATE companies SET evolution_api_url=?, evolution_api_key=?, evolution_instance=? WHERE id=?")
+            ->execute([$api_url ?: null, $api_key ?: null, $instance ?: null, $companyId]);
+        echo json_encode(['ok' => true]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   TEST EVOLUTION CONNECTION
+═══════════════════════════════════════════════════ */
+if ($action === 'test_evolution_connection') {
+    $cfg = get_evolution_config($pdo, $companyId);
+    if (!$cfg['base'] || !$cfg['key'] || !$cfg['instance']) {
+        echo json_encode(['ok' => false, 'error' => 'Preencha URL, API Key e Instância antes de testar.']);
+        exit;
+    }
+    // Testa conexão com endpoint de info da instância
+    $url = "{$cfg['base']}/instance/fetchInstances";
+    $ch  = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['apikey: ' . $cfg['key']],
+        CURLOPT_TIMEOUT        => 8,
+    ]);
+    $resp    = curl_exec($ch);
+    $code    = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+    if ($curlErr) { echo json_encode(['ok' => false, 'error' => 'cURL: ' . $curlErr]); exit; }
+    if ($code >= 200 && $code < 300) { echo json_encode(['ok' => true, 'message' => 'Conexão estabelecida com sucesso! ✅']); exit; }
+    echo json_encode(['ok' => false, 'error' => "HTTP {$code} — verifique URL e API Key."]);
     exit;
 }
 
