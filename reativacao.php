@@ -328,18 +328,42 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
         <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:.5rem">
             <label style="font-size:.72rem;font-weight:600;color:#64748b;white-space:nowrap">Intervalo:</label>
-            <input type="range" id="delay-range" min="30" max="180" value="60" oninput="document.getElementById('delay-val').textContent=this.value+'s'" style="width:90px;accent-color:#6366f1">
-            <span id="delay-val" style="font-size:.78rem;color:#6366f1;font-family:monospace;width:32px">60s</span>
+            <input type="range" id="delay-range" min="180" max="420" value="300" oninput="document.getElementById('delay-val').textContent=this.value+'s'" style="width:90px;accent-color:#6366f1">
+            <span id="delay-val" style="font-size:.78rem;color:#6366f1;font-family:monospace;width:32px">300s</span>
           </div>
           <button class="btn btn-green btn-sm" id="btn-start" onclick="startSending()">▶ Iniciar</button>
           <button class="btn btn-ghost btn-sm" id="btn-stop" onclick="stopSending()" style="display:none">⏸ Pausar</button>
           <button class="btn btn-danger btn-sm" onclick="cancelLote()">✕ Cancelar lote</button>
         </div>
       </div>
+      <!-- Barra de progresso -->
+      <div id="rv-progress-wrap" style="margin-bottom:.85rem;display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem">
+          <div style="display:flex;align-items:center;gap:.6rem">
+            <div class="dot-pulse off" id="dot-pulse"></div>
+            <span id="console-status" style="font-size:.82rem;font-weight:600;color:#0f172a">Aguardando início</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:.75rem">
+            <span id="prog-fraction" style="font-size:.78rem;font-weight:700;color:#6366f1;font-family:monospace">0 / 0</span>
+            <span id="prog-pct" style="font-size:.78rem;font-weight:700;color:#6366f1;font-family:monospace;min-width:36px;text-align:right">0%</span>
+          </div>
+        </div>
+        <div style="height:10px;background:#e0e7ff;border-radius:99px;overflow:hidden;position:relative">
+          <div id="prog-bar" style="height:100%;background:linear-gradient(90deg,#6366f1,#818cf8);border-radius:99px;width:0%;transition:width .5s ease;position:relative">
+            <div style="position:absolute;top:0;right:0;bottom:0;width:40px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35));border-radius:99px"></div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:.35rem">
+          <span id="prog-ok"  style="font-size:.68rem;color:#16a34a">✓ 0 enviados</span>
+          <span id="prog-err" style="font-size:.68rem;color:#dc2626">✗ 0 erros</span>
+          <span id="prog-next-wrap" style="font-size:.68rem;color:#64748b">próximo em <span id="prog-next" style="font-family:monospace;font-weight:700;color:#6366f1">—</span></span>
+        </div>
+      </div>
+      <!-- Console -->
       <div class="rv-console">
-        <div class="rv-console-hd">
-          <div class="dot-pulse off" id="dot-pulse"></div>
-          <span id="console-status">Aguardando início</span>
+        <div class="rv-console-hd" id="rv-console-hd-simple" style="">
+          <div class="dot-pulse off" id="dot-pulse-simple" style="display:none"></div>
+          <span style="font-size:.68rem;color:#94a3b8">Log de envios</span>
           <span style="margin-left:auto;font-size:.68rem" id="console-prog"></span>
         </div>
         <div class="rv-console-bd" id="console-log">
@@ -559,7 +583,12 @@ async function loadLotes(){
   const d=await fetch(`${API}?action=get_lotes`).then(r=>r.json()).catch(()=>({ok:false,lotes:[]}));
   const wrap=document.getElementById('rv-lotes-wrap'),sp=document.getElementById('rv-send-panel');
   const la=(d.lotes||[]).find(l=>l.status==='aguardando'||l.status==='em_andamento');
-  if(la){ST.activeLoteId=la.id;sp.style.display='block';}else sp.style.display='none';
+  if(la){
+    ST.activeLoteId=la.id;sp.style.display='block';
+    // Seed progress bar with existing data
+    ST_total=la.total_clientes||0; ST_ok=la.enviados||0; ST_err=la.erros||0;
+    updateProgress(ST_ok, ST_total, ST_err);
+  }else sp.style.display='none';
   if(!d.lotes?.length){wrap.innerHTML='<div class="rv-empty">Nenhum lote ainda. Crie um na aba "Criar Lote".</div>';return;}
   wrap.innerHTML=d.lotes.map(l=>{
     const pct=l.total_clientes>0?Math.round(l.enviados/l.total_clientes*100):0;
@@ -575,33 +604,135 @@ async function loadLoteDetail(id){
   if(log&&d.envios){log.innerHTML=d.envios.slice(0,40).map(e=>{const ico=e.status==='enviado'?'✓':e.status==='erro'?'✗':e.status==='respondeu'?'↩':'○';const cls=e.status==='enviado'?'log-ok':e.status==='erro'?'log-err':'log-info';return `<div class="log-line"><span class="${cls}">${ico}</span><span style="color:#e2e8f0;margin:0 .4rem">${esc(e.nome)}</span><span class="log-text">${esc(e.msg_preview||'')}...</span></div>`;}).join('');log.scrollTop=log.scrollHeight;}
 }
 
+/* ── Progresso ── */
+let ST_ok=0, ST_err=0, ST_total=0, ST_countdown=null;
+
+function setStatus(text){ const el=document.getElementById('console-status'); if(el) el.textContent=text; }
+function setDot(on){ const el=document.getElementById('dot-pulse'); if(el) el.className='dot-pulse '+(on?'on':'off'); }
+
+function updateProgress(enviados, total, erros){
+  ST_total = total || ST_total;
+  ST_ok    = enviados;
+  ST_err   = erros || 0;
+  const pct = ST_total > 0 ? Math.round(ST_ok / ST_total * 100) : 0;
+  const bar = document.getElementById('prog-bar');
+  const frac = document.getElementById('prog-fraction');
+  const pctEl = document.getElementById('prog-pct');
+  const okEl  = document.getElementById('prog-ok');
+  const errEl = document.getElementById('prog-err');
+  if(bar)  bar.style.width  = pct + '%';
+  if(frac) frac.textContent = `${ST_ok} / ${ST_total}`;
+  if(pctEl) pctEl.textContent = pct + '%';
+  if(okEl)  okEl.textContent  = `✓ ${ST_ok} enviado${ST_ok!==1?'s':''}`;
+  if(errEl) errEl.textContent = `✗ ${ST_err} erro${ST_err!==1?'s':''}`;
+  errEl.style.display = ST_err > 0 ? '' : 'none';
+  document.getElementById('rv-progress-wrap').style.display = 'block';
+}
+
+function startCountdown(seconds){
+  stopCountdown();
+  let rem = Math.round(seconds);
+  const el = document.getElementById('prog-next');
+  const wrap = document.getElementById('prog-next-wrap');
+  if(wrap) wrap.style.display = '';
+  const tick = () => {
+    if(!ST.sending){ if(el) el.textContent='—'; return; }
+    if(el) el.textContent = rem + 's';
+    if(rem <= 0) return;
+    rem--;
+    ST_countdown = setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+function stopCountdown(){
+  if(ST_countdown){ clearTimeout(ST_countdown); ST_countdown=null; }
+  const wrap = document.getElementById('prog-next-wrap');
+  if(wrap) wrap.style.display = 'none';
+}
+
 function startSending(){
   if(!ST.activeLoteId)return alert('Nenhum lote ativo.');
   const h=new Date().getHours();if(h<9||h>=20)return alert('⚠️ Envio permitido apenas entre 09:00 e 20:00.');
-  ST.sending=true;
-  document.getElementById('btn-start').style.display='none';document.getElementById('btn-stop').style.display='inline-flex';
-  document.getElementById('dot-pulse').className='dot-pulse on';document.getElementById('console-status').textContent='Enviando...';
-  addLog('info','▶','Envio iniciado');scheduleNext();
+  ST.sending=true; ST_ok=0; ST_err=0;
+  document.getElementById('btn-start').style.display='none';
+  document.getElementById('btn-stop').style.display='inline-flex';
+  setDot(true); setStatus('Enviando...');
+  document.getElementById('rv-progress-wrap').style.display='block';
+  addLog('info','▶','Envio iniciado'); scheduleNext();
 }
+
 function stopSending(){
-  ST.sending=false;clearTimeout(ST.timer);
-  document.getElementById('btn-start').style.display='inline-flex';document.getElementById('btn-stop').style.display='none';
-  document.getElementById('dot-pulse').className='dot-pulse off';document.getElementById('console-status').textContent='Pausado';
+  ST.sending=false; clearTimeout(ST.timer); stopCountdown();
+  document.getElementById('btn-start').style.display='inline-flex';
+  document.getElementById('btn-stop').style.display='none';
+  setDot(false); setStatus('Pausado');
   addLog('info','⏸','Pausado pelo usuário');
 }
-function scheduleNext(){if(!ST.sending)return;const base=parseInt(document.getElementById('delay-range').value),jitter=Math.floor(Math.random()*60)-30;ST.timer=setTimeout(sendOne,Math.max(15,base+jitter)*1000);}
+
+function scheduleNext(){
+  if(!ST.sending)return;
+  const base=parseInt(document.getElementById('delay-range').value);
+  const jitter=Math.floor(Math.random()*120)-60;
+  const delay=Math.max(60, base+jitter);
+  ST.timer=setTimeout(sendOne, delay*1000);
+  startCountdown(delay);
+}
+
 async function sendOne(){
   if(!ST.sending)return;
+  stopCountdown();
   const h=new Date().getHours();if(h<9||h>=20){stopSending();addLog('info','⏰','Fora do horário. Pausado.');return;}
+  setStatus('Enviando mensagem...');
   const fd=new FormData();fd.append('lote_id',ST.activeLoteId);
-  const d=await fetch(`${API}?action=send_next`,{method:'POST',body:fd}).then(r=>r.json()).catch(()=>({ok:false,error:'Erro'}));
-  if(!d.ok){if(d.paused){stopSending();addLog('info','⏰',d.error||'');return;}addLog('err','✗',d.error||'Erro');scheduleNext();return;}
-  if(d.done){ST.sending=false;document.getElementById('dot-pulse').className='dot-pulse off';document.getElementById('console-status').textContent='Concluído ✅';document.getElementById('btn-start').style.display='inline-flex';document.getElementById('btn-stop').style.display='none';addLog('ok','✓','Lote concluído!');document.getElementById('rv-send-panel').style.display='none';return;}
-  addLog(d.enviado?'ok':'err',d.enviado?'✓':'✗',`${d.nome} ${d.whatsapp} — ${(d.msg_preview||'').slice(0,50)}... (${d.restantes} restantes)`);
-  document.getElementById('console-prog').textContent=`${d.restantes} pendentes`;scheduleNext();
+  const d=await fetch(`${API}?action=send_next`,{method:'POST',body:fd}).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de rede'}));
+  if(!d.ok){
+    if(d.paused){stopSending();addLog('info','⏰',d.error||'Pausado');return;}
+    ST_err++; addLog('err','✗',d.error||'Erro desconhecido');
+    updateProgress(ST_ok, ST_total, ST_err);
+    setStatus('Enviando...'); scheduleNext(); return;
+  }
+  if(d.done){
+    ST.sending=false; stopCountdown();
+    setDot(false); setStatus('Concluído ✅');
+    document.getElementById('btn-start').style.display='inline-flex';
+    document.getElementById('btn-stop').style.display='none';
+    updateProgress(ST_total, ST_total, ST_err);
+    const wrap = document.getElementById('prog-next-wrap');
+    if(wrap) wrap.style.display='none';
+    addLog('ok','✓',`Lote concluído! ${ST_total} clientes processados.`);
+    setTimeout(()=>{ document.getElementById('rv-send-panel').style.display='none'; loadLotes(); }, 2500);
+    return;
+  }
+  if(d.enviado) ST_ok++; else ST_err++;
+  const total = d.restantes != null ? ST_ok + d.restantes : ST_total;
+  updateProgress(ST_ok, total, ST_err);
+  addLog(d.enviado?'ok':'err', d.enviado?'✓':'✗',
+    `${d.nome} — ${(d.msg_preview||'').slice(0,55)}…  (${d.restantes} restante${d.restantes!==1?'s':''})`);
+  setStatus('Enviando...');
+  scheduleNext();
 }
-async function cancelLote(){if(!confirm('Cancelar o lote?'))return;stopSending();const fd=new FormData();fd.append('lote_id',ST.activeLoteId);await fetch(`${API}?action=cancel_lote`,{method:'POST',body:fd});ST.activeLoteId=null;loadLotes();}
-function addLog(type,ico,text){const log=document.getElementById('console-log'),t=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),cls=type==='ok'?'log-ok':type==='err'?'log-err':'log-info',d=document.createElement('div');d.className='log-line';d.innerHTML=`<span class="log-time">${t}</span><span class="${cls}" style="margin:0 .3rem">${ico}</span><span class="log-text">${esc(text)}</span>`;log.appendChild(d);log.scrollTop=log.scrollHeight;}
+
+async function cancelLote(){
+  if(!confirm('Cancelar o lote em andamento?'))return;
+  stopSending();
+  const fd=new FormData();fd.append('lote_id',ST.activeLoteId);
+  await fetch(`${API}?action=cancel_lote`,{method:'POST',body:fd});
+  ST.activeLoteId=null;
+  document.getElementById('rv-send-panel').style.display='none';
+  document.getElementById('rv-progress-wrap').style.display='none';
+  loadLotes();
+}
+
+function addLog(type,ico,text){
+  const log=document.getElementById('console-log');
+  const t=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const cls=type==='ok'?'log-ok':type==='err'?'log-err':'log-info';
+  const el=document.createElement('div');
+  el.className='log-line';
+  el.innerHTML=`<span class="log-time">${t}</span><span class="${cls}" style="margin:0 .3rem">${ico}</span><span class="log-text">${esc(text)}</span>`;
+  log.appendChild(el); log.scrollTop=log.scrollHeight;
+}
 
 async function loadSeg(status,btn){
   ST.seg=status;ST.segSel.clear();document.getElementById('seg-sel-bar').style.display='none';
