@@ -305,6 +305,13 @@ if ($action === 'get_eligible') {
     $contexto      = $_GET['contexto'] ?? 'todos';
     $tentativa     = (int)($_GET['tentativa'] ?? 1);
 
+    // Verifica se appointments.client_id existe (adicionada pelo create_appointment_internal.php)
+    $apptHasClientId = false;
+    try {
+        $aCols = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN);
+        $apptHasClientId = in_array('client_id', $aCols);
+    } catch (Throwable $_e) {}
+
     try {
         $where  = "c.company_id = ? AND c.whatsapp IS NOT NULL AND c.whatsapp != ''";
         $params = [$companyId];
@@ -324,15 +331,23 @@ if ($action === 'get_eligible') {
         if ($contexto === 'pdv') {
             $where .= " AND c.tags LIKE '%pdv%'";
         } elseif ($contexto === 'barbearia') {
-            $where .= " AND (c.tags LIKE '%barbearia%' OR EXISTS(SELECT 1 FROM appointments a WHERE a.client_id=c.id AND a.company_id=c.company_id LIMIT 1))";
+            if ($apptHasClientId) {
+                $where .= " AND (c.tags LIKE '%barbearia%' OR EXISTS(SELECT 1 FROM appointments a WHERE a.client_id=c.id AND a.company_id=c.company_id LIMIT 1))";
+            } else {
+                $where .= " AND c.tags LIKE '%barbearia%'";
+            }
         } elseif ($contexto === 'whatsapp') {
             $where .= " AND c.tags LIKE '%whatsapp%' AND c.tags NOT LIKE '%pdv%' AND c.tags NOT LIKE '%barbearia%'";
         }
 
+        $hasApptSql = $apptHasClientId
+            ? "(SELECT COUNT(*) FROM appointments a WHERE a.client_id=c.id AND a.company_id=c.company_id)"
+            : "0";
+
         $stmt = $pdo->prepare("
             SELECT c.id, c.nome, c.whatsapp, c.tags, c.ultimo_atendimento_em,
                    c.reativ_status, c.reativ_tentativas,
-                   (SELECT COUNT(*) FROM appointments a WHERE a.client_id=c.id AND a.company_id=c.company_id) as has_appt
+                   {$hasApptSql} as has_appt
             FROM clients c
             WHERE {$where}
             ORDER BY c.ultimo_atendimento_em ASC
@@ -400,7 +415,9 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $placeholders = implode(',', array_fill(0, count($clientIds), '?'));
         $stmt = $pdo->prepare("
             SELECT id, nome, whatsapp, tags,
-                   (SELECT COUNT(*) FROM appointments a WHERE a.client_id=clients.id LIMIT 1) as has_appt
+                   (CASE WHEN (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='appointments' AND COLUMN_NAME='client_id')>0
+                        THEN (SELECT COUNT(*) FROM appointments a WHERE a.client_id=clients.id LIMIT 1)
+                        ELSE 0 END) as has_appt
             FROM clients
             WHERE id IN ($placeholders) AND company_id = ?
         ");
