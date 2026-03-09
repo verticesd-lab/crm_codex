@@ -153,6 +153,36 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
 .rv-obs:focus{border-color:#6366f1;background:#fff}
 .rv-empty{text-align:center;padding:3rem 1rem;color:#94a3b8;font-size:.875rem}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:2px}
+
+/* ── Message Cards ── */
+.msg-card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; margin-bottom:1rem; overflow:hidden; transition:box-shadow .15s; }
+.msg-card:hover { box-shadow:0 4px 16px rgba(0,0,0,.07); }
+.msg-card-hd { display:flex; align-items:center; justify-content:space-between; padding:.75rem 1rem; background:#f8fafc; border-bottom:1px solid #f1f5f9; gap:.75rem; flex-wrap:wrap; }
+.msg-card-meta { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.msg-tent-badge { font-size:.68rem; font-weight:700; padding:.2rem .55rem; border-radius:20px; }
+.msg-tent-1 { background:#ede9fe; color:#6d28d9; }
+.msg-tent-2 { background:#fef3c7; color:#d97706; }
+.msg-var-badge { font-size:.65rem; font-weight:600; background:#f1f5f9; color:#64748b; padding:.15rem .45rem; border-radius:4px; font-family:monospace; }
+.msg-custom-badge { font-size:.65rem; font-weight:700; background:#dcfce7; color:#15803d; padding:.15rem .45rem; border-radius:4px; }
+.msg-card-bd { padding:1rem; display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+@media (max-width:700px) { .msg-card-bd { grid-template-columns:1fr; } }
+.msg-editor { display:flex; flex-direction:column; gap:.4rem; }
+.msg-editor label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; }
+.msg-textarea { width:100%; padding:.65rem .85rem; border:1.5px solid #e2e8f0; border-radius:8px; font-size:.82rem; color:#0f172a; font-family:inherit; resize:vertical; min-height:100px; outline:none; transition:border-color .15s, background .15s; background:#f8fafc; line-height:1.55; }
+.msg-textarea:focus { border-color:#6366f1; background:#fff; }
+.msg-textarea.modified { border-color:#f59e0b; background:#fffbeb; }
+.msg-preview-box { background:#f0fdf4; border:1px solid #bbf7d0; border-left:3px solid #22c55e; border-radius:8px; padding:.75rem 1rem; font-size:.82rem; color:#166534; white-space:pre-line; line-height:1.55; min-height:100px; }
+.msg-actions { display:flex; gap:.4rem; flex-wrap:wrap; margin-top:.5rem; }
+.btn-test { background:#f0fdf4; color:#16a34a; border:1.5px solid #bbf7d0; }
+.btn-test:hover { background:#dcfce7; }
+.btn-test:disabled { opacity:.4; cursor:not-allowed; }
+.btn-reset { background:#fefce8; color:#a16207; border:1.5px solid #fde68a; }
+.btn-reset:hover { background:#fef3c7; }
+.ctx-section-hd { display:flex; align-items:center; gap:.75rem; padding:.65rem 0; margin-bottom:.75rem; border-bottom:2px solid #f1f5f9; }
+.ctx-section-hd-icon { font-size:1.1rem; }
+.ctx-section-hd h3 { font-size:.95rem; font-weight:700; color:#0f172a; }
+.ctx-section-hd p { font-size:.72rem; color:#94a3b8; }
+
 </style>
 
 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem">
@@ -171,6 +201,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   <button class="rv-tab" data-tab="criar">📤 Criar Lote</button>
   <button class="rv-tab" data-tab="lotes">📋 Histórico</button>
   <button class="rv-tab" data-tab="segmentos">🗂️ Segmentos</button>
+  <button class="rv-tab" data-tab="mensagens">📝 Mensagens</button>
 </div>
 
 <!-- ═══ DASHBOARD ═══ -->
@@ -356,6 +387,45 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   <div class="rv-table-wrap" id="seg-wrap"><div class="rv-empty">Selecione um segmento acima</div></div>
 </div>
 
+
+<!-- ═══ MENSAGENS ═══ -->
+<div id="tab-mensagens" class="rv-panel">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem">
+    <div>
+      <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Mensagens de Reativação</h2>
+      <p style="font-size:.78rem;color:#64748b;margin-top:.15rem">Edite os textos, veja a prévia e envie um teste. Use <code style="background:#f1f5f9;padding:.1rem .3rem;border-radius:3px">{nome}</code> para o primeiro nome do cliente.</p>
+    </div>
+    <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;flex-direction:column;gap:.2rem">
+        <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b">Preview com nome</label>
+        <input id="msg-preview-nome" type="text" value="Carlos" placeholder="Ex: Carlos"
+          oninput="refreshAllPreviews()"
+          style="padding:.45rem .75rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;width:140px;outline:none;background:#f8fafc;font-family:inherit">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.2rem">
+        <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b">WhatsApp p/ teste</label>
+        <input id="msg-test-wa" type="text" placeholder="5565999999999"
+          style="padding:.45rem .75rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;width:160px;outline:none;background:#f8fafc;font-family:inherit">
+      </div>
+      <div style="padding-top:18px">
+        <button class="btn btn-primary" onclick="saveAllMessages()" id="btn-save-msgs">💾 Salvar tudo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filtro de contexto -->
+  <div class="seg-btns" id="msg-ctx-filter" style="margin-bottom:1.25rem">
+    <button class="seg-btn active" onclick="filterMsgCtx('todos',this)">Todos</button>
+    <button class="seg-btn" onclick="filterMsgCtx('pdv',this)">🛒 PDV</button>
+    <button class="seg-btn" onclick="filterMsgCtx('barbearia',this)">✂️ Barbearia</button>
+    <button class="seg-btn" onclick="filterMsgCtx('whatsapp',this)">💬 WhatsApp</button>
+  </div>
+
+  <div id="msg-list">
+    <div class="rv-empty">Carregando mensagens...</div>
+  </div>
+</div>
+
 <!-- MODAL -->
 <div class="rv-modal-ov" id="rv-modal" onclick="if(event.target===this)closeModal()">
   <div class="rv-modal">
@@ -389,6 +459,7 @@ function switchTab(tab){
   document.querySelectorAll('.rv-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+tab));
   if(tab==='lotes')loadLotes();
   if(tab==='segmentos')loadSeg(ST.seg);
+  if(tab==='mensagens')loadMessages();
 }
 
 async function loadEligible(){
@@ -511,6 +582,205 @@ async function moveSegSelected(){
   if(d.ok)loadSeg(ST.seg);else alert('Erro: '+(d.error||'Falha'));
 }
 
+
+/* ══════════════════════════════════
+   MENSAGENS
+══════════════════════════════════ */
+let MSG_DATA = []; // [{contexto, tentativa, variacao_idx, mensagem, is_custom, default}]
+let MSG_DIRTY = {}; // key -> modified text
+
+const CTX_INFO = {
+  pdv:       { label:'PDV — Loja Física',     icon:'🛒', desc:'Clientes que compraram na loja física' },
+  barbearia: { label:'Barbearia',             icon:'✂️', desc:'Clientes com agendamento na barbearia' },
+  whatsapp:  { label:'Só WhatsApp',           icon:'💬', desc:'Clientes que só interagiram pelo chat' },
+};
+
+async function loadMessages() {
+  document.getElementById('msg-list').innerHTML = '<div class="rv-empty">Carregando...</div>';
+  const d = await fetch(`${API}?action=get_messages_config`).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!d.ok) { document.getElementById('msg-list').innerHTML = '<div class="rv-empty">❌ Erro ao carregar mensagens.</div>'; return; }
+  MSG_DATA = d.mensagens || [];
+  MSG_DIRTY = {};
+  renderMessages('todos');
+}
+
+function filterMsgCtx(ctx, btn) {
+  document.querySelectorAll('#msg-ctx-filter .seg-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderMessages(ctx);
+}
+
+function renderMessages(ctxFilter) {
+  const list = document.getElementById('msg-list');
+  const nome = document.getElementById('msg-preview-nome').value || 'Carlos';
+
+  // Agrupa por contexto
+  const grouped = {};
+  MSG_DATA.forEach(m => {
+    if (ctxFilter !== 'todos' && m.contexto !== ctxFilter) return;
+    if (!grouped[m.contexto]) grouped[m.contexto] = [];
+    grouped[m.contexto].push(m);
+  });
+
+  if (!Object.keys(grouped).length) { list.innerHTML = '<div class="rv-empty">Nenhuma mensagem neste contexto.</div>'; return; }
+
+  let html = '';
+  for (const [ctx, msgs] of Object.entries(grouped)) {
+    const info = CTX_INFO[ctx] || { label: ctx, icon:'📩', desc:'' };
+    html += `<div class="msg-ctx-section" data-ctx="${ctx}">
+      <div class="ctx-section-hd">
+        <span class="ctx-section-hd-icon">${info.icon}</span>
+        <div><h3>${info.label}</h3><p>${info.desc}</p></div>
+      </div>`;
+
+    // Group by tentativa
+    const byTent = {};
+    msgs.forEach(m => { (byTent[m.tentativa] = byTent[m.tentativa]||[]).push(m); });
+
+    for (const [tent, vars] of Object.entries(byTent)) {
+      vars.forEach(m => {
+        const key = `${m.contexto}_${m.tentativa}_${m.variacao_idx}`;
+        const cur = MSG_DIRTY[key] ?? m.mensagem;
+        const preview = cur.replace(/\{nome\}/g, nome);
+        const isModified = MSG_DIRTY[key] !== undefined && MSG_DIRTY[key] !== m.default;
+        const isCustom   = m.is_custom || isModified;
+
+        html += `<div class="msg-card" id="card-${key}">
+          <div class="msg-card-hd">
+            <div class="msg-card-meta">
+              <span class="msg-tent-badge ${tent==1?'msg-tent-1':'msg-tent-2'}">${tent}ª mensagem</span>
+              <span class="msg-var-badge">variação ${parseInt(m.variacao_idx)+1}</span>
+              ${isCustom ? '<span class="msg-custom-badge">✏️ customizada</span>' : '<span style="font-size:.65rem;color:#94a3b8">padrão</span>'}
+            </div>
+            <div class="msg-actions">
+              <button class="btn btn-test btn-sm" onclick="sendTest('${key}')" title="Enviar esta mensagem de teste">📤 Testar</button>
+              <button class="btn btn-reset btn-sm" onclick="resetMsg('${key}','${ctx}',${tent},${m.variacao_idx})" title="Restaurar texto padrão">↺ Restaurar</button>
+            </div>
+          </div>
+          <div class="msg-card-bd">
+            <div class="msg-editor">
+              <label>✏️ Editar mensagem</label>
+              <textarea class="msg-textarea${isModified?' modified':''}" id="ta-${key}"
+                oninput="onMsgInput('${key}',this)"
+                rows="5">${esc(cur)}</textarea>
+              <p style="font-size:.65rem;color:#94a3b8;margin-top:.15rem">Use <code style="background:#f1f5f9;padding:.05rem .25rem;border-radius:3px">{nome}</code> para o primeiro nome do cliente</p>
+            </div>
+            <div class="msg-editor">
+              <label>👁 Prévia (com "${nome}")</label>
+              <div class="msg-preview-box" id="prev-${key}">${esc(preview)}</div>
+            </div>
+          </div>
+        </div>`;
+      });
+    }
+    html += '</div>';
+  }
+
+  list.innerHTML = html;
+}
+
+function onMsgInput(key, ta) {
+  MSG_DIRTY[key] = ta.value;
+  // Update preview
+  const nome = document.getElementById('msg-preview-nome').value || 'Carlos';
+  const prev = document.getElementById('prev-' + key);
+  if (prev) prev.textContent = ta.value.replace(/\{nome\}/g, nome);
+  // Mark as modified visually
+  ta.classList.toggle('modified', true);
+  // Update custom badge
+  const card = document.getElementById('card-' + key);
+  if (card) {
+    const meta = card.querySelector('.msg-card-meta');
+    const existing = meta.querySelector('.msg-custom-badge, [style*="padrão"]');
+    if (existing) existing.outerHTML = '<span class="msg-custom-badge">✏️ customizada</span>';
+  }
+}
+
+function refreshAllPreviews() {
+  const nome = document.getElementById('msg-preview-nome').value || 'Carlos';
+  document.querySelectorAll('[id^="ta-"]').forEach(ta => {
+    const key = ta.id.replace('ta-','');
+    const prev = document.getElementById('prev-' + key);
+    if (prev) prev.textContent = ta.value.replace(/\{nome\}/g, nome);
+  });
+}
+
+function resetMsg(key, ctx, tent, idx) {
+  const original = MSG_DATA.find(m => m.contexto===ctx && m.tentativa==tent && m.variacao_idx==idx);
+  if (!original) return;
+  const ta = document.getElementById('ta-'+key);
+  if (!ta) return;
+  ta.value = original.default;
+  ta.classList.remove('modified');
+  delete MSG_DIRTY[key];
+  refreshAllPreviews();
+  // Update badge
+  const card = document.getElementById('card-'+key);
+  if (card) {
+    const badge = card.querySelector('.msg-custom-badge');
+    if (badge) badge.outerHTML = '<span style="font-size:.65rem;color:#94a3b8">padrão</span>';
+  }
+}
+
+async function sendTest(key) {
+  const wa = document.getElementById('msg-test-wa').value.replace(/\D/g,'');
+  if (!wa) { alert('Preencha o WhatsApp para teste no topo da página.'); return; }
+  const ta = document.getElementById('ta-'+key);
+  if (!ta) return;
+  const nome = document.getElementById('msg-preview-nome').value || 'Carlos';
+  const msg  = ta.value.replace(/\{nome\}/g, nome);
+
+  const btn = document.querySelector(`#card-${key} .btn-test`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando...'; }
+
+  const d = await fetch(`${API}?action=send_test`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ whatsapp: wa, mensagem: msg })
+  }).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de comunicação'}));
+
+  if (btn) { btn.disabled = false; btn.textContent = '📤 Testar'; }
+
+  if (d.ok) {
+    btn.textContent = '✅ Enviado!';
+    setTimeout(() => { if(btn) btn.textContent = '📤 Testar'; }, 3000);
+  } else {
+    alert('Erro ao enviar: ' + (d.error || 'Falha desconhecida'));
+  }
+}
+
+async function saveAllMessages() {
+  const btn = document.getElementById('btn-save-msgs');
+  // Coleta todos os textareas visíveis ou do MSG_DATA com dirty
+  const toSave = [];
+  MSG_DATA.forEach(m => {
+    const key = `${m.contexto}_${m.tentativa}_${m.variacao_idx}`;
+    const ta  = document.getElementById('ta-'+key);
+    const cur = ta ? ta.value : (MSG_DIRTY[key] ?? m.mensagem);
+    toSave.push({ contexto: m.contexto, tentativa: m.tentativa, variacao_idx: m.variacao_idx, mensagem: cur });
+  });
+
+  btn.disabled = true; btn.textContent = '⏳ Salvando...';
+  const d = await fetch(`${API}?action=save_messages_config`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ mensagens: toSave })
+  }).then(r=>r.json()).catch(()=>({ok:false,error:'Erro'}));
+  btn.disabled = false; btn.textContent = '💾 Salvar tudo';
+
+  if (d.ok) {
+    btn.textContent = `✅ ${d.saved} salvas!`;
+    setTimeout(() => { btn.textContent = '💾 Salvar tudo'; }, 3000);
+    // Reload to refresh is_custom flags
+    await loadMessages();
+    // Re-apply current filter
+    const activeFilter = document.querySelector('#msg-ctx-filter .seg-btn.active');
+    if (activeFilter) {
+      const ctx = activeFilter.onclick?.toString().match(/'(\w+)'/)?.[1] || 'todos';
+      renderMessages(ctx);
+    }
+  } else {
+    alert('Erro: ' + (d.error || 'Falha'));
+  }
+}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 </script>

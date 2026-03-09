@@ -49,9 +49,9 @@ $action = $_GET['action'] ?? $_POST['action'] ?? '';
 /* ═══════════════════════════════════════════════════
    MENSAGENS — 3 contextos × variações
 ═══════════════════════════════════════════════════ */
-function get_messages(): array {
+/* Mensagens padrão — usadas como fallback quando não há customização no banco */
+function get_default_messages(): array {
     return [
-        /* ── PDV: comprou na loja física ── */
         'pdv' => [
             1 => [
                 "Oi {nome}! Tudo bem? 😊\n\nAqui é da Formen Store. Faz um tempinho que você não passa por aqui — qualquer coisa que precisar é só chamar!",
@@ -63,7 +63,6 @@ function get_messages(): array {
                 "{nome}, oi! Uma última passagem aqui pra dizer que a gente não esqueceu de você 😄\n\nQualquer coisa é só dar um oi!",
             ],
         ],
-        /* ── Barbearia: teve agendamento ── */
         'barbearia' => [
             1 => [
                 "Oi {nome}! Tudo bem? ✂️\n\nAqui é da Formen Barbearia. Faz um tempo que você não passa por aqui — se quiser agendar é só mandar mensagem!",
@@ -75,7 +74,6 @@ function get_messages(): array {
                 "{nome}, oi! Uma última passagem aqui — qualquer horário que precisar pode chamar 😊",
             ],
         ],
-        /* ── WhatsApp: só interagiu pelo chat ── */
         'whatsapp' => [
             1 => [
                 "Oi {nome}! Tudo bem? 😊\n\nAqui é da Formen. Faz um tempinho que não conversamos — qualquer coisa que precisar pode chamar!",
@@ -88,6 +86,31 @@ function get_messages(): array {
             ],
         ],
     ];
+}
+
+/* Carrega mensagens: banco primeiro, fallback nas defaults */
+function get_messages(?PDO $pdo = null, ?int $companyId = null): array {
+    $defaults = get_default_messages();
+    if (!$pdo || !$companyId) return $defaults;
+    try {
+        $stmt = $pdo->prepare("SELECT contexto, tentativa, variacao_idx, mensagem FROM reativacao_mensagens WHERE company_id = ? ORDER BY contexto, tentativa, variacao_idx");
+        $stmt->execute([$companyId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($rows)) return $defaults;
+        // Reconstrói estrutura a partir do banco
+        $msgs = $defaults;
+        foreach ($rows as $r) {
+            $ctx  = $r['contexto'];
+            $tent = (int)$r['tentativa'];
+            $idx  = (int)$r['variacao_idx'];
+            if (isset($msgs[$ctx][$tent])) {
+                $msgs[$ctx][$tent][$idx] = $r['mensagem'];
+            }
+        }
+        return $msgs;
+    } catch (Throwable $e) {
+        return $defaults;
+    }
 }
 
 /**
@@ -103,12 +126,11 @@ function detect_context(array $client): string {
 /**
  * Monta a mensagem com variação e substitui {nome}
  */
-function build_message(string $context, int $tentativa, string $nome, int $varIdx = -1): string {
-    $msgs = get_messages();
+function build_message(string $context, int $tentativa, string $nome, int $varIdx = -1, ?PDO $pdo = null, ?int $companyId = null): string {
+    $msgs = get_messages($pdo, $companyId);
     $pool = $msgs[$context][$tentativa] ?? $msgs['whatsapp'][1];
     $idx  = $varIdx >= 0 ? ($varIdx % count($pool)) : array_rand($pool);
     $msg  = $pool[$idx];
-    // usa o primeiro nome, mantém capitalização original do cadastro
     $firstName = explode(' ', trim($nome))[0];
     return str_replace('{nome}', $firstName, $msg);
 }
@@ -229,6 +251,21 @@ if ($action === 'setup_tables') {
             INDEX idx_status  (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     } catch(Throwable $e) { $errors[] = 'reativacao_envios: ' . $e->getMessage(); }
+
+    // Tabela de mensagens customizadas
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS reativacao_mensagens (
+            id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            company_id   INT UNSIGNED NOT NULL,
+            contexto     VARCHAR(20) NOT NULL,
+            tentativa    TINYINT NOT NULL,
+            variacao_idx TINYINT NOT NULL,
+            mensagem     TEXT NOT NULL,
+            updated_at   DATETIME NOT NULL,
+            UNIQUE KEY uq_msg (company_id, contexto, tentativa, variacao_idx),
+            INDEX idx_company (company_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch(Throwable $e) { $errors[] = 'reativacao_mensagens: ' . $e->getMessage(); }
 
     echo json_encode(['ok' => empty($errors), 'errors' => $errors]);
     exit;
@@ -357,11 +394,11 @@ if ($action === 'get_eligible') {
         $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         // Adiciona contexto detectado e preview da mensagem
-        $msgs = get_messages();
+        $msgs = get_messages($pdo, $companyId);
         foreach ($clients as &$cl) {
             $ctx      = detect_context($cl);
             $cl['contexto_detectado'] = $ctx;
-            $cl['msg_preview'] = build_message($ctx, $tentativa, $cl['nome'], 0);
+            $cl['msg_preview'] = build_message($ctx, $tentativa, $cl['nome'], 0, $pdo, $companyId);
             // dias sem visita
             if ($cl['ultimo_atendimento_em']) {
                 $cl['dias_ausente'] = (int)(new DateTime('today'))->diff(new DateTime($cl['ultimo_atendimento_em']))->days;
@@ -428,7 +465,7 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $varIdx = 0;
         foreach ($clientsData as $cl) {
             $ctx = detect_context($cl);
-            $msg = build_message($ctx, $tentativa, $cl['nome'], $varIdx);
+            $msg = build_message($ctx, $tentativa, $cl['nome'], $varIdx, $pdo, $companyId);
             $varIdx++;
 
             $pdo->prepare("
@@ -695,6 +732,124 @@ if ($action === 'mark_responded') {
     } catch (Throwable $e) {
         echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
     }
+    exit;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   GET MESSAGES CONFIG
+═══════════════════════════════════════════════════ */
+if ($action === 'get_messages_config') {
+    // Garante tabela existe
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS reativacao_mensagens (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            company_id INT UNSIGNED NOT NULL,
+            contexto VARCHAR(20) NOT NULL, tentativa TINYINT NOT NULL,
+            variacao_idx TINYINT NOT NULL, mensagem TEXT NOT NULL,
+            updated_at DATETIME NOT NULL,
+            UNIQUE KEY uq_msg (company_id, contexto, tentativa, variacao_idx),
+            INDEX idx_company (company_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Throwable $e) {}
+
+    $defaults = get_default_messages();
+    $custom   = [];
+    try {
+        $stmt = $pdo->prepare("SELECT contexto, tentativa, variacao_idx, mensagem FROM reativacao_mensagens WHERE company_id=?");
+        $stmt->execute([$companyId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $custom[$r['contexto']][(int)$r['tentativa']][(int)$r['variacao_idx']] = $r['mensagem'];
+        }
+    } catch (Throwable $e) {}
+
+    // Mescla: customizado por cima do default
+    $result = [];
+    foreach ($defaults as $ctx => $tents) {
+        foreach ($tents as $tent => $vars) {
+            foreach ($vars as $idx => $msg) {
+                $result[] = [
+                    'contexto'     => $ctx,
+                    'tentativa'    => (int)$tent,
+                    'variacao_idx' => (int)$idx,
+                    'mensagem'     => $custom[$ctx][$tent][$idx] ?? $msg,
+                    'is_custom'    => isset($custom[$ctx][$tent][$idx]),
+                    'default'      => $msg,
+                ];
+            }
+        }
+    }
+    echo json_encode(['ok' => true, 'mensagens' => $result]);
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   SAVE MESSAGES CONFIG
+═══════════════════════════════════════════════════ */
+if ($action === 'save_messages_config') {
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $mensagens = $body['mensagens'] ?? [];
+    $defaults  = get_default_messages();
+
+    try {
+        // Garante tabela
+        $pdo->exec("CREATE TABLE IF NOT EXISTS reativacao_mensagens (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            company_id INT UNSIGNED NOT NULL,
+            contexto VARCHAR(20) NOT NULL, tentativa TINYINT NOT NULL,
+            variacao_idx TINYINT NOT NULL, mensagem TEXT NOT NULL,
+            updated_at DATETIME NOT NULL,
+            UNIQUE KEY uq_msg (company_id, contexto, tentativa, variacao_idx),
+            INDEX idx_company (company_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $saved = 0;
+        $reset = 0;
+        foreach ($mensagens as $m) {
+            $ctx  = trim($m['contexto'] ?? '');
+            $tent = (int)($m['tentativa'] ?? 0);
+            $idx  = (int)($m['variacao_idx'] ?? 0);
+            $msg  = trim($m['mensagem'] ?? '');
+            if (!$ctx || !$tent || !$msg) continue;
+
+            $default = $defaults[$ctx][$tent][$idx] ?? null;
+
+            if ($msg === $default) {
+                // Voltou ao padrão: remove do banco
+                $pdo->prepare("DELETE FROM reativacao_mensagens WHERE company_id=? AND contexto=? AND tentativa=? AND variacao_idx=?")
+                    ->execute([$companyId, $ctx, $tent, $idx]);
+                $reset++;
+            } else {
+                $pdo->prepare("INSERT INTO reativacao_mensagens (company_id, contexto, tentativa, variacao_idx, mensagem, updated_at)
+                    VALUES (?,?,?,?,?,NOW())
+                    ON DUPLICATE KEY UPDATE mensagem=VALUES(mensagem), updated_at=NOW()")
+                    ->execute([$companyId, $ctx, $tent, $idx, $msg]);
+                $saved++;
+            }
+        }
+        echo json_encode(['ok' => true, 'saved' => $saved, 'reset' => $reset]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   SEND TEST MESSAGE
+═══════════════════════════════════════════════════ */
+if ($action === 'send_test') {
+    $body    = json_decode(file_get_contents('php://input'), true) ?? [];
+    $whatsapp = preg_replace('/\D/', '', $body['whatsapp'] ?? '');
+    $mensagem = trim($body['mensagem'] ?? '');
+
+    if (!$whatsapp || !$mensagem) {
+        echo json_encode(['ok' => false, 'error' => 'WhatsApp e mensagem são obrigatórios.']);
+        exit;
+    }
+    if (!str_starts_with($whatsapp, '55')) $whatsapp = '55' . $whatsapp;
+
+    $result = send_whatsapp($whatsapp, $mensagem);
+    echo json_encode($result);
     exit;
 }
 
