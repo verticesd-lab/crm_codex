@@ -192,11 +192,14 @@ function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $com
             'Content-Type: application/json',
             'apikey: ' . $cfg['key'],
         ],
-        CURLOPT_POSTFIELDS     => json_encode([
+        CURLOPT_POSTFIELDS      => json_encode([
             'number' => $digits,
             'text'   => $text,
         ]),
-        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_TIMEOUT         => 20,
+        CURLOPT_FOLLOWLOCATION  => true,   // segue redirects (307/301)
+        CURLOPT_MAXREDIRS       => 3,
+        CURLOPT_SSL_VERIFYPEER  => false,  // evita erro de cert em alguns hosts
     ]);
 
     $resp    = curl_exec($ch);
