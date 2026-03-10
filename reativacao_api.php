@@ -213,6 +213,18 @@ function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $com
 }
 
 /* ═══════════════════════════════════════════════════
+   AUTO-MIGRATE: garante colunas em tempo de execução
+═══════════════════════════════════════════════════ */
+try {
+    if ($pdo->query("SHOW TABLES LIKE 'reativacao_envios'")->rowCount() > 0) {
+        $eCols = $pdo->query('SHOW COLUMNS FROM reativacao_envios')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('tentativa',    $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN tentativa    TINYINT DEFAULT 1 AFTER mensagem");
+        if (!in_array('respondeu_em', $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN respondeu_em DATETIME NULL");
+        if (!in_array('erro_msg',     $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN erro_msg     TEXT NULL");
+    }
+} catch (Throwable $_mig) {}
+
+/* ═══════════════════════════════════════════════════
    SETUP TABLES
 ═══════════════════════════════════════════════════ */
 if ($action === 'setup_tables') {
@@ -276,6 +288,14 @@ if ($action === 'setup_tables') {
             INDEX idx_status  (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     } catch(Throwable $e) { $errors[] = 'reativacao_envios: ' . $e->getMessage(); }
+
+    // Garante colunas que podem estar faltando em tabelas criadas em versões anteriores
+    try {
+        $eCols = $pdo->query('SHOW COLUMNS FROM reativacao_envios')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('tentativa',    $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN tentativa    TINYINT DEFAULT 1 AFTER mensagem");
+        if (!in_array('respondeu_em', $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN respondeu_em DATETIME NULL");
+        if (!in_array('erro_msg',     $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN erro_msg     TEXT NULL");
+    } catch(Throwable $e) { $errors[] = 'reativacao_envios_cols: ' . $e->getMessage(); }
 
     // Tabela de mensagens customizadas
     try {
