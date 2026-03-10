@@ -216,7 +216,9 @@ function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $com
    AUTO-MIGRATE: garante colunas em tempo de execução
 ═══════════════════════════════════════════════════ */
 try {
-    if ($pdo->query("SHOW TABLES LIKE 'reativacao_envios'")->rowCount() > 0) {
+    // fetch() é confiável em todos os drivers PDO/MySQL, rowCount() não é
+    $tableExists = $pdo->query("SHOW TABLES LIKE 'reativacao_envios'")->fetch();
+    if ($tableExists) {
         $eCols = $pdo->query('SHOW COLUMNS FROM reativacao_envios')->fetchAll(PDO::FETCH_COLUMN);
         if (!in_array('tentativa',    $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN tentativa    TINYINT DEFAULT 1 AFTER mensagem");
         if (!in_array('respondeu_em', $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN respondeu_em DATETIME NULL");
@@ -579,6 +581,14 @@ if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         echo json_encode(['ok' => false, 'error' => 'Fora do horário permitido (09:00–20:00)', 'paused' => true]);
         exit;
     }
+
+    // Garante colunas críticas antes de qualquer query
+    try {
+        $eCols = $pdo->query('SHOW COLUMNS FROM reativacao_envios')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('tentativa',    $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN tentativa    TINYINT DEFAULT 1 AFTER mensagem");
+        if (!in_array('respondeu_em', $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN respondeu_em DATETIME NULL");
+        if (!in_array('erro_msg',     $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN erro_msg     TEXT NULL");
+    } catch (Throwable $_mc) {}
 
     try {
         // Pega próximo pendente
