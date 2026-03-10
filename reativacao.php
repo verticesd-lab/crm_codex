@@ -328,8 +328,8 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
         <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:.5rem">
             <label style="font-size:.72rem;font-weight:600;color:#64748b;white-space:nowrap">Intervalo:</label>
-            <input type="range" id="delay-range" min="180" max="420" value="300" oninput="document.getElementById('delay-val').textContent=this.value+'s'" style="width:90px;accent-color:#6366f1">
-            <span id="delay-val" style="font-size:.78rem;color:#6366f1;font-family:monospace;width:32px">300s</span>
+<span style="font-size:.75rem;color:#6366f1;font-family:monospace;background:#ede9fe;padding:.2rem .6rem;border-radius:6px">🎲 180–455s aleatório</span>
+            <span id="delay-val" style="font-size:.68rem;color:#94a3b8;font-family:monospace" id="delay-val"></span>
           </div>
           <button class="btn btn-green btn-sm" id="btn-start" onclick="startSending()">▶ Iniciar</button>
           <button class="btn btn-ghost btn-sm" id="btn-stop" onclick="stopSending()" style="display:none">⏸ Pausar</button>
@@ -672,9 +672,7 @@ function stopSending(){
 
 function scheduleNext(){
   if(!ST.sending)return;
-  const base=parseInt(document.getElementById('delay-range').value);
-  const jitter=Math.floor(Math.random()*120)-60;
-  const delay=Math.max(60, base+jitter);
+  const delay=Math.floor(Math.random()*(455-180+1))+180; // 180–455s aleatório
   ST.timer=setTimeout(sendOne, delay*1000);
   startCountdown(delay);
 }
