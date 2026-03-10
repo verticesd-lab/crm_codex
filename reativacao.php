@@ -685,6 +685,7 @@ async function sendOne(){
   const fd=new FormData();fd.append('lote_id',ST.activeLoteId);
   const d=await fetch(`${API}?action=send_next`,{method:'POST',body:fd}).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de rede'}));
   if(!d.ok){
+    if(d.fatal){stopSending();addLog('err','x',d.error||'Erro fatal no envio');return;}
     if(d.paused){stopSending();addLog('info','⏰',d.error||'Pausado');return;}
     ST_err++; addLog('err','✗',d.error||'Erro desconhecido');
     updateProgress(ST_ok, ST_total, ST_err);

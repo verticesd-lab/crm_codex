@@ -452,7 +452,7 @@ if ($action === 'get_eligible') {
 ═══════════════════════════════════════════════════ */
 if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $body      = json_decode(file_get_contents('php://input'), true) ?? $_POST;
-    $clientIds = array_map('intval', $body['client_ids'] ?? []);
+    $clientIds = array_values(array_unique(array_filter(array_map('intval', $body['client_ids'] ?? []))));
     $tentativa = (int)($body['tentativa'] ?? 1);
     $observ    = trim($body['observacoes'] ?? '');
     $contexto  = trim($body['contexto']   ?? 'misto');
@@ -490,6 +490,12 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ");
         $stmt->execute([...$clientIds, $companyId]);
         $clientsData = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($clientsData)) {
+            throw new RuntimeException('Nenhum cliente valido encontrado para este lote.');
+        }
+
+        $realTotal = count($clientsData);
+        $pdo->prepare("UPDATE reativacao_lotes SET total_clientes=? WHERE id=?")->execute([$realTotal, $loteId]);
 
         // Insere os envios individuais com mensagens já definidas
         $varIdx = 0;
@@ -506,7 +512,7 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
-        echo json_encode(['ok' => true, 'lote_id' => $loteId, 'total' => count($clientsData)]);
+        echo json_encode(['ok' => true, 'lote_id' => $loteId, 'total' => $realTotal]);
 
     } catch (Throwable $e) {
         $pdo->rollBack();
@@ -623,14 +629,15 @@ if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("UPDATE reativacao_lotes SET enviados=enviados+1 WHERE id=?")->execute([$loteId]);
 
             // Atualiza status do cliente
-            $novoStatus = $envio['tentativa'] == 1 ? 'lote_enviado_1' : 'lote_enviado_2';
+            $tentativaEnvio = (int)($envio['tentativa'] ?? 1);
+            $novoStatus = $tentativaEnvio === 1 ? 'lote_enviado_1' : 'lote_enviado_2';
             $pdo->prepare("
                 UPDATE clients
                    SET reativ_status      = ?,
                        reativ_ultimo_envio = NOW(),
-                       reativ_tentativas   = tentativa
+                       reativ_tentativas   = ?
                 WHERE id = ? AND company_id = ?
-            ")->execute([$novoStatus, $envio['client_id'], $companyId]);
+            ")->execute([$novoStatus, $tentativaEnvio, $envio['client_id'], $companyId]);
 
         } else {
             // Erro de envio
@@ -641,8 +648,9 @@ if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->commit();
 
         // Conta quantos pendentes ainda restam
-        $restantes = (int)$pdo->prepare("SELECT COUNT(*) FROM reativacao_envios WHERE lote_id=? AND status='pendente'")->execute([$loteId]) ? 
-            $pdo->query("SELECT COUNT(*) FROM reativacao_envios WHERE lote_id={$loteId} AND status='pendente'")->fetchColumn() : 0;
+        $stmtRestantes = $pdo->prepare("SELECT COUNT(*) FROM reativacao_envios WHERE lote_id=? AND status='pendente'");
+        $stmtRestantes->execute([$loteId]);
+        $restantes = (int)$stmtRestantes->fetchColumn();
 
         echo json_encode([
             'ok'        => true,
@@ -657,7 +665,7 @@ if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage(), 'fatal' => true]);
     }
     exit;
 }
@@ -684,10 +692,17 @@ if ($action === 'get_clients_by_status') {
     $page   = max(1, (int)($_GET['page'] ?? 1));
     $pp     = 25;
     $offset = ($page - 1) * $pp;
+    $allowedStatuses = ['elegivel','standby','numero_invalido','aguardando_2','sem_resposta','lote_enviado_1','lote_enviado_2','respondeu_1','respondeu_2'];
+
+    if (!in_array($status, $allowedStatuses, true)) {
+        echo json_encode(['ok'=>false,'error'=>'Status invalido.']);
+        exit;
+    }
 
     try {
-        $total = (int)$pdo->prepare("SELECT COUNT(*) FROM clients WHERE company_id=? AND reativ_status=?")->execute([$companyId,$status]) ?
-            $pdo->query("SELECT COUNT(*) FROM clients WHERE company_id={$companyId} AND reativ_status='{$status}'")->fetchColumn() : 0;
+        $stmtTotal = $pdo->prepare("SELECT COUNT(*) FROM clients WHERE company_id=? AND reativ_status=?");
+        $stmtTotal->execute([$companyId, $status]);
+        $total = (int)$stmtTotal->fetchColumn();
 
         $stmt = $pdo->prepare("
             SELECT id, nome, whatsapp, tags, reativ_status, reativ_tentativas, reativ_ultimo_envio, ultimo_atendimento_em
