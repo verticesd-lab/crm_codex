@@ -122,6 +122,126 @@ function format_datetime_br(?string $dt, ?string $dbTz = null): string {
 /**
  * ========= AUTENTICAÇÃO / SESSÃO =========
  */
+function reactivation_policy(): array {
+    return [
+        'max_lotes_per_day'            => 3,
+        'max_contacts_per_day'         => 90,
+        'min_gap_between_lots_seconds' => 3600,
+        'send_delay_min_seconds'       => 180,
+        'send_delay_max_seconds'       => 320,
+    ];
+}
+
+function reactivation_today_bounds(): array {
+    $appTz = new DateTimeZone(app_timezone());
+    $utcTz = new DateTimeZone('UTC');
+
+    $nowLocal   = new DateTime('now', $appTz);
+    $startLocal = (clone $nowLocal)->setTime(0, 0, 0);
+    $endLocal   = (clone $startLocal)->modify('+1 day');
+    $startUtc   = (clone $startLocal)->setTimezone($utcTz);
+    $endUtc     = (clone $endLocal)->setTimezone($utcTz);
+
+    return [
+        'now_local'   => $nowLocal,
+        'start_local' => $startLocal,
+        'end_local'   => $endLocal,
+        'start_utc'   => $startUtc,
+        'end_utc'     => $endUtc,
+    ];
+}
+
+function reactivation_availability(PDO $pdo, int $companyId, int $plannedContacts = 0): array {
+    $policy = reactivation_policy();
+    $bounds = reactivation_today_bounds();
+
+    $usage = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(
+                CASE
+                    WHEN status = 'cancelado' AND COALESCE(enviados,0) + COALESCE(erros,0) = 0 THEN 0
+                    ELSE 1
+                END
+            ), 0) AS lotes_usados,
+            COALESCE(SUM(
+                CASE
+                    WHEN status = 'cancelado' THEN LEAST(COALESCE(total_clientes,0), COALESCE(enviados,0) + COALESCE(erros,0))
+                    ELSE COALESCE(total_clientes,0)
+                END
+            ), 0) AS contatos_usados
+        FROM reativacao_lotes
+        WHERE company_id = ?
+          AND criado_em >= ?
+          AND criado_em < ?
+    ");
+    $usage->execute([
+        $companyId,
+        $bounds['start_utc']->format('Y-m-d H:i:s'),
+        $bounds['end_utc']->format('Y-m-d H:i:s'),
+    ]);
+    $usageRow = $usage->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $dailyLotesUsed    = (int)($usageRow['lotes_usados'] ?? 0);
+    $dailyContactsUsed = (int)($usageRow['contatos_usados'] ?? 0);
+
+    $result = [
+        'can_send'            => true,
+        'reason'              => null,
+        'next_at_local'       => null,
+        'next_at_br'          => null,
+        'daily_lotes_used'    => $dailyLotesUsed,
+        'daily_contacts_used' => $dailyContactsUsed,
+        'remaining_lotes'     => max(0, $policy['max_lotes_per_day'] - $dailyLotesUsed),
+        'remaining_contacts'  => max(0, $policy['max_contacts_per_day'] - $dailyContactsUsed),
+        'policy'              => $policy,
+    ];
+
+    $lotesAfterCreate    = $dailyLotesUsed + ($plannedContacts > 0 ? 1 : 0);
+    $contactsAfterCreate = $dailyContactsUsed + max(0, $plannedContacts);
+
+    if ($dailyLotesUsed >= $policy['max_lotes_per_day'] || $lotesAfterCreate > $policy['max_lotes_per_day']) {
+        $result['can_send']      = false;
+        $result['reason']        = 'limite_lotes_dia';
+        $result['next_at_local'] = $bounds['end_local']->format('Y-m-d H:i:s');
+        $result['next_at_br']    = $bounds['end_local']->format('d/m/Y H:i');
+        return $result;
+    }
+
+    if ($dailyContactsUsed >= $policy['max_contacts_per_day'] || $contactsAfterCreate > $policy['max_contacts_per_day']) {
+        $result['can_send']      = false;
+        $result['reason']        = 'limite_contatos_dia';
+        $result['next_at_local'] = $bounds['end_local']->format('Y-m-d H:i:s');
+        $result['next_at_br']    = $bounds['end_local']->format('d/m/Y H:i');
+        return $result;
+    }
+
+    $latest = $pdo->prepare("
+        SELECT COALESCE(concluido_em, iniciado_em, criado_em) AS referencia_em
+        FROM reativacao_lotes
+        WHERE company_id = ?
+          AND NOT (status = 'cancelado' AND COALESCE(enviados,0) + COALESCE(erros,0) = 0)
+        ORDER BY COALESCE(concluido_em, iniciado_em, criado_em) DESC
+        LIMIT 1
+    ");
+    $latest->execute([$companyId]);
+    $lastReference = $latest->fetchColumn();
+
+    if ($lastReference) {
+        $lastLocal = db_datetime_to_app((string)$lastReference);
+        if ($lastLocal instanceof DateTime) {
+            $nextAllowed = (clone $lastLocal)->modify('+' . $policy['min_gap_between_lots_seconds'] . ' seconds');
+            if ($nextAllowed > $bounds['now_local']) {
+                $result['can_send']      = false;
+                $result['reason']        = 'intervalo_entre_lotes';
+                $result['next_at_local'] = $nextAllowed->format('Y-m-d H:i:s');
+                $result['next_at_br']    = $nextAllowed->format('d/m/Y H:i');
+            }
+        }
+    }
+
+    return $result;
+}
+
 function is_logged_in(): bool {
     return isset($_SESSION['user_id'], $_SESSION['company_id']);
 }

@@ -51,7 +51,8 @@ try {
 } catch (Throwable $e) {}
 
 /* ── KPIs para o dashboard ── */
-$stats = ['total'=>0,'elegiveis'=>0,'responderam'=>0,'aguardando'=>0,'standby'=>0,'sem_resposta'=>0,'lote_ativo'=>null,'pode_enviar'=>true,'pode_enviar_em'=>null];
+$policy = reactivation_policy();
+$stats = ['total'=>0,'elegiveis'=>0,'responderam'=>0,'aguardando'=>0,'standby'=>0,'sem_resposta'=>0,'lote_ativo'=>null,'pode_enviar'=>true,'pode_enviar_em'=>null,'cooldown_reason'=>null,'daily_lotes_used'=>0,'daily_contacts_used'=>0,'remaining_lotes'=>$policy['max_lotes_per_day'],'remaining_contacts'=>$policy['max_contacts_per_day']];
 try {
     $rows = $pdo->prepare("SELECT COALESCE(reativ_status,'elegivel') as s, COUNT(*) as n FROM clients WHERE company_id=? AND whatsapp IS NOT NULL AND whatsapp != '' GROUP BY s");
     $rows->execute([$companyId]);
@@ -68,11 +69,15 @@ try {
     $la->execute([$companyId]);
     $stats['lote_ativo'] = $la->fetch(PDO::FETCH_ASSOC) ?: null;
 
-    $ul = $pdo->prepare("SELECT concluido_em FROM reativacao_lotes WHERE company_id=? AND status='concluido' ORDER BY concluido_em DESC LIMIT 1");
-    $ul->execute([$companyId]);
-    $uc = $ul->fetchColumn();
-    if ($uc) {
-        $prox = strtotime($uc) + 86400;
+    $availability = reactivation_availability($pdo, $companyId);
+    $stats['pode_enviar']         = $availability['can_send'];
+    $stats['pode_enviar_em']      = $availability['next_at_br'];
+    $stats['cooldown_reason']     = $availability['reason'];
+    $stats['daily_lotes_used']    = $availability['daily_lotes_used'];
+    $stats['daily_contacts_used'] = $availability['daily_contacts_used'];
+    $stats['remaining_lotes']     = $availability['remaining_lotes'];
+    $stats['remaining_contacts']  = $availability['remaining_contacts'];
+    if (false) {
         if ($prox > time()) { $stats['pode_enviar'] = false; $stats['pode_enviar_em'] = date('d/m/Y \à\s H:i', $prox); }
     }
 } catch (Throwable $e) {}
@@ -226,6 +231,11 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     ⏱️ Cooldown ativo — próximo lote disponível em: <strong><?= $stats['pode_enviar_em'] ?></strong>
   </div>
   <?php endif; ?>
+
+  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:.75rem 1rem;font-size:.8rem;color:#1d4ed8;margin-bottom:1.25rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
+    <span>Hoje: <strong><?= (int)$stats['daily_lotes_used'] ?>/<?= (int)$policy['max_lotes_per_day'] ?></strong> lotes e <strong><?= (int)$stats['daily_contacts_used'] ?>/<?= (int)$policy['max_contacts_per_day'] ?></strong> contatos usados.</span>
+    <span>Restam <strong><?= (int)$stats['remaining_lotes'] ?></strong> lotes e <strong><?= (int)$stats['remaining_contacts'] ?></strong> contatos hoje. Intervalo minimo: <strong>1h</strong>.</span>
+  </div>
 
   <?php if ($stats['lote_ativo']): $la=$stats['lote_ativo']; $pct=$la['total_clientes']>0?round($la['enviados']/$la['total_clientes']*100):0; ?>
   <div class="lote-banner">
@@ -641,6 +651,15 @@ function closeLoteDetail(){
   const card=document.getElementById('rv-lote-detail-card');
   if(card) card.style.display='none';
 }
+function syncReactivationPolicyUI(){
+  const historyDelayBadge = document.querySelector('#rv-send-panel label + span');
+  if(historyDelayBadge) historyDelayBadge.textContent = '180-320s aleatorio';
+  document.querySelectorAll('.rv-cfg-row').forEach(row => {
+    const lbl = row.querySelector('.rv-cfg-lbl');
+    const val = row.querySelector('.rv-cfg-val');
+    if(lbl && val && lbl.textContent.trim() === 'Intervalo') val.textContent = '180-320s randomizado';
+  });
+}
 async function loadLotes(){
   const d=await fetch(`${API}?action=get_lotes`).then(r=>r.json()).catch(()=>({ok:false,lotes:[]}));
   const wrap=document.getElementById('rv-lotes-wrap'),sp=document.getElementById('rv-send-panel');
@@ -767,6 +786,13 @@ function stopSending(){
 function scheduleNext(){
   if(!ST.sending)return;
   const delay=Math.floor(Math.random()*(455-180+1))+180; // 180–455s aleatório
+  ST.timer=setTimeout(sendOne, delay*1000);
+  startCountdown(delay);
+}
+
+function scheduleNext(){
+  if(!ST.sending)return;
+  const delay=Math.floor(Math.random()*(320-180+1))+180;
   ST.timer=setTimeout(sendOne, delay*1000);
   startCountdown(delay);
 }
@@ -1125,5 +1151,6 @@ async function saveAllMessages() {
 }
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+syncReactivationPolicyUI();
 </script>
 <?php include __DIR__ . '/views/partials/footer.php'; ?>

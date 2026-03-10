@@ -358,6 +358,15 @@ if ($action === 'get_stats') {
         $stats['lote_ativo'] = $loteAtivo->fetch(PDO::FETCH_ASSOC) ?: null;
 
         // Cooldown: último lote concluído + 24h
+        $availability = reactivation_availability($pdo, $companyId);
+        $stats['pode_enviar']         = $availability['can_send'];
+        $stats['pode_enviar_em']      = $availability['next_at_local'];
+        $stats['cooldown_reason']     = $availability['reason'];
+        $stats['daily_lotes_used']    = $availability['daily_lotes_used'];
+        $stats['daily_contacts_used'] = $availability['daily_contacts_used'];
+        $stats['remaining_lotes']     = $availability['remaining_lotes'];
+        $stats['remaining_contacts']  = $availability['remaining_contacts'];
+        if (false) {
         $ultimo = $pdo->prepare("
             SELECT concluido_em FROM reativacao_lotes
             WHERE company_id = ? AND status = 'concluido'
@@ -371,6 +380,7 @@ if ($action === 'get_stats') {
             if ($proximoPermitido > time()) {
                 $stats['pode_enviar_em'] = date('Y-m-d H:i:s', $proximoPermitido);
             }
+        }
         }
 
     } catch (Throwable $e) {
@@ -472,6 +482,19 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         $pdo->beginTransaction();
+
+        $availability = reactivation_availability($pdo, $companyId, count($clientIds));
+        if (!$availability['can_send']) {
+            $msg = 'Novo lote bloqueado temporariamente.';
+            if ($availability['reason'] === 'intervalo_entre_lotes') {
+                $msg = 'Aguarde pelo menos 1 hora entre lotes. Proximo lote liberado em ' . $availability['next_at_br'] . '.';
+            } elseif ($availability['reason'] === 'limite_lotes_dia') {
+                $msg = 'Limite diario de 3 lotes atingido. Proximo lote liberado em ' . $availability['next_at_br'] . '.';
+            } elseif ($availability['reason'] === 'limite_contatos_dia') {
+                $msg = 'Limite diario de 90 contatos atingido. Restam ' . $availability['remaining_contacts'] . ' contatos hoje. Proximo lote liberado em ' . $availability['next_at_br'] . '.';
+            }
+            throw new RuntimeException($msg);
+        }
 
         // Cria o lote
         $pdo->prepare("
