@@ -534,7 +534,7 @@ if ($action === 'get_lote') {
 
         $envios = $pdo->prepare("
             SELECT re.id, re.nome, re.whatsapp, re.contexto, re.tentativa,
-                   re.status, re.enviado_em, re.erro_msg,
+                   re.status, re.enviado_em, re.respondeu_em, re.erro_msg,
                    LEFT(re.mensagem, 80) as msg_preview
             FROM reativacao_envios re
             WHERE re.lote_id = ?

@@ -132,6 +132,19 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
 .lote-row:hover{background:#fafafe}.lote-row:last-child{border-bottom:none}
 .st-badge{font-size:.68rem;font-weight:700;padding:.25rem .6rem;border-radius:20px}
 .st-aguardando{background:#fef9c3;color:#a16207}.st-andamento{background:#ede9fe;color:#6d28d9}.st-concluido{background:#dcfce7;color:#15803d}.st-cancelado{background:#f1f5f9;color:#64748b}
+.env-badge{display:inline-flex;align-items:center;gap:.3rem;font-size:.68rem;font-weight:700;padding:.25rem .55rem;border-radius:20px;white-space:nowrap}
+.env-enviado{background:#dcfce7;color:#15803d}.env-erro{background:#fee2e2;color:#dc2626}.env-respondeu{background:#dbeafe;color:#1d4ed8}.env-pendente{background:#f8fafc;color:#64748b}
+.lote-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.75rem;margin-bottom:1rem}
+.lote-stat{border:1px solid #e2e8f0;border-radius:12px;padding:.85rem 1rem;background:#fff}
+.lote-stat-lbl{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:.35rem}
+.lote-stat-val{font-size:1.25rem;font-weight:800;color:#0f172a;line-height:1}
+.lote-stat-sub{font-size:.72rem;color:#64748b;margin-top:.2rem}
+.lote-client-cell{display:flex;flex-direction:column;gap:.18rem}
+.lote-client-name{font-weight:700;color:#0f172a}
+.lote-client-sub{font-size:.72rem;color:#64748b;font-family:monospace}
+.lote-client-msg{font-size:.72rem;color:#64748b;line-height:1.4}
+.lote-time-cell{display:flex;flex-direction:column;gap:.18rem;font-size:.72rem;color:#64748b}
+.lote-empty-inline{padding:1.5rem 1rem;text-align:center;color:#94a3b8;font-size:.82rem}
 .seg-btns{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem}
 .seg-btn{padding:.4rem .9rem;border-radius:20px;font-size:.75rem;font-weight:600;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;transition:all .15s}
 .seg-btn:hover{color:#6366f1}.seg-btn.active{background:#f5f3ff;border-color:#6366f1;color:#6366f1}
@@ -169,6 +182,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
 .msg-editor { display:flex; flex-direction:column; gap:.4rem; }
 .msg-editor label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; }
 .msg-textarea { width:100%; padding:.65rem .85rem; border:1.5px solid #e2e8f0; border-radius:8px; font-size:.82rem; color:#0f172a; font-family:inherit; resize:vertical; min-height:100px; outline:none; transition:border-color .15s, background .15s; background:#f8fafc; line-height:1.55; }
+@media (max-width:900px){.lote-row{grid-template-columns:50px 1fr auto;}.lote-row > :nth-child(4),.lote-row > :nth-child(5){display:none}}
 .msg-textarea:focus { border-color:#6366f1; background:#fff; }
 .msg-textarea.modified { border-color:#f59e0b; background:#fffbeb; }
 .msg-preview-box { background:#f0fdf4; border:1px solid #bbf7d0; border-left:3px solid #22c55e; border-radius:8px; padding:.75rem 1rem; font-size:.82rem; color:#166534; white-space:pre-line; line-height:1.55; min-height:100px; }
@@ -377,6 +391,34 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Histórico de Lotes</h2>
     <button class="btn btn-ghost btn-sm" onclick="loadLotes()">↻ Atualizar</button>
   </div>
+  <div id="rv-lote-detail-card" class="rv-card" style="display:none">
+    <div class="rv-card-hd">
+      <div>
+        <h3 id="rv-lote-detail-title">Detalhes do lote</h3>
+        <div id="rv-lote-detail-sub" style="font-size:.75rem;color:#64748b;margin-top:.2rem"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeLoteDetail()">Fechar</button>
+    </div>
+    <div class="rv-card-bd">
+      <div class="lote-detail-grid" id="rv-lote-detail-stats"></div>
+      <div class="rv-table-wrap">
+        <table class="rv-table">
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Status</th>
+              <th>Tentativa</th>
+              <th>Atualização</th>
+              <th>Erro</th>
+            </tr>
+          </thead>
+          <tbody id="rv-lote-detail-body">
+            <tr><td colspan="5" class="lote-empty-inline">Selecione um lote para ver os detalhes.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
   <div class="rv-table-wrap" id="rv-lotes-wrap"><div class="rv-empty">Carregando lotes...</div></div>
 </div>
 
@@ -579,6 +621,26 @@ async function confirmLote(){
   btn.disabled=false;btn.textContent='Criar lote';
 }
 
+function fmtLocalDateTime(v){
+  if(!v)return '—';
+  return new Date(v.replace(' ','T')+'Z').toLocaleString('pt-BR',{timeZone:'America/Cuiaba',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function maskPhone(v){
+  const s=String(v||'');
+  return s ? s.slice(0,4)+'****'+s.slice(-4) : '—';
+}
+function getEnvioStatusMeta(status){
+  return {
+    enviado:{label:'Enviado', cls:'env-enviado', icon:'✓'},
+    erro:{label:'Erro', cls:'env-erro', icon:'✗'},
+    respondeu:{label:'Respondeu', cls:'env-respondeu', icon:'↩'},
+    pendente:{label:'Pendente', cls:'env-pendente', icon:'○'}
+  }[status] || {label:status||'—', cls:'env-pendente', icon:'○'};
+}
+function closeLoteDetail(){
+  const card=document.getElementById('rv-lote-detail-card');
+  if(card) card.style.display='none';
+}
 async function loadLotes(){
   const d=await fetch(`${API}?action=get_lotes`).then(r=>r.json()).catch(()=>({ok:false,lotes:[]}));
   const wrap=document.getElementById('rv-lotes-wrap'),sp=document.getElementById('rv-send-panel');
@@ -591,17 +653,48 @@ async function loadLotes(){
   }else sp.style.display='none';
   if(!d.lotes?.length){wrap.innerHTML='<div class="rv-empty">Nenhum lote ainda. Crie um na aba "Criar Lote".</div>';return;}
   wrap.innerHTML=d.lotes.map(l=>{
-    const pct=l.total_clientes>0?Math.round(l.enviados/l.total_clientes*100):0;
-    const dt=new Date(l.criado_em.replace(' ','T')+'Z').toLocaleString('pt-BR',{timeZone:'America/Cuiaba',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const total=parseInt(l.total_clientes||0,10), enviados=parseInt(l.enviados||0,10), erros=parseInt(l.erros||0,10), respostas=parseInt(l.responderam||0,10);
+    const processados=enviados+erros;
+    const pct=total>0?Math.round(processados/total*100):0;
+    const dt=fmtLocalDateTime(l.criado_em);
     const stC={aguardando:'st-aguardando',em_andamento:'st-andamento',concluido:'st-concluido',cancelado:'st-cancelado'}[l.status]||'st-cancelado';
-    return `<div class="lote-row"><span style="font-size:.7rem;font-family:monospace;color:#94a3b8">#${l.id}</span><div><div style="font-weight:600;color:#0f172a">${esc(l.observacoes||'Lote #'+l.id)}</div><div style="font-size:.72rem;color:#94a3b8;margin-top:2px">${dt} · ${l.total_clientes} clientes · ${l.erros} erros · ${l.responderam||0} respostas</div></div><div style="font-size:.75rem;font-family:monospace">${pct}%</div><div style="width:60px;height:4px;background:#f1f5f9;border-radius:2px;overflow:hidden"><div style="height:100%;background:#6366f1;width:${pct}%"></div></div><span class="st-badge ${stC}">${l.status}</span><div style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="loadLoteDetail(${l.id})">Detalhes</button></div></div>`;
+    return `<div class="lote-row"><span style="font-size:.7rem;font-family:monospace;color:#94a3b8">#${l.id}</span><div><div style="font-weight:600;color:#0f172a">${esc(l.observacoes||'Lote #'+l.id)}</div><div style="font-size:.72rem;color:#94a3b8;margin-top:2px">${dt} · ${total} clientes · ${enviados} enviados · ${erros} erros · ${respostas} respostas</div></div><div style="font-size:.75rem;font-family:monospace">${pct}%</div><div style="width:60px;height:4px;background:#f1f5f9;border-radius:2px;overflow:hidden"><div style="height:100%;background:#6366f1;width:${pct}%"></div></div><span class="st-badge ${stC}">${l.status}</span><div style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="loadLoteDetail(${l.id})">Detalhes</button></div></div>`;
   }).join('');
 }
 async function loadLoteDetail(id){
   const d=await fetch(`${API}?action=get_lote&id=${id}`).then(r=>r.json()).catch(()=>({ok:false}));
   if(!d.ok)return;
-  const log=document.getElementById('console-log');
-  if(log&&d.envios){log.innerHTML=d.envios.slice(0,40).map(e=>{const ico=e.status==='enviado'?'✓':e.status==='erro'?'✗':e.status==='respondeu'?'↩':'○';const cls=e.status==='enviado'?'log-ok':e.status==='erro'?'log-err':'log-info';return `<div class="log-line"><span class="${cls}">${ico}</span><span style="color:#e2e8f0;margin:0 .4rem">${esc(e.nome)}</span><span class="log-text">${esc(e.msg_preview||'')}...</span></div>`;}).join('');log.scrollTop=log.scrollHeight;}
+  const card=document.getElementById('rv-lote-detail-card');
+  const title=document.getElementById('rv-lote-detail-title');
+  const sub=document.getElementById('rv-lote-detail-sub');
+  const stats=document.getElementById('rv-lote-detail-stats');
+  const body=document.getElementById('rv-lote-detail-body');
+  const envios=d.envios||[];
+  const total=parseInt(d.lote?.total_clientes||envios.length||0,10);
+  const enviados=envios.filter(e=>e.status==='enviado'||e.status==='respondeu').length;
+  const erros=envios.filter(e=>e.status==='erro').length;
+  const respostas=envios.filter(e=>e.status==='respondeu').length;
+  const processados=enviados+erros;
+  title.textContent=`Lote #${d.lote?.id||id}`;
+  sub.textContent=`${fmtLocalDateTime(d.lote?.criado_em)} · ${d.lote?.status||'—'} · ${processados}/${total} processados`;
+  stats.innerHTML=[
+    {lbl:'Processados',val:`${processados}/${total}`,sub:'enviados + erros'},
+    {lbl:'Enviados',val:String(enviados),sub:'aceitos pela API'},
+    {lbl:'Erros',val:String(erros),sub:'falhas de envio'},
+    {lbl:'Respostas',val:String(respostas),sub:'cliente interagiu'}
+  ].map(s=>`<div class="lote-stat"><div class="lote-stat-lbl">${s.lbl}</div><div class="lote-stat-val">${s.val}</div><div class="lote-stat-sub">${s.sub}</div></div>`).join('');
+  body.innerHTML=envios.length?envios.map(e=>{
+    const meta=getEnvioStatusMeta(e.status);
+    const tentativa=parseInt(e.tentativa||0,10);
+    const times=[
+      e.enviado_em?`Enviado: ${fmtLocalDateTime(e.enviado_em)}`:'Envio: —',
+      e.respondeu_em?`Resposta: ${fmtLocalDateTime(e.respondeu_em)}`:'Resposta: —'
+    ].join('<br>');
+    return `<tr><td><div class="lote-client-cell"><span class="lote-client-name">${esc(e.nome)}</span><span class="lote-client-sub">${maskPhone(e.whatsapp)}</span><span class="lote-client-msg">${esc(e.msg_preview||'')}</span></div></td><td><span class="env-badge ${meta.cls}">${meta.icon} ${meta.label}</span></td><td style="font-family:monospace">${tentativa||'—'}ª</td><td><div class="lote-time-cell">${times}</div></td><td style="font-size:.75rem;color:${e.erro_msg?'#b91c1c':'#94a3b8'}">${esc(e.erro_msg||'—')}</td></tr>`;
+  }).join(''):`<tr><td colspan="5" class="lote-empty-inline">Nenhum envio registrado neste lote.</td></tr>`;
+  card.style.display='block';
+  card.scrollIntoView({behavior:'smooth',block:'start'});
+  return;
 }
 
 /* ── Progresso ── */
@@ -614,14 +707,15 @@ function updateProgress(enviados, total, erros){
   ST_total = total || ST_total;
   ST_ok    = enviados;
   ST_err   = erros || 0;
-  const pct = ST_total > 0 ? Math.round(ST_ok / ST_total * 100) : 0;
+  const processed = Math.min(ST_total, ST_ok + ST_err);
+  const pct = ST_total > 0 ? Math.round(processed / ST_total * 100) : 0;
   const bar = document.getElementById('prog-bar');
   const frac = document.getElementById('prog-fraction');
   const pctEl = document.getElementById('prog-pct');
   const okEl  = document.getElementById('prog-ok');
   const errEl = document.getElementById('prog-err');
   if(bar)  bar.style.width  = pct + '%';
-  if(frac) frac.textContent = `${ST_ok} / ${ST_total}`;
+  if(frac) frac.textContent = `${processed} / ${ST_total}`;
   if(pctEl) pctEl.textContent = pct + '%';
   if(okEl)  okEl.textContent  = `✓ ${ST_ok} enviado${ST_ok!==1?'s':''}`;
   if(errEl) errEl.textContent = `✗ ${ST_err} erro${ST_err!==1?'s':''}`;
@@ -654,7 +748,7 @@ function stopCountdown(){
 function startSending(){
   if(!ST.activeLoteId)return alert('Nenhum lote ativo.');
   const h=new Date().getHours();if(h<9||h>=20)return alert('⚠️ Envio permitido apenas entre 09:00 e 20:00.');
-  ST.sending=true; ST_ok=0; ST_err=0;
+  ST.sending=true;
   document.getElementById('btn-start').style.display='none';
   document.getElementById('btn-stop').style.display='inline-flex';
   setDot(true); setStatus('Enviando...');
@@ -696,7 +790,7 @@ async function sendOne(){
     setDot(false); setStatus('Concluído ✅');
     document.getElementById('btn-start').style.display='inline-flex';
     document.getElementById('btn-stop').style.display='none';
-    updateProgress(ST_total, ST_total, ST_err);
+    updateProgress(ST_ok, ST_total, ST_err);
     const wrap = document.getElementById('prog-next-wrap');
     if(wrap) wrap.style.display='none';
     addLog('ok','✓',`Lote concluído! ${ST_total} clientes processados.`);
