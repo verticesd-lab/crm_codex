@@ -93,6 +93,175 @@ function ni_ensure_dir(string $d): void {
 }
 
 /* ================================================================
+   LEITOR XML NF-e (Nota Fiscal Eletrônica brasileira)
+   Extrai itens da tag <det><prod> com 100% de precisão.
+   Campos: xProd, cProd, vUnCom, qCom, uCom, NCM
+   ================================================================ */
+
+function ni_read_xml_nfe(string $path): array {
+    $content = file_get_contents($path);
+    if ($content === false) throw new Exception('Não foi possível ler o arquivo XML.');
+
+    // Remove namespace para simplificar o parsing
+    $content = preg_replace('/(<\/?)(\w+):/', '$1', $content);
+    $content = preg_replace('/\s+xmlns[^"]*"[^"]*"/', '', $content);
+
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($content);
+    if (!$xml) {
+        $errs = libxml_get_errors();
+        throw new Exception('XML inválido: ' . ($errs[0]->message ?? 'formato não reconhecido'));
+    }
+
+    // Localiza os itens — path pode variar conforme versão NF-e
+    $itens = $xml->xpath('//det') ?: $xml->xpath('//NFe//det') ?: [];
+    if (empty($itens)) {
+        // Tenta procurar infNFe
+        $itens = $xml->xpath('//infNFe//det') ?: [];
+    }
+    if (empty($itens)) {
+        throw new Exception('Nenhum item encontrado no XML. Verifique se é uma NF-e válida (deve conter tags <det>).');
+    }
+
+    // Cabeçalho padrão
+    $rows = [['nome','referencia','quantidade','preco_custo','unidade','ncm','descricao']];
+
+    foreach ($itens as $det) {
+        $prod = $det->prod ?? null;
+        if (!$prod) continue;
+
+        $nome     = ni_norm((string)($prod->xProd ?? ''));
+        $ref      = ni_norm((string)($prod->cProd ?? ''));
+        $qty      = (string)($prod->qCom  ?? $prod->qTrib ?? '1');
+        $custo    = (string)($prod->vUnCom ?? $prod->vUnTrib ?? '0');
+        $unidade  = ni_norm((string)($prod->uCom  ?? $prod->uTrib ?? ''));
+        $ncm      = ni_norm((string)($prod->NCM   ?? ''));
+        $infAdProd= ni_norm((string)($det->infAdProd ?? ''));
+
+        if ($nome === '') continue;
+        $rows[] = [$nome, $ref, $qty, $custo, $unidade, $ncm, $infAdProd];
+    }
+
+    if (count($rows) <= 1) {
+        throw new Exception('O XML foi lido mas nenhum produto foi encontrado. Verifique se a NF-e contém itens.');
+    }
+
+    return $rows;
+}
+
+/* ================================================================
+   LEITOR PDF DIGITAL (PHP puro — funciona para PDFs com texto)
+   Extrai texto dos streams de conteúdo e tenta montar linhas.
+   Para PDFs escaneados retorna array vazio (sem texto extraível).
+   ================================================================ */
+
+function ni_read_pdf(string $path): array {
+    $raw = file_get_contents($path);
+    if ($raw === false) throw new Exception('Não foi possível ler o arquivo PDF.');
+
+    // Verifica assinatura PDF
+    if (strpos($raw, '%PDF') === false) {
+        throw new Exception('O arquivo não é um PDF válido.');
+    }
+
+    // Extrai blocos de texto dos streams
+    $text = '';
+    // Descomprime streams FlateDecode se possível
+    preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $raw, $streams);
+    foreach ($streams[1] as $stream) {
+        // Tenta decomprimir (flate)
+        $dec = @gzuncompress($stream);
+        if ($dec !== false) {
+            $text .= $dec . "\n";
+        } else {
+            $text .= $stream . "\n";
+        }
+    }
+
+    // Extrai sequências de texto PDF: (texto) Tj / TJ
+    $lines_raw = [];
+    preg_match_all('/\(((?:[^()\\\\]|\\\\.)*)\)\s*Tj/s', $text, $m1);
+    preg_match_all('/\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\s*TJ/s', $text, $m2);
+
+    foreach ($m1[1] as $t) {
+        $t = ni_pdf_decode_string($t);
+        if (trim($t) !== '') $lines_raw[] = trim($t);
+    }
+    foreach ($m2[1] as $t) {
+        // Extrai strings dentro do array TJ
+        preg_match_all('/\(((?:[^()\\\\]|\\\\.)*)\)/', $t, $inner);
+        $merged = '';
+        foreach ($inner[1] as $s) $merged .= ni_pdf_decode_string($s);
+        if (trim($merged) !== '') $lines_raw[] = trim($merged);
+    }
+
+    if (empty($lines_raw)) {
+        // PDF provavelmente escaneado — sem texto extraível
+        return [];
+    }
+
+    // Junta tudo em texto corrido e tenta encontrar tabela de produtos
+    $fullText = implode(' | ', $lines_raw);
+
+    // Heurística: divide em linhas e tenta identificar padrão
+    // Procura padrões: [descrição] [qtd] [valor]
+    // Retorna como CSV para ni_process_rows processar normalmente
+    $lines = preg_split('/\s*\|\s*/', $fullText);
+
+    $rows = [];
+    $headerAdded = false;
+    $buffer = [];
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (strlen($line) < 2) continue;
+
+        $buffer[] = $line;
+
+        // Detecta se a linha tem padrão de item de NF (tem número de valor monetário)
+        $hasPrice = preg_match('/\d{1,3}(?:[.,]\d{3})*[.,]\d{2}/', $line);
+        $hasQty   = preg_match('/^\d+[\.,]?\d*\s+|\s+\d+[\.,]?\d*\s+/', $line);
+
+        if ($hasPrice || count($buffer) >= 3) {
+            $lineText = implode(' ', $buffer);
+
+            // Tenta extrair: nome | qtd | preço
+            preg_match('/(\d+(?:[.,]\d+)?)\s*(?:un|pc|par|pç)?[\s]+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/i', $lineText, $nums);
+
+            $nome  = preg_replace('/\d+(?:[.,]\d{3})*[.,]\d{2}.*$/', '', $lineText);
+            $nome  = preg_replace('/^\d+\s+/', '', trim($nome));
+            $nome  = ni_norm($nome);
+
+            $qty   = isset($nums[1]) ? $nums[1] : '1';
+            $preco = isset($nums[2]) ? $nums[2] : '';
+
+            if (strlen($nome) > 3) {
+                if (!$headerAdded) {
+                    $rows[] = ['nome','quantidade','preco_custo'];
+                    $headerAdded = true;
+                }
+                $rows[] = [$nome, $qty, $preco];
+            }
+            $buffer = [];
+        }
+    }
+
+    return $rows;
+}
+
+function ni_pdf_decode_string(string $s): string {
+    // Decodifica escapes PDF
+    $s = str_replace(['\\n','\\r','\\t','\\b','\\f'], ["\n","\r","\t","\b","\f"], $s);
+    $s = preg_replace_callback('/\\\\([0-7]{1,3})/', fn($m) => chr(octdec($m[1])), $s);
+    $s = str_replace(['\\\\','\\(','\\)'], ['\\','(',')'], $s);
+    // Converte Latin-1 para UTF-8 se necessário
+    if (!mb_check_encoding($s, 'UTF-8')) {
+        $s = mb_convert_encoding($s, 'UTF-8', 'ISO-8859-1');
+    }
+    return $s;
+}
+
+/* ================================================================
    LEITOR XLSX NATIVO (ZipArchive + SimpleXML — sem Composer)
    Lê a primeira aba da planilha e retorna array de arrays.
    ================================================================ */
@@ -272,8 +441,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_upload'])) {
         redirect(ni_url('action=create'));
     }
     $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
-    if (!in_array($ext, ['csv','xlsx'], true)) {
-        flash('error', 'Formato não suportado. Use CSV ou XLSX.');
+    if (!in_array($ext, ['csv','xlsx','xml','pdf'], true)) {
+        flash('error', 'Formato não suportado. Use CSV, XLSX, XML (NF-e) ou PDF.');
         redirect(ni_url('action=create'));
     }
 
@@ -331,8 +500,31 @@ if (($_GET['action'] ?? '') === 'process' && isset($_GET['id'])) {
                 $rows[] = $row;
             }
             fclose($fh);
+
         } elseif ($ext === 'xlsx') {
             $rows = ni_read_xlsx($filePath);
+
+        } elseif ($ext === 'xml') {
+            // NF-e XML — extração 100% precisa
+            $rows = ni_read_xml_nfe($filePath);
+
+        } elseif ($ext === 'pdf') {
+            $rows = ni_read_pdf($filePath);
+
+            if (empty($rows)) {
+                // PDF escaneado (imagem) — sem texto extraível
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
+                    ->execute([$importId, $companyId]);
+                flash('error',
+                    '📸 PDF escaneado detectado — este PDF é uma imagem e não contém texto extraível. ' .
+                    'Opções: (1) Peça o XML da NF-e ao fornecedor, ' .
+                    '(2) Peça a planilha em Excel/CSV, ' .
+                    '(3) Exporte o PDF para Excel usando o site smallpdf.com ou ilovepdf.com e reimporte o XLSX.'
+                );
+                redirect(ni_url('action=view&id='.$importId));
+            }
+
         } else {
             throw new Exception('Formato não suportado.');
         }
@@ -343,7 +535,12 @@ if (($_GET['action'] ?? '') === 'process' && isset($_GET['id'])) {
             ->execute([$total, $importId, $companyId]);
         $pdo->commit();
 
-        flash('success', "✅ {$total} produtos extraídos! Use o Painel de Preços para precificar em massa.");
+        $sourceMsg = match($ext) {
+            'xml'  => "✅ {$total} produtos extraídos da NF-e! Custo e quantidade já preenchidos automaticamente.",
+            'pdf'  => "✅ {$total} produtos extraídos do PDF. Verifique os nomes e preços — PDFs podem ter variações de layout.",
+            default=> "✅ {$total} produtos extraídos! Use o Painel de Preços para precificar em massa.",
+        };
+        flash('success', $sourceMsg);
         redirect(ni_url('action=view&id='.$importId));
 
     } catch (Throwable $e) {
@@ -812,11 +1009,11 @@ if ($action === 'list'): ?>
 elseif ($action === 'create'): ?>
 
   <div class="ci-topbar">
-    <div><h1>📤 Nova Importação</h1><p>Envie a planilha do fornecedor — CSV ou Excel (XLSX)</p></div>
+    <div><h1>📤 Nova Importação</h1><p>Envie a planilha, NF-e ou PDF do fornecedor</p></div>
     <a href="<?= ni_url() ?>" class="btn btn-ghost">← Voltar</a>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 320px;gap:1.25rem;align-items:start;">
+  <div style="display:grid;grid-template-columns:1fr 340px;gap:1.25rem;align-items:start;">
 
     <div class="ci-card">
       <div class="ci-card-header"><h2>Enviar arquivo</h2></div>
@@ -826,14 +1023,19 @@ elseif ($action === 'create'): ?>
           <label class="upload-zone" id="upload-zone" for="file-input">
             <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto .75rem;display:block;color:#94a3b8;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             <h3>Clique ou arraste o arquivo aqui</h3>
-            <p>Planilha do fornecedor, NF de entrada ou qualquer tabela com produtos</p>
+            <p>Planilha do fornecedor, NF-e, PDF digital ou XML da nota fiscal</p>
             <div style="margin-top:.75rem;">
               <span class="ext-badge">CSV</span>
               <span class="ext-badge" style="background:#dbeafe;color:#1e40af;">XLSX ✅</span>
+              <span class="ext-badge" style="background:#dcfce7;color:#166534;">XML NF-e ⭐</span>
+              <span class="ext-badge" style="background:#fef9c3;color:#854d0e;">PDF ✅</span>
             </div>
             <p id="fname-preview" style="display:none;margin-top:.75rem;font-size:.85rem;font-weight:600;color:#334155;"></p>
-            <input type="file" id="file-input" name="file" accept=".csv,.xlsx">
+            <input type="file" id="file-input" name="file" accept=".csv,.xlsx,.xml,.pdf">
           </label>
+
+          <!-- Dica dinâmica por tipo de arquivo -->
+          <div id="file-tip" style="display:none;margin-top:.75rem;padding:.75rem 1rem;border-radius:9px;font-size:.78rem;"></div>
 
           <div style="margin-top:1.25rem;display:flex;justify-content:flex-end;gap:.6rem;">
             <a href="<?= ni_url() ?>" class="btn btn-ghost">Cancelar</a>
@@ -845,37 +1047,68 @@ elseif ($action === 'create'): ?>
       </div>
     </div>
 
-    <!-- Dicas -->
-    <div class="ci-card">
-      <div class="ci-card-header"><h2>📋 Colunas reconhecidas</h2></div>
-      <div class="ci-card-body">
-        <p style="font-size:.78rem;color:#475569;margin-bottom:.75rem;">
-          O sistema detecta automaticamente. Coloque cabeçalho na <strong>primeira linha</strong>.
-        </p>
-        <div class="format-hint">
-          <?php foreach([
-            ['nome / produto / título','Nome do produto ✦'],
-            ['ref / referencia / sku','Código/referência'],
-            ['custo / preco unit / vl unit','Preço de custo ✦'],
-            ['preco_venda / sugerido','Preço de venda'],
-            ['quantidade / qtd / estoque','Quantidade em estoque'],
-            ['categoria / grupo / tipo','Categoria'],
-            ['cor / color','Cor'],
-            ['tamanho / tam / size / grade','Tamanho/grade'],
-          ] as [$col,$desc]): ?>
-            <div style="display:flex;gap:.5rem;margin:.25rem 0;align-items:baseline;">
-              <code><?= $col ?></code>
-              <span style="font-size:.7rem;color:#64748b;">→ <?= $desc ?></span>
-            </div>
-          <?php endforeach; ?>
-          <p style="font-size:.7rem;color:#94a3b8;margin-top:.6rem;">✦ = usadas no cálculo de markup automático</p>
+    <!-- Dicas por formato -->
+    <div style="display:flex;flex-direction:column;gap:.75rem;">
+
+      <!-- XML NF-e — destaque -->
+      <div class="ci-card" style="border:2px solid #bbf7d0;">
+        <div class="ci-card-header" style="background:#f0fdf4;">
+          <h2 style="color:#166534;">⭐ XML NF-e — Melhor opção</h2>
         </div>
-        <div style="margin-top:.85rem;padding:.75rem;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;">
-          <p style="font-size:.75rem;font-weight:700;color:#92400e;margin-bottom:.25rem;">💡 Dica para lojas de roupa</p>
-          <p style="font-size:.72rem;color:#78350f;">Se sua planilha tem 1 linha por SKU (cor+tamanho juntos), o sistema importa direto. Se tiver grade em colunas separadas (P, M, G...) exporte como CSV e ajuste antes de enviar.</p>
+        <div class="ci-card-body">
+          <p style="font-size:.78rem;color:#166534;font-weight:600;margin-bottom:.5rem;">Extração 100% precisa — sem erros de layout</p>
+          <ul style="font-size:.75rem;color:#374151;padding-left:1rem;margin:0;">
+            <li>Nome, referência, quantidade e custo preenchidos automaticamente</li>
+            <li>Todo fornecedor com CNPJ emite NF-e — é só pedir o <strong>.xml</strong></li>
+            <li>Economiza toda a etapa de revisão de preços de custo</li>
+          </ul>
+          <div style="margin-top:.75rem;background:#dcfce7;border-radius:6px;padding:.5rem .75rem;font-size:.72rem;color:#166534;">
+            💬 <strong>Como pedir:</strong> "Me envia o XML da NF junto com o pedido"
+          </div>
         </div>
       </div>
-    </div>
+
+      <!-- PDF -->
+      <div class="ci-card">
+        <div class="ci-card-header"><h2>📄 PDF</h2></div>
+        <div class="ci-card-body">
+          <div style="display:flex;flex-direction:column;gap:.5rem;">
+            <div style="padding:.6rem .75rem;background:#f0fdf4;border-radius:7px;border:1px solid #bbf7d0;">
+              <p style="font-size:.75rem;font-weight:700;color:#166534;">✅ PDF digital (texto selecionável)</p>
+              <p style="font-size:.72rem;color:#374151;">PDFs gerados por sistema — extrai os produtos automaticamente.</p>
+            </div>
+            <div style="padding:.6rem .75rem;background:#fef2f2;border-radius:7px;border:1px solid #fecaca;">
+              <p style="font-size:.75rem;font-weight:700;color:#991b1b;">❌ PDF escaneado (foto/imagem)</p>
+              <p style="font-size:.72rem;color:#374151;">Sem texto extraível. Solução: converta em <a href="https://smallpdf.com/pdf-to-excel" target="_blank" style="color:#6366f1;">smallpdf.com</a> → Excel → importe o XLSX.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CSV / XLSX -->
+      <div class="ci-card">
+        <div class="ci-card-header"><h2>📊 CSV / XLSX</h2></div>
+        <div class="ci-card-body">
+          <div class="format-hint">
+            <?php foreach([
+              ['nome / produto','Nome ✦'],
+              ['ref / referencia / sku','Código'],
+              ['custo / vl unit','Custo ✦'],
+              ['quantidade / qtd','Quantidade'],
+              ['categoria / grupo','Categoria'],
+              ['cor · tamanho / grade','Variações'],
+            ] as [$col,$desc]): ?>
+              <div style="display:flex;gap:.5rem;margin:.2rem 0;">
+                <code><?= $col ?></code>
+                <span style="font-size:.7rem;color:#64748b;">→ <?= $desc ?></span>
+              </div>
+            <?php endforeach; ?>
+            <p style="font-size:.68rem;color:#94a3b8;margin-top:.5rem;">✦ = usadas no markup automático</p>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- fim col dicas -->
   </div>
 
 <?php /* ======================================================== VIEW / REVIEW */
@@ -1185,12 +1418,35 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
   const btn   = document.getElementById('upload-btn');
   const prev  = document.getElementById('fname-preview');
   const zone  = document.getElementById('upload-zone');
+  const tip   = document.getElementById('file-tip');
   if (!input) return;
+
+  const tips = {
+    xml:  { bg:'#f0fdf4', border:'#bbf7d0', color:'#166534',
+            text:'⭐ XML NF-e detectado! Nome, referência, quantidade e custo serão extraídos automaticamente.' },
+    pdf:  { bg:'#fffbeb', border:'#fde68a', color:'#92400e',
+            text:'📄 PDF detectado. Se for digital (texto selecionável), os produtos serão extraídos. Se for escaneado, você receberá instruções de conversão.' },
+    xlsx: { bg:'#dbeafe', border:'#93c5fd', color:'#1e40af',
+            text:'📊 Excel detectado! Certifique-se de que a primeira linha tem os cabeçalhos das colunas.' },
+    csv:  { bg:'#f5f3ff', border:'#c4b5fd', color:'#5b21b6',
+            text:'📄 CSV detectado! O separador (vírgula, ponto-e-vírgula ou tab) será detectado automaticamente.' },
+  };
+
   function showFile(name) {
     if (prev) { prev.textContent = '📄 ' + name; prev.style.display = 'block'; }
-    if (btn)  { btn.disabled = false; }
-    if (zone) { zone.style.borderColor = '#6366f1'; }
+    if (btn)  btn.disabled = false;
+    if (zone) zone.style.borderColor = '#6366f1';
+
+    const ext = name.split('.').pop().toLowerCase();
+    if (tip && tips[ext]) {
+      const t = tips[ext];
+      tip.style.cssText = `display:block;background:${t.bg};border:1px solid ${t.border};color:${t.color};`;
+      tip.textContent = t.text;
+    } else if (tip) {
+      tip.style.display = 'none';
+    }
   }
+
   input.addEventListener('change', () => { if (input.files[0]) showFile(input.files[0].name); });
   if (zone) {
     zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
