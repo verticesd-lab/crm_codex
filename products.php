@@ -56,6 +56,56 @@ function parse_price(string $v): float {
     return max(0, (float)preg_replace('/[^0-9.]/','',$v));
 }
 
+function ini_size_to_bytes(?string $value): int {
+    $value = trim((string)$value);
+    if ($value === '') return 0;
+
+    $unit = strtolower(substr($value, -1));
+    $bytes = (float)$value;
+
+    switch ($unit) {
+        case 'g':
+            $bytes *= 1024;
+        case 'm':
+            $bytes *= 1024;
+        case 'k':
+            $bytes *= 1024;
+            break;
+    }
+
+    return (int)round($bytes);
+}
+
+function format_bytes_br(int $bytes): string {
+    if ($bytes <= 0) return '0 B';
+
+    $units = ['B', 'KB', 'MB', 'GB'];
+    $pow = min((int)floor(log($bytes, 1024)), count($units) - 1);
+    $value = $bytes / (1024 ** $pow);
+
+    return number_format($value, $pow === 0 ? 0 : 1, ',', '.') . ' ' . $units[$pow];
+}
+
+function upload_error_message(string $label, int $error, string $limitText): ?string {
+    if ($error === UPLOAD_ERR_OK || $error === UPLOAD_ERR_NO_FILE) return null;
+
+    switch ($error) {
+        case UPLOAD_ERR_INI_SIZE:
+        case UPLOAD_ERR_FORM_SIZE:
+            return $label . ' excede o limite de upload do servidor (' . $limitText . ').';
+        case UPLOAD_ERR_PARTIAL:
+            return $label . ' nao terminou de ser enviada. Tente novamente.';
+        case UPLOAD_ERR_NO_TMP_DIR:
+            return 'O servidor esta sem pasta temporaria para receber a imagem.';
+        case UPLOAD_ERR_CANT_WRITE:
+            return 'O servidor nao conseguiu gravar a imagem enviada.';
+        case UPLOAD_ERR_EXTENSION:
+            return 'Uma extensao do servidor bloqueou o envio da imagem.';
+        default:
+            return 'Falha no upload de ' . $label . '.';
+    }
+}
+
 /* ─── state ─────────────────────────────────────────────────────── */
 $action       = $_GET['action'] ?? 'list';
 $q            = trim($_GET['q'] ?? '');
@@ -77,6 +127,18 @@ $backQs = http_build_query([
     'per_page'  => $perPage,
     'ativo'     => $filterAt
 ]);
+
+$appUploadLimitBytes       = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+$phpUploadLimitBytes       = ini_size_to_bytes((string)ini_get('upload_max_filesize'));
+$phpPostLimitBytes         = ini_size_to_bytes((string)ini_get('post_max_size'));
+$effectiveUploadLimitBytes = $phpUploadLimitBytes > 0 ? min($appUploadLimitBytes, $phpUploadLimitBytes) : $appUploadLimitBytes;
+$postBufferBytes           = 1024 * 1024;
+$postImageBudgetBytes      = $phpPostLimitBytes > 0
+    ? max(512 * 1024, (int)floor(max(0, $phpPostLimitBytes - $postBufferBytes) / 4))
+    : $effectiveUploadLimitBytes;
+$clientImageTargetBytes    = max(512 * 1024, min($effectiveUploadLimitBytes, $postImageBudgetBytes));
+$effectiveUploadLimitText  = format_bytes_br($effectiveUploadLimitBytes);
+$clientImageTargetText     = format_bytes_br($clientImageTargetBytes);
 
 /* ─── DELETE ─────────────────────────────────────────────────────── */
 if ($action === 'delete' && isset($_GET['id'])) {
@@ -152,19 +214,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $imgPath3 = trim($_POST['current_image3'] ?? '');
     $imgPath4 = trim($_POST['current_image4'] ?? '');
 
+    $imageLabels = [
+        'imagem'  => 'A foto principal',
+        'imagem2' => 'A foto 2',
+        'imagem3' => 'A foto 3',
+        'imagem4' => 'A foto 4',
+    ];
+
+    foreach ($imageLabels as $field => $label) {
+        $err = (int)($_FILES[$field]['error'] ?? UPLOAD_ERR_NO_FILE);
+        $msg = upload_error_message($label, $err, $effectiveUploadLimitText);
+        if ($msg !== null) {
+            flash('error', $msg . ' Fotos do celular precisam ficar dentro de ' . $effectiveUploadLimitText . ' por arquivo.');
+            redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ);
+        }
+    }
+
     if (!empty($_FILES['imagem']['name']) && $_FILES['imagem']['error'] === UPLOAD_ERR_OK) {
         $up = upload_image_optimized('imagem','uploads/products');
-        if ($up === null) { flash('error','Falha no upload da imagem.'); redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ); }
+        if ($up === null) {
+            flash('error','A foto principal nao pode ser processada. Use JPG, PNG ou WebP com ate ' . $effectiveUploadLimitText . '.');
+            redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ);
+        }
         $imgPath = $up;
     }
     if (!empty($_FILES['imagem2']['name']) && $_FILES['imagem2']['error'] === UPLOAD_ERR_OK) {
-        $up2 = upload_image_optimized('imagem2','uploads/products'); if ($up2 !== null) $imgPath2 = $up2;
+        $up2 = upload_image_optimized('imagem2','uploads/products');
+        if ($up2 === null) {
+            flash('error','A foto 2 nao pode ser processada. Use JPG, PNG ou WebP com ate ' . $effectiveUploadLimitText . '.');
+            redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ);
+        }
+        $imgPath2 = $up2;
     }
     if (!empty($_FILES['imagem3']['name']) && $_FILES['imagem3']['error'] === UPLOAD_ERR_OK) {
-        $up3 = upload_image_optimized('imagem3','uploads/products'); if ($up3 !== null) $imgPath3 = $up3;
+        $up3 = upload_image_optimized('imagem3','uploads/products');
+        if ($up3 === null) {
+            flash('error','A foto 3 nao pode ser processada. Use JPG, PNG ou WebP com ate ' . $effectiveUploadLimitText . '.');
+            redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ);
+        }
+        $imgPath3 = $up3;
     }
     if (!empty($_FILES['imagem4']['name']) && $_FILES['imagem4']['error'] === UPLOAD_ERR_OK) {
-        $up4 = upload_image_optimized('imagem4','uploads/products'); if ($up4 !== null) $imgPath4 = $up4;
+        $up4 = upload_image_optimized('imagem4','uploads/products');
+        if ($up4 === null) {
+            flash('error','A foto 4 nao pode ser processada. Use JPG, PNG ou WebP com ate ' . $effectiveUploadLimitText . '.');
+            redirect('products.php?action='.($id?'edit':'create').'&id='.$id.'&'.$retQ);
+        }
+        $imgPath4 = $up4;
     }
 
     if ($id > 0) {
@@ -317,6 +413,8 @@ include __DIR__ . '/views/partials/header.php';
 .img-slot-icon { font-size:1.4rem; }
 /* Input fica FORA do slot, display:none — label for="id" dispara sem JS */
 .img-file-input { display:none; }
+.img-upload-hint { margin-top:.55rem; font-size:.72rem; line-height:1.45; color:#64748b; }
+.img-upload-hint.error { color:#dc2626; font-weight:700; }
 .img-slot .img-slot-overlay { display:none; position:absolute; inset:0; background:rgba(0,0,0,.52); align-items:center; justify-content:center; z-index:5; }
 .img-slot.has-img:hover .img-slot-overlay,
 .img-slot.has-img.show-overlay .img-slot-overlay { display:flex; }
@@ -816,7 +914,6 @@ include __DIR__ . '/views/partials/header.php';
     <div class="panel-body">
       <form method="POST" enctype="multipart/form-data" id="product-form">
         <input type="hidden" name="id" id="f-id" value="0">
-        <input type="hidden" name="current_image" id="f-img" value="">
         <input type="hidden" name="return_q" value="<?= htmlspecialchars($q) ?>">
         <input type="hidden" name="return_cat" value="<?= htmlspecialchars($cat) ?>">
         <input type="hidden" name="return_page" value="<?= $page ?>">
@@ -880,6 +977,10 @@ include __DIR__ . '/views/partials/header.php';
               </div>
             </label>
 
+          </div>
+
+          <div id="img-upload-hint" class="img-upload-hint">
+            Fotos do celular sao otimizadas automaticamente antes do envio. Limite atual por foto: <?= sanitize($clientImageTargetText) ?>.
           </div>
         </div>
 
@@ -971,7 +1072,7 @@ include __DIR__ . '/views/partials/header.php';
     </div>
     <div class="panel-footer">
       <button type="button" class="btn-cancel" onclick="closePanel()">Cancelar</button>
-      <button type="button" class="btn-save green" onclick="document.getElementById('product-form').submit()">💾 Salvar Produto</button>
+      <button type="submit" class="btn-save green" id="btn-save-product" form="product-form">💾 Salvar Produto</button>
     </div>
   </div>
 
@@ -984,11 +1085,20 @@ include __DIR__ . '/views/partials/header.php';
 <script>
 const PRODUCTS_DATA = <?= json_encode(array_column($products, null, 'id')) ?>;
 const BASE_URL = '<?= rtrim((string)BASE_URL,'/') ?>';
+const PRODUCT_IMAGE_TARGET_BYTES = <?= (int)$clientImageTargetBytes ?>;
+const PRODUCT_IMAGE_TARGET_TEXT = <?= json_encode($clientImageTargetText) ?>;
+const PRODUCT_IMAGE_MAX_WIDTH = <?= (int)MAX_IMAGE_WIDTH ?>;
+const PRODUCT_IMAGE_MAX_HEIGHT = <?= (int)MAX_IMAGE_HEIGHT ?>;
+const PRODUCT_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const pendingImageJobs = new Set();
 
 // ── Panel ──
 function openPanel(id) {
   const panel = document.getElementById('pr-panel');
   panel.classList.add('open');
+  resetUploadHint();
+  setSaveButtonBusy(false, '');
+  document.getElementById('product-form').dataset.autoSubmitting = '0';
 
   // Scroll to panel on mobile
   if (window.innerWidth <= 768) {
@@ -1053,11 +1163,195 @@ function closePanel() {
 }
 
 // ── Multi-image slots ──
+function setUploadHint(message, isError = false) {
+  const hint = document.getElementById('img-upload-hint');
+  if (!hint) return;
+  hint.textContent = message;
+  hint.classList.toggle('error', !!isError);
+}
+
+function resetUploadHint() {
+  setUploadHint('Fotos do celular sao otimizadas automaticamente antes do envio. Limite atual por foto: ' + PRODUCT_IMAGE_TARGET_TEXT + '.');
+}
+
+function setSaveButtonBusy(isBusy, label) {
+  const btn = document.getElementById('btn-save-product');
+  if (!btn) return;
+  if (!btn.dataset.defaultLabel) btn.dataset.defaultLabel = btn.innerHTML;
+  btn.disabled = isBusy;
+  btn.style.opacity = isBusy ? '.82' : '';
+  btn.style.cursor = isBusy ? 'wait' : '';
+  btn.innerHTML = isBusy ? label : btn.dataset.defaultLabel;
+}
+
+function attachImageJob(promise) {
+  pendingImageJobs.add(promise);
+  setSaveButtonBusy(true, 'Otimizando fotos...');
+  promise.finally(() => {
+    pendingImageJobs.delete(promise);
+    const form = document.getElementById('product-form');
+    if (!pendingImageJobs.size && (!form || form.dataset.autoSubmitting !== '1')) {
+      setSaveButtonBusy(false, '');
+    }
+  });
+  return promise;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('Nao foi possivel gerar o preview da imagem.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function replaceInputFile(input, file) {
+  if (typeof DataTransfer === 'undefined') {
+    throw new Error('Seu navegador nao permite otimizar essa foto automaticamente. Tente escolher uma imagem menor.');
+  }
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+}
+
+function fitSize(width, height, maxWidth, maxHeight) {
+  const ratio = Math.min(maxWidth / width, maxHeight / height, 1);
+  return {
+    width: Math.max(1, Math.round(width * ratio)),
+    height: Math.max(1, Math.round(height * ratio)),
+  };
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) resolve(blob);
+      else reject(new Error('Nao foi possivel preparar a foto para envio.'));
+    }, type, quality);
+  });
+}
+
+async function loadImageSource(file) {
+  if (window.createImageBitmap) {
+    const bitmap = await createImageBitmap(file);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => { if (bitmap.close) bitmap.close(); },
+    };
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Nao foi possivel ler a foto selecionada.'));
+      el.src = objectUrl;
+    });
+    return {
+      source: img,
+      width: img.naturalWidth || img.width,
+      height: img.naturalHeight || img.height,
+      cleanup: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (err) {
+    URL.revokeObjectURL(objectUrl);
+    throw err;
+  }
+}
+
+async function prepareImageForUpload(file) {
+  const fileName = String(file.name || 'foto').toLowerCase();
+  const fileType = String(file.type || '').toLowerCase();
+  const looksLikeImage = /\.(jpe?g|png|webp|heic|heif)$/i.test(fileName);
+
+  if (/\.hei(c|f)$/i.test(fileName) || fileType === 'image/heic' || fileType === 'image/heif') {
+    throw new Error('Fotos em HEIC/HEIF nao sao aceitas aqui. No iPhone, use JPG ou Mais Compativel antes de enviar.');
+  }
+
+  if (!fileType.startsWith('image/') && !looksLikeImage) {
+    throw new Error('Selecione um arquivo de imagem valido.');
+  }
+
+  let asset = null;
+  try {
+    asset = await loadImageSource(file);
+    const needsResize = asset.width > PRODUCT_IMAGE_MAX_WIDTH || asset.height > PRODUCT_IMAGE_MAX_HEIGHT;
+    const needsConvert = !PRODUCT_ALLOWED_TYPES.includes(fileType);
+    const needsCompress = file.size > PRODUCT_IMAGE_TARGET_BYTES;
+
+    if (!needsResize && !needsConvert && !needsCompress) {
+      return file;
+    }
+
+    const initial = fitSize(asset.width, asset.height, PRODUCT_IMAGE_MAX_WIDTH, PRODUCT_IMAGE_MAX_HEIGHT);
+    const canvas = document.createElement('canvas');
+    let width = initial.width;
+    let height = initial.height;
+    let quality = 0.88;
+    let blob = null;
+
+    while (true) {
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d', { alpha: false });
+      if (!ctx) throw new Error('Nao foi possivel preparar a foto para envio.');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(asset.source, 0, 0, width, height);
+
+      blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+      if (blob.size <= PRODUCT_IMAGE_TARGET_BYTES) break;
+
+      if (quality > 0.58) {
+        quality = Math.max(0.58, quality - 0.08);
+        continue;
+      }
+
+      if (Math.max(width, height) <= 960) break;
+
+      width = Math.max(1, Math.round(width * 0.85));
+      height = Math.max(1, Math.round(height * 0.85));
+    }
+
+    if (!blob || blob.size > PRODUCT_IMAGE_TARGET_BYTES) {
+      throw new Error('A foto ainda ficou acima do limite de ' + PRODUCT_IMAGE_TARGET_TEXT + '. Tente uma foto mais leve.');
+    }
+
+    const cleanName = fileName.replace(/\.[^.]+$/, '') || 'foto';
+    return new File([blob], cleanName + '.jpg', {
+      type: 'image/jpeg',
+      lastModified: Date.now(),
+    });
+  } finally {
+    if (asset && typeof asset.cleanup === 'function') asset.cleanup();
+  }
+}
+
 function previewSlot(input, n) {
   if (!input.files || !input.files[0]) return;
-  const reader = new FileReader();
-  reader.onload = e => { setSlotImg(n, e.target.result); };
-  reader.readAsDataURL(input.files[0]);
+
+  const task = (async () => {
+    resetUploadHint();
+    const originalFile = input.files[0];
+    const preparedFile = await prepareImageForUpload(originalFile);
+    if (preparedFile !== originalFile) {
+      replaceInputFile(input, preparedFile);
+    }
+    const previewSrc = await fileToDataUrl(input.files[0]);
+    setSlotImg(n, previewSrc);
+    if (preparedFile !== originalFile) {
+      setUploadHint('Foto otimizada com sucesso para envio pelo celular. Limite atual por foto: ' + PRODUCT_IMAGE_TARGET_TEXT + '.');
+    }
+  })().catch(err => {
+    clearSlot({ stopPropagation() {}, preventDefault() {} }, n);
+    setUploadHint(err && err.message ? err.message : 'Falha ao preparar a foto para envio.', true);
+  });
+
+  attachImageJob(task);
 }
 
 function setSlotImg(n, src) {
@@ -1213,6 +1507,29 @@ function autoDetectSizes(sizesStr) {
 
 // ── Close on Escape ──
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+
+document.getElementById('product-form').addEventListener('submit', async function(e) {
+  if (this.dataset.autoSubmitting === '1') {
+    setSaveButtonBusy(true, 'Salvando...');
+    return;
+  }
+
+  if (!pendingImageJobs.size) {
+    setSaveButtonBusy(true, 'Salvando...');
+    return;
+  }
+
+  e.preventDefault();
+  setUploadHint('Aguardando a otimizacao das fotos antes de salvar...', false);
+  setSaveButtonBusy(true, 'Otimizando fotos...');
+  await Promise.allSettled(Array.from(pendingImageJobs));
+  this.dataset.autoSubmitting = '1';
+  setSaveButtonBusy(true, 'Salvando...');
+  if (typeof this.requestSubmit === 'function') this.requestSubmit();
+  else this.submit();
+});
+
+resetUploadHint();
 
 // ── Auto-open if URL has action=edit or action=create ──
 <?php if ($action === 'edit' && $editingProduct): ?>
