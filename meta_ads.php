@@ -15,6 +15,18 @@ require_login();
 $pdo       = get_pdo();
 $companyId = current_company_id();
 
+/* ─── Garante tabela company_settings ──────────────────────── */
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS company_settings (
+        id            INT AUTO_INCREMENT PRIMARY KEY,
+        company_id    INT NOT NULL,
+        setting_key   VARCHAR(100) NOT NULL,
+        setting_value TEXT,
+        updated_at    DATETIME DEFAULT NOW(),
+        UNIQUE KEY uq_co_key (company_id, setting_key)
+    )");
+} catch(Throwable $e) {}
+
 /* ─── Settings helpers ──────────────────────────────────────── */
 function ma_get(PDO $pdo, int $cid, string $key): string {
     $s = $pdo->prepare("SELECT setting_value FROM company_settings WHERE company_id=? AND setting_key=?");
