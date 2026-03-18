@@ -26,7 +26,8 @@ $ALL_MENU = [
     ['agenda_barbearia',     'Agenda Barbearia',     $base . '/calendar_barbearia.php',  false],
     ['servicos_barbearia',   'Serviços Barbearia',   $base . '/services_admin.php',      false],
     ['equipe',               'Equipe',               $base . '/staff.php',               false],
-    ['reativacao',           'Reativação',        $base . '/reativacao.php',          false], // ← NOVO
+    ['reativacao',           'Reativação',           $base . '/reativacao.php',          false],
+    ['meta_ads',             'Meta Ads',             $base . '/meta_ads.php',            false],
     ['configuracoes',        'Configurações',        $base . '/settings.php',            false], // ← SEMPRE visível para quem tem acesso admin
 ];
 

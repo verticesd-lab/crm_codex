@@ -34,7 +34,8 @@ $ALL_MODULES = [
     ['cadastro_inteligente', 'Cadastro Inteligente', 'Importação de mercadoria via CSV/planilha.',               'products_imports.php',   '📤', 'vendas',    false],
     ['pedidos',              'Pedidos',              'Gestão de pedidos e histórico de vendas.',                  'orders.php',             '🧾', 'vendas',    false],
     ['promocoes',            'Promoções',            'Criação e gestão de campanhas promocionais.',               'promotions.php',         '🏷️','marketing', false],
-    ['reativacao',           'Reativação',           'Reconecte clientes inativos com cadência e WhatsApp.',     'reativacao.php',         '🔁', 'marketing', false], // ← NOVO
+    ['reativacao',           'Reativação',           'Reconecte clientes inativos com cadência e WhatsApp.',     'reativacao.php',         '🔁', 'marketing', false],
+    ['meta_ads',             'Meta Ads',             'Dashboard de tráfego pago com análise de campanhas e IA.', 'meta_ads.php',            '📊', 'marketing', false], 
     ['kpis',                 'KPIs',                 'Indicadores de performance e metas.',                       'kpis.php',               '📈', 'analytics', false],
     ['analytics',            'Analytics',            'Análise de dados e relatórios avançados.',                  'analytics.php',          '📉', 'analytics', false],
     ['canais',               'Canais',               'Configuração de integrações (WhatsApp, Instagram).',        'integrations.php',       '🔗', 'config',    false],
