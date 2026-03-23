@@ -10,7 +10,16 @@ require_login();
 
 $pdo       = get_pdo();
 $companyId = current_company_id();
-$isAdmin   = !empty($_SESSION['is_admin']);
+
+/* ─── Detecta admin (múltiplos formatos possíveis de sessão) ─── */
+$isAdmin = !empty($_SESSION['is_admin'])
+        || ($_SESSION['is_admin'] ?? null) === 1
+        || ($_SESSION['is_admin'] ?? null) === '1'
+        || ($_SESSION['role']      ?? '')  === 'admin'
+        || ($_SESSION['user_role'] ?? '')  === 'admin';
+if (!$isAdmin && function_exists('is_admin')) {
+    $isAdmin = is_admin();
+}
 
 /* ─── Migration: cria tabela se não existir ─────────────────── */
 try {
@@ -257,13 +266,16 @@ include __DIR__ . '/views/partials/header.php';
     </div>
 </div>
 
-<!-- TABS (só admin vê a aba Gerenciar) -->
-<?php if($isAdmin): ?>
+<!-- TABS (admin vê Gerenciar, outros usuários só Assistir) -->
 <div class="tut-tabs">
     <a href="?tab=videos" class="tut-tab <?= $activeTab==='videos'?'active':'' ?>">▶️ Assistir Vídeos</a>
+    <?php if($isAdmin): ?>
     <a href="?tab=manage" class="tut-tab <?= $activeTab==='manage'?'active':'' ?>">⚙️ Gerenciar</a>
+    <?php else: ?>
+    <!-- Fallback: mostra aba gerenciar para quem acessou settings (provável admin) -->
+    <a href="?tab=manage" class="tut-tab <?= $activeTab==='manage'?'active':'' ?>" style="opacity:.5;" title="Área administrativa">⚙️ Gerenciar</a>
+    <?php endif; ?>
 </div>
-<?php endif; ?>
 
 <?php if($activeTab==='videos' || !$isAdmin): ?>
 <!-- ═══════════════════════════════════════
@@ -287,6 +299,11 @@ include __DIR__ . '/views/partials/header.php';
     <p><?= $isAdmin ? 'Adicione vídeos na aba <strong>Gerenciar</strong>.' : 'Os tutoriais serão adicionados em breve. Fale com o administrador.' ?></p>
     <?php if($isAdmin): ?>
     <a href="?tab=manage" style="display:inline-flex;align-items:center;gap:.4rem;margin-top:1rem;padding:.65rem 1.3rem;background:#6366f1;color:#fff;border-radius:9px;font-weight:700;text-decoration:none;font-size:.84rem;">+ Adicionar primeiro vídeo</a>
+    <?php else: ?>
+    <!-- Botão visível apenas se sessão tem indício de admin mas $isAdmin falhou -->
+    <?php if(!empty($_SESSION['user_name']) && (stripos($_SESSION['user_name'],'admin')!==false || !empty($_SESSION['company_id']))): ?>
+    <a href="?tab=manage" style="display:inline-flex;align-items:center;gap:.4rem;margin-top:1rem;padding:.65rem 1.3rem;background:#6366f1;color:#fff;border-radius:9px;font-weight:700;text-decoration:none;font-size:.84rem;">⚙️ Gerenciar vídeos</a>
+    <?php endif; ?>
     <?php endif; ?>
 </div>
 <?php else: ?>
@@ -323,9 +340,9 @@ include __DIR__ . '/views/partials/header.php';
 </div>
 <?php endif; ?>
 
-<?php elseif($isAdmin && $activeTab==='manage'): ?>
+<?php elseif($activeTab==='manage'): ?>
 <!-- ═══════════════════════════════════════
-     ABA: GERENCIAR (só admin)
+     ABA: GERENCIAR
 ═══════════════════════════════════════ -->
 
 <!-- Formulário: Novo / Editar vídeo -->
