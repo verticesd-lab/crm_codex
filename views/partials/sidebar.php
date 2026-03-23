@@ -28,6 +28,7 @@ $ALL_MENU = [
     ['equipe',               'Equipe',               $base . '/staff.php',               false],
     ['reativacao',           'Reativação',           $base . '/reativacao.php',          false],
     ['meta_ads',             'Meta Ads',             $base . '/meta_ads.php',            false],
+    ['tutoriais',            'Tutoriais',            $base . '/tutorials.php',   false],
     ['configuracoes',        'Configurações',        $base . '/settings.php',            false], // ← SEMPRE visível para quem tem acesso admin
 ];
 
