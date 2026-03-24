@@ -85,7 +85,7 @@ $faviconUrl = !empty($favicon) ? normalize_asset_url($favicon) : '';
                     </div>
                 </div>
 
-                <div class="flex items-center gap-3 relative">
+                <div class="flex items-center gap-3 relative flex-wrap justify-end">
                     <button data-bell class="relative h-10 w-10 rounded-full <?= $theme === 'dark' ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-700' ?> flex items-center justify-center hover:ring-2 hover:ring-indigo-500/50" type="button">
                         <span aria-hidden="true">🔔</span>
                         <span class="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-emerald-500"></span>
@@ -95,6 +95,27 @@ $faviconUrl = !empty($favicon) ? normalize_asset_url($favicon) : '';
                         <p class="font-semibold mb-2">Notificações</p>
                         <p class="<?= $theme === 'dark' ? 'text-slate-400' : 'text-slate-600' ?>">Sem notificações no momento.</p>
                     </div>
+
+                    <a href="<?= BASE_URL ?>/reativacao.php"
+                       style="display:inline-flex;align-items:center;gap:.35rem;padding:.38rem .85rem;border-radius:8px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.78rem;font-weight:600;color:#374151;text-decoration:none;transition:box-shadow .15s;"
+                       onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.13)'"
+                       onmouseout="this.style.boxShadow='0 1px 4px rgba(0,0,0,.07)'">
+                        &#128260; Reativar
+                    </a>
+
+                    <a href="<?= BASE_URL ?>/landing.php" target="_blank" rel="noopener"
+                       style="display:inline-flex;align-items:center;gap:.35rem;padding:.38rem .85rem;border-radius:8px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.78rem;font-weight:600;color:#374151;text-decoration:none;transition:box-shadow .15s;"
+                       onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.13)'"
+                       onmouseout="this.style.boxShadow='0 1px 4px rgba(0,0,0,.07)'">
+                        &#127760; Landing Page &#8599;
+                    </a>
+
+                    <a href="<?= BASE_URL ?>/agenda.php?empresa=<?= urlencode($_SESSION['company_slug'] ?? '') ?>" target="_blank" rel="noopener"
+                       style="display:inline-flex;align-items:center;gap:.35rem;padding:.38rem .85rem;border-radius:8px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.78rem;font-weight:600;color:#374151;text-decoration:none;transition:box-shadow .15s;"
+                       onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.13)'"
+                       onmouseout="this.style.boxShadow='0 1px 4px rgba(0,0,0,.07)'">
+                        &#128197; Agenda &#8599;
+                    </a>
 
                     <a class="text-sm text-indigo-600 hover:underline"
                        href="<?= BASE_URL ?>/loja.php?empresa=<?= sanitize($_SESSION['company_slug'] ?? '') ?>"
