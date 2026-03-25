@@ -4,6 +4,22 @@ require_once __DIR__ . '/db.php';
 require_login();
 
 $pdo = get_pdo();
+
+/* --- Migration automatica da tabela orders --- */
+try {
+    $cols = $pdo->query('SHOW COLUMNS FROM orders')->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('forma_pagamento', $cols, true)) {
+        $pdo->exec("ALTER TABLE orders ADD COLUMN forma_pagamento VARCHAR(50) DEFAULT 'dinheiro'");
+    }
+    if (!in_array('desconto', $cols, true)) {
+        $pdo->exec("ALTER TABLE orders ADD COLUMN desconto DECIMAL(10,2) DEFAULT 0");
+    }
+    if (!in_array('origem', $cols, true)) {
+        $pdo->exec("ALTER TABLE orders ADD COLUMN origem VARCHAR(50) DEFAULT 'pdv'");
+    }
+} catch (Throwable $e) {
+}
+
 $companyId = current_company_id();
 $userId = (int)($_SESSION['user_id'] ?? 0);
 
@@ -12,7 +28,7 @@ $clientsStmt = $pdo->prepare('SELECT id, nome, telefone_principal, whatsapp FROM
 $clientsStmt->execute([$companyId]);
 $clients = $clientsStmt->fetchAll();
 
-$productsStmt = $pdo->prepare('SELECT id, nome, preco, categoria FROM products WHERE company_id=? AND ativo=1 ORDER BY nome');
+$productsStmt = $pdo->prepare('SELECT id, nome, preco, categoria, imagem FROM products WHERE company_id=? AND ativo=1 ORDER BY nome');
 $productsStmt->execute([$companyId]);
 $rawProducts = $productsStmt->fetchAll();
 
@@ -663,11 +679,22 @@ include __DIR__ . '/views/partials/header.php';
           <?= htmlspecialchars($p['cat_label']) ?>
         </div>
       <?php endif; endif; ?>
+        <?php $imgUrl = !empty($p['imagem']) ? image_url((string)$p['imagem']) : ''; ?>
         <div class="prod-row"
              data-id="<?= (int)$p['id'] ?>"
              data-name="<?= htmlspecialchars((string)$p['nome']) ?>"
              data-price="<?= (float)$p['preco'] ?>"
              data-cat-idx="<?= (int)$p['cat_idx'] ?>">
+          <?php if ($imgUrl !== ''): ?>
+          <img
+            src="<?= sanitize($imgUrl) ?>"
+            alt="<?= sanitize((string)$p['nome']) ?>"
+            style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0;border:1px solid #e2e8f0;"
+            loading="lazy"
+            onerror="this.style.display='none'">
+          <?php else: ?>
+          <div style="width:42px;height:42px;border-radius:8px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.1rem;">&#128084;</div>
+          <?php endif; ?>
           <div class="prod-row-info">
             <span class="prod-row-name"><?= sanitize((string)$p['nome']) ?></span>
           </div>
