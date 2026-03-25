@@ -249,7 +249,7 @@ if ($action === 'create' || ($action === 'edit' && $id)) {
             <span class="bday-icon">🎂</span>
             <input type="date" name="data_nascimento" id="f-nascimento"
                    value="<?= sanitize((string)($client['data_nascimento']??'')) ?>"
-                   max="<?= date('Y-m-d') ?>">
+                   
           </div>
           <div class="birthday-hint-box" id="bday-hint-box" style="<?= empty($client['data_nascimento'])?'display:none;':'' ?>max-width:420px;">
             🎉 <span id="bday-hint-text">
