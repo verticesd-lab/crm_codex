@@ -309,6 +309,36 @@ if ($action === 'view' && $id) {
     $ordersStmt->execute([$companyId,$id]);
     $orderStats = $ordersStmt->fetch() ?: ['total_pedidos'=>0,'total_valor'=>0];
 
+    // Histórico detalhado de pedidos + itens
+    $ordersHistStmt = $pdo->prepare("
+        SELECT o.id, o.total, o.status, o.origem, o.forma_pagamento, o.desconto, o.created_at
+        FROM orders o
+        WHERE o.company_id=? AND o.client_id=?
+        ORDER BY o.created_at DESC
+        LIMIT 20
+    ");
+    $ordersHistStmt->execute([$companyId, $id]);
+    $ordersHist = $ordersHistStmt->fetchAll();
+
+    // Itens de cada pedido
+    $orderIds = array_column($ordersHist, 'id');
+    $orderItems = [];
+    if (!empty($orderIds)) {
+        $placeholders = implode(',', array_fill(0, count($orderIds), '?'));
+        $itemsStmt = $pdo->prepare("
+            SELECT oi.order_id, oi.quantidade, oi.preco_unitario, oi.subtotal,
+                   p.nome as produto_nome, p.imagem as produto_imagem
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id IN ($placeholders)
+            ORDER BY oi.id ASC
+        ");
+        $itemsStmt->execute($orderIds);
+        foreach ($itemsStmt->fetchAll() as $item) {
+            $orderItems[$item['order_id']][] = $item;
+        }
+    }
+
     $interactionsStmt = $pdo->prepare('SELECT * FROM interactions WHERE company_id=? AND client_id=? ORDER BY created_at DESC');
     $interactionsStmt->execute([$companyId,$id]);
     $interactions = $interactionsStmt->fetchAll();
@@ -567,6 +597,90 @@ if ($action === 'view' && $id) {
         Enviar reativação no WhatsApp
       </a>
       <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
+    <!-- HISTÓRICO DE COMPRAS -->
+    <?php if (!empty($ordersHist)): ?>
+    <div class="section-card" style="margin-bottom:1.25rem;">
+        <div class="section-card-header">
+            <h3>🛍️ Histórico de Compras</h3>
+            <span style="font-size:.75rem;color:#94a3b8;"><?= count($ordersHist) ?> pedido(s) · LTV <?= format_currency($orderStats['total_valor']) ?></span>
+        </div>
+        <div style="padding:0 1.25rem;">
+        <?php foreach($ordersHist as $ord):
+            $oritens = $orderItems[$ord['id']] ?? [];
+            $statusMap = ['concluido'=>['#dcfce7','#15803d'],'pago'=>['#dcfce7','#15803d'],
+                          'cancelado'=>['#fee2e2','#dc2626'],'pendente'=>['#fef9c3','#a16207'],
+                          'novo'=>['#ede9fe','#6d28d9']];
+            $st = strtolower($ord['status']??'');
+            [$stBg,$stFg] = $statusMap[$st] ?? ['#f1f5f9','#64748b'];
+            $pagIcons = ['dinheiro'=>'💵','pix'=>'📱','cartao_debito'=>'💳','cartao_credito'=>'💳','cartao'=>'💳'];
+            $pagIco = $pagIcons[strtolower($ord['forma_pagamento']??'')] ?? '💰';
+        ?>
+        <div style="padding:.85rem 0;border-bottom:1px solid #f8fafc;">
+            <!-- Cabeçalho do pedido -->
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem;">
+                <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+                    <span style="font-size:.82rem;font-weight:700;color:#0f172a;">
+                        Pedido #<?= (int)$ord['id'] ?>
+                    </span>
+                    <span style="font-size:.63rem;font-weight:700;padding:.15rem .5rem;border-radius:20px;background:<?= $stBg ?>;color:<?= $stFg ?>;">
+                        <?= strtoupper($st) ?>
+                    </span>
+                    <?php if(!empty($ord['origem'])): ?>
+                    <span style="font-size:.63rem;font-weight:600;padding:.15rem .5rem;border-radius:20px;background:#f1f5f9;color:#64748b;">
+                        <?= strtoupper(sanitize($ord['origem'])) ?>
+                    </span>
+                    <?php endif; ?>
+                    <?php if(!empty($ord['forma_pagamento'])): ?>
+                    <span style="font-size:.72rem;color:#94a3b8;"><?= $pagIco ?> <?= sanitize(str_replace('_',' ',$ord['forma_pagamento'])) ?></span>
+                    <?php endif; ?>
+                </div>
+                <div style="text-align:right;">
+                    <span style="font-size:.9rem;font-weight:800;color:#6366f1;">
+                        <?= format_currency($ord['total']) ?>
+                    </span>
+                    <?php if(!empty($ord['desconto']) && $ord['desconto'] > 0): ?>
+                    <span style="font-size:.68rem;color:#d97706;display:block;">
+                        desconto <?= format_currency($ord['desconto']) ?>
+                    </span>
+                    <?php endif; ?>
+                    <span style="font-size:.68rem;color:#94a3b8;display:block;">
+                        <?= safe_dt($ord['created_at']) ?>
+                    </span>
+                </div>
+            </div>
+            <!-- Itens do pedido -->
+            <?php if(!empty($oritens)): ?>
+            <div style="display:flex;flex-direction:column;gap:.3rem;padding:.5rem .75rem;background:#f8fafc;border-radius:9px;">
+                <?php foreach($oritens as $it):
+                    $imgUrl = !empty($it['produto_imagem']) ? BASE_URL.'/'.$it['produto_imagem'] : '';
+                ?>
+                <div style="display:flex;align-items:center;gap:.6rem;">
+                    <?php if($imgUrl): ?>
+                    <img src="<?= sanitize($imgUrl) ?>" style="width:32px;height:32px;border-radius:6px;object-fit:cover;border:1px solid #e2e8f0;flex-shrink:0;" loading="lazy" onerror="this.style.display='none'">
+                    <?php else: ?>
+                    <div style="width:32px;height:32px;border-radius:6px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.85rem;">👔</div>
+                    <?php endif; ?>
+                    <span style="flex:1;font-size:.8rem;color:#374151;font-weight:500;">
+                        <?= sanitize($it['produto_nome'] ?? 'Produto removido') ?>
+                    </span>
+                    <span style="font-size:.72rem;color:#94a3b8;white-space:nowrap;">
+                        <?= (int)$it['quantidade'] ?>x
+                    </span>
+                    <span style="font-size:.8rem;font-weight:700;color:#0f172a;white-space:nowrap;min-width:72px;text-align:right;">
+                        <?= format_currency($it['subtotal']) ?>
+                    </span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <?php else: ?>
+            <p style="font-size:.75rem;color:#94a3b8;font-style:italic;">Detalhes dos itens não disponíveis.</p>
+            <?php endif; ?>
+        </div>
+        <?php endforeach; ?>
+        </div>
     </div>
     <?php endif; ?>
 
