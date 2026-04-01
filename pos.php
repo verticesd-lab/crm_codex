@@ -24,7 +24,7 @@ $companyId = current_company_id();
 $userId = (int)($_SESSION['user_id'] ?? 0);
 
 // ── Dados ──
-$clientsStmt = $pdo->prepare('SELECT id, nome, telefone_principal, whatsapp FROM clients WHERE company_id=? ORDER BY nome');
+$clientsStmt = $pdo->prepare('SELECT id, nome, telefone_principal, whatsapp, tags FROM clients WHERE company_id=? ORDER BY nome');
 $clientsStmt->execute([$companyId]);
 $clients = $clientsStmt->fetchAll();
 
@@ -107,19 +107,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $itemsJson      = $_POST['items'] ?? '[]';
     $items          = json_decode($itemsJson, true);
 
-    if (!$items || !is_array($items) || count($items) === 0) {
-        $flashError = 'Adicione ao menos um item ao carrinho.';
-    } else {
-        if (!$clientId && $newClientName) {
-            $wa = preg_replace('/\D/','',$newClientPhone);
-            if ($wa && !str_starts_with($wa,'55') && strlen($wa)>=10) $wa='55'.$wa;
-            $pdo->prepare('INSERT INTO clients (company_id,nome,telefone_principal,whatsapp,tags,created_at,updated_at) VALUES (?,?,?,?,?,NOW(),NOW())')
-                ->execute([$companyId, $newClientName, $newClientPhone, $wa ?: $newClientPhone, 'pdv']);
-            $clientId = (int)$pdo->lastInsertId();
-        }
-        if (!$clientId && !$noClient) {
-            $flashError = 'Selecione um cliente, cadastre um novo ou marque como venda sem cadastro.';
+        if (!$items || !is_array($items) || count($items) === 0) {
+            $flashError = 'Adicione ao menos um item ao carrinho.';
         } else {
+            if (!$clientId && $newClientName) {
+                // Tenta achar cliente existente pelo telefone antes de criar
+                $digitsOnly = preg_replace('/\D/', '', $newClientPhone);
+                $waFull     = $digitsOnly && !str_starts_with($digitsOnly,'55') ? '55'.$digitsOnly : $digitsOnly;
+
+                $existingStmt = $pdo->prepare("SELECT id FROM clients WHERE company_id=? AND (whatsapp=? OR whatsapp=? OR telefone_principal=?) LIMIT 1");
+                $existingStmt->execute([$companyId, $waFull, $digitsOnly, $digitsOnly]);
+                $clientId = (int)($existingStmt->fetchColumn() ?: 0);
+
+                if (!$clientId) {
+                    $pdo->prepare('INSERT INTO clients (company_id,nome,telefone_principal,whatsapp,tags,created_at,updated_at) VALUES (?,?,?,?,?,NOW(),NOW())')
+                        ->execute([$companyId, $newClientName, $newClientPhone, $waFull ?: $newClientPhone, 'pdv']);
+                    $clientId = (int)$pdo->lastInsertId();
+                } else {
+                    // Atualiza nome se estava vazio
+                    $pdo->prepare("UPDATE clients SET nome=IF(nome='' OR nome IS NULL,?,nome), updated_at=NOW() WHERE id=?")
+                        ->execute([$newClientName, $clientId]);
+                }
+            }
+            if (!$clientId && !$noClient) {
+                $flashError = 'Selecione um cliente, cadastre um novo ou marque como venda sem cadastro.';
+            } else {
             $subtotal = 0;
             foreach ($items as $it) $subtotal += ($it['qty']??0) * ($it['price']??0);
             $total = max(0, $subtotal - $desconto);
@@ -748,7 +760,14 @@ include __DIR__ . '/views/partials/header.php';
       <select id="client-select" class="pos-select">
         <option value="">— Selecionar cliente —</option>
         <?php foreach($clients as $c): ?>
-          <option value="<?= (int)$c['id'] ?>"><?= sanitize($c['nome']) ?><?= $c['whatsapp'] ? ' · '.sanitize($c['whatsapp']) : '' ?></option>
+          <?php
+          $origemTag = '';
+          if (str_contains($c['tags'] ?? '', 'barbearia')) $origemTag = ' ✂️';
+          elseif (str_contains($c['tags'] ?? '', 'pdv')) $origemTag = ' 🛒';
+          ?>
+          <option value="<?= (int)$c['id'] ?>">
+            <?= sanitize($c['nome']) ?><?= $origemTag ?><?= $c['whatsapp'] ? ' · '.sanitize($c['whatsapp']) : '' ?>
+          </option>
         <?php endforeach; ?>
       </select>
 

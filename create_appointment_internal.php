@@ -240,6 +240,134 @@ try {
         $endsAt,
         now_utc_datetime(),
     ]);
+    $appointmentId = (int)$pdo->lastInsertId();
+
+    /* Auto-cadastro de cliente pelo agendamento */
+    try {
+        $clientPhone = preg_replace('/\D/', '', trim($phone));
+        if (strlen($clientPhone) >= 10) {
+            // Normaliza: garante DDI 55
+            if (!str_starts_with($clientPhone, '55') && strlen($clientPhone) <= 11) {
+                $clientPhone = '55' . $clientPhone;
+            }
+
+            $nome = $customerName;
+            $ig = $instagram;
+
+            // Busca cliente existente pelo WhatsApp
+            $found = $pdo->prepare("SELECT id FROM clients WHERE company_id=? AND (whatsapp=? OR telefone_principal=?) LIMIT 1");
+            $found->execute([$companyId, $clientPhone, $clientPhone]);
+            $clientId = $found->fetchColumn();
+
+            // Monta tag dos serviços agendados
+            $svcTag = '';
+            if (!empty($serviceKeys)) {
+                $servicesCatalog = agenda_get_services_catalog($pdo, $companyId, true);
+                $labels = array_map(static fn($key) => $servicesCatalog[$key]['label'] ?? $key, $serviceKeys);
+                $svcTag = implode(', ', $labels);
+            }
+
+            $now = now_utc_datetime();
+            $clientColumns = [];
+            $interactionOrigin = 'barbearia';
+
+            try {
+                $clientColumns = $pdo->query('SHOW COLUMNS FROM clients')->fetchAll(PDO::FETCH_COLUMN);
+            } catch (Throwable $e) {
+                $clientColumns = [];
+            }
+
+            try {
+                $interactionOriginCol = $pdo->query("SHOW COLUMNS FROM interactions LIKE 'origem'")->fetch(PDO::FETCH_ASSOC);
+                $interactionOriginType = strtolower((string)($interactionOriginCol['Type'] ?? ''));
+                if ($interactionOriginType !== '' && str_contains($interactionOriginType, 'enum(') && !str_contains($interactionOriginType, "'barbearia'")) {
+                    $interactionOrigin = 'manual';
+                }
+            } catch (Throwable $e) {
+                $interactionOrigin = 'manual';
+            }
+
+            if (!$clientId) {
+                // Cria novo cliente
+                if (in_array('origem', $clientColumns, true)) {
+                    $pdo->prepare("
+                        INSERT INTO clients
+                            (company_id, nome, whatsapp, telefone_principal, instagram_username, tags, observacoes, origem, created_at, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?)
+                    ")->execute([
+                        $companyId,
+                        $nome,
+                        $clientPhone,
+                        $clientPhone,
+                        ltrim($ig, '@'),
+                        'barbearia',
+                        'Cadastrado automaticamente via agendamento.',
+                        'barbearia',
+                        $now,
+                        $now,
+                    ]);
+                } else {
+                    $pdo->prepare("
+                        INSERT INTO clients
+                            (company_id, nome, whatsapp, telefone_principal, instagram_username, tags, observacoes, created_at, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                    ")->execute([
+                        $companyId,
+                        $nome,
+                        $clientPhone,
+                        $clientPhone,
+                        ltrim($ig, '@'),
+                        'barbearia',
+                        'Cadastrado automaticamente via agendamento.',
+                        $now,
+                        $now,
+                    ]);
+                }
+                $clientId = (int)$pdo->lastInsertId();
+            } else {
+                // Atualiza dados se campos estavam vazios
+                $pdo->prepare("
+                    UPDATE clients SET
+                        nome = IF(nome='' OR nome IS NULL, ?, nome),
+                        instagram_username = IF((instagram_username='' OR instagram_username IS NULL) AND ?!='', ?, instagram_username),
+                        tags = IF(FIND_IN_SET('barbearia', IFNULL(tags,''))=0,
+                                  IF(tags IS NULL OR tags='', 'barbearia', CONCAT(tags, ', barbearia')),
+                                  tags),
+                        updated_at = ?
+                    WHERE id=? AND company_id=?
+                ")->execute([$nome, $ig, ltrim($ig, '@'), $now, $clientId, $companyId]);
+            }
+
+            // Vincula o agendamento ao cliente (se a coluna client_id existir)
+            try {
+                $cols = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN);
+                if (in_array('client_id', $cols, true)) {
+                    $pdo->prepare("UPDATE appointments SET client_id=? WHERE id=? AND company_id=?")
+                        ->execute([(int)$clientId, $appointmentId, $companyId]);
+                }
+            } catch (Throwable $e) {
+            }
+
+            // Registra atendimento no histórico do cliente
+            $svcDesc = $svcTag ?: 'Serviço de barbearia';
+            $pdo->prepare("
+                INSERT INTO interactions
+                    (company_id, client_id, canal, origem, titulo, resumo, atendente, created_at)
+                VALUES (?,?,?,?,?,?,?,?)
+            ")->execute([
+                $companyId,
+                (int)$clientId,
+                'presencial',
+                $interactionOrigin,
+                'Agendamento: ' . $svcDesc,
+                "Agendado para {$date} às {$timeHm}. Serviços: {$svcDesc}.",
+                'Sistema',
+                $now,
+            ]);
+        }
+    } catch (Throwable $e) {
+        // Silencia — agendamento já foi salvo, não deve falhar por isso
+    }
 } catch (Throwable $e) {
     http_response_code(500);
     exit('Erro ao salvar agendamento: ' . $e->getMessage());
