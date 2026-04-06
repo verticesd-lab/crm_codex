@@ -220,6 +220,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   <button class="rv-tab" data-tab="criar">📤 Criar Lote</button>
   <button class="rv-tab" data-tab="lotes">📋 Histórico</button>
   <button class="rv-tab" data-tab="segmentos">🗂️ Segmentos</button>
+  <button class="rv-tab" data-tab="pos_barbearia">✂️ Pós-Barbearia</button>
   <button class="rv-tab" data-tab="mensagens">📝 Mensagens</button>
 </div>
 
@@ -463,6 +464,122 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   <div class="rv-table-wrap" id="seg-wrap"><div class="rv-empty">Selecione um segmento acima</div></div>
 </div>
 
+
+<!-- ═══ PÓS-BARBEARIA ═══ -->
+<div id="tab-pos_barbearia" class="rv-panel">
+
+  <div style="margin-bottom:1.25rem">
+    <h2 style="font-size:1rem;font-weight:700;color:#0f172a">✂️ Lembrete Pós-Barbearia</h2>
+    <p style="font-size:.78rem;color:#64748b;margin-top:.15rem">
+      Clientes que <strong>vieram recentemente</strong> — envie lembretes de agenda, promoções e lançamentos antes que esfriem.
+    </p>
+  </div>
+
+  <!-- Banner explicativo -->
+  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:.85rem 1.25rem;font-size:.82rem;color:#166534;margin-bottom:1.25rem;display:flex;align-items:flex-start;gap:.75rem;">
+    <span style="font-size:1.2rem;flex-shrink:0;">💡</span>
+    <div>
+      <strong>Para que serve esta aba?</strong><br>
+      Diferente da "Reativação" (clientes sumidos), aqui você fala com quem <em>acabou de ir</em> na barbearia — mantendo o relacionamento quente, divulgando promoções e facilitando o re-agendamento.
+    </div>
+  </div>
+
+  <!-- Filtros -->
+  <div class="rv-filters">
+    <div class="rv-fg">
+      <label>Período do último agendamento</label>
+      <select class="rv-select" id="pb-dias">
+        <option value="20">Últimos 20 dias</option>
+        <option value="30" selected>Últimos 30 dias</option>
+        <option value="45">Últimos 45 dias</option>
+        <option value="60">Últimos 60 dias</option>
+      </select>
+    </div>
+    <div class="rv-fg">
+      <label>Variação de mensagem</label>
+      <select class="rv-select" id="pb-variacao">
+        <option value="0">Variação 1 — Lembrete de agenda</option>
+        <option value="1">Variação 2 — Promoção / lançamento</option>
+        <option value="2">Variação 3 — Link da agenda online</option>
+        <option value="3">Variação 4 — Feedback + retorno</option>
+        <option value="4">Variação 5 — Oferta exclusiva</option>
+      </select>
+    </div>
+    <div class="rv-fg">
+      <label>Limite</label>
+      <select class="rv-select" id="pb-limite">
+        <option value="15">15 clientes</option>
+        <option value="20" selected>20 clientes</option>
+        <option value="30">30 clientes</option>
+        <option value="50">50 clientes</option>
+      </select>
+    </div>
+    <div class="rv-fg" style="justify-content:flex-end;padding-top:18px">
+      <button class="btn btn-primary" onclick="pbLoad()">🔍 Buscar</button>
+    </div>
+  </div>
+
+  <!-- Preview das mensagens -->
+  <div class="rv-card" style="margin-bottom:1.25rem">
+    <div class="rv-card-hd">
+      <h3>📝 Prévia das mensagens disponíveis</h3>
+      <span style="font-size:.73rem;color:#94a3b8">Use {nome} para o primeiro nome · {link_agenda} para o link da agenda online</span>
+    </div>
+    <div style="padding:.85rem 1.25rem;display:grid;grid-template-columns:1fr 1fr;gap:.75rem" id="pb-msg-previews">
+      <!-- Preenchido pelo JS -->
+    </div>
+  </div>
+
+  <!-- Barra de seleção -->
+  <div id="pb-sel-bar" class="rv-sel-bar" style="display:none">
+    <span><strong id="pb-sel-count">0</strong> clientes selecionados</span>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn btn-ghost btn-sm" onclick="pbSelectAll(true)">Todos</button>
+      <button class="btn btn-ghost btn-sm" onclick="pbSelectAll(false)">Limpar</button>
+      <button class="btn btn-primary btn-sm" onclick="pbOpenModal()">Criar lote →</button>
+    </div>
+  </div>
+
+  <!-- Tabela de clientes -->
+  <div class="rv-table-wrap">
+    <div id="pb-loading" class="rv-empty">Clique em <strong>Buscar</strong> para carregar clientes recentes da barbearia.</div>
+    <table class="rv-table" id="pb-table" style="display:none">
+      <thead><tr>
+        <th style="width:36px"><input type="checkbox" id="pb-check-all" onchange="pbToggleAll(this)"></th>
+        <th>Cliente</th>
+        <th>WhatsApp</th>
+        <th>Último agendamento</th>
+        <th>Dias atrás</th>
+        <th>Prévia da mensagem</th>
+      </tr></thead>
+      <tbody id="pb-tbody"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- MODAL PÓS-BARBEARIA -->
+<div class="rv-modal-ov" id="pb-modal" onclick="if(event.target===this)pbCloseModal()">
+  <div class="rv-modal">
+    <h2>✂️ Confirmar lote pós-barbearia</h2>
+    <div id="pb-modal-summary" style="font-size:.82rem;color:#64748b;margin-bottom:1rem"></div>
+    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.4rem">Prévia da mensagem</p>
+    <div class="rv-msg-preview" id="pb-modal-preview" style="border-left-color:#22c55e"></div>
+    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.4rem;margin-top:1rem">Configuração</p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem">
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Clientes</span><span class="rv-cfg-val" id="pb-cfg-total">—</span></div>
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Tipo</span><span class="rv-cfg-val">Pós-barbearia (cliente recente)</span></div>
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Intervalo</span><span class="rv-cfg-val">180–320s randomizado</span></div>
+      <div class="rv-cfg-row" style="border:none"><span class="rv-cfg-lbl">Horário permitido</span><span class="rv-cfg-val">09:00 – 20:00</span></div>
+    </div>
+    <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem">Observação (opcional)</p>
+    <textarea class="rv-obs" id="pb-modal-obs" rows="2" placeholder="Ex: Campanha abril, promoção coleção inverno..."></textarea>
+    <div style="display:flex;gap:.6rem;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="pbCloseModal()">Cancelar</button>
+      <button class="btn btn-primary" id="pb-btn-confirm" onclick="pbConfirmLote()">Criar lote</button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══ MENSAGENS ═══ -->
 <div id="tab-mensagens" class="rv-panel">
@@ -1148,6 +1265,238 @@ async function saveAllMessages() {
   } else {
     alert('Erro: ' + (d.error || 'Falha'));
   }
+}
+/* ══════════════════════════════════
+   PÓS-BARBEARIA
+══════════════════════════════════ */
+
+// Mensagens padrão (editáveis futuramente via banco)
+const PB_MSGS = [
+  {
+    titulo: '📅 Lembrete de agenda',
+    texto: 'Oi, {nome}! 👋\n\nJá faz alguns dias desde sua última visita na *Formen Barbearia*. ✂️\n\nSua agenda está aberta — escolha o melhor horário:\n👉 {link_agenda}\n\nTe esperamos!'
+  },
+  {
+    titulo: '🛍️ Promoção / Lançamento',
+    texto: 'Oi, {nome}! 😎\n\nTemos novidades esperando por você na *Formen Barbearia*! ✂️\n\nNovos produtos, novos serviços e promoções imperdíveis.\n\nAgende seu horário:\n👉 {link_agenda}\n\nAté breve!'
+  },
+  {
+    titulo: '🔗 Link da agenda online',
+    texto: 'Oi, {nome}! Tudo bem? ✂️\n\nQue tal marcar sua próxima visita na *Formen Barbearia*?\n\nAgende online em qualquer horário:\n👉 {link_agenda}\n\nÉ rápido e fácil! 😉'
+  },
+  {
+    titulo: '⭐ Feedback + retorno',
+    texto: 'Oi, {nome}! 🙏\n\nEsperamos que tenha gostado do seu atendimento na *Formen Barbearia*! ✂️\n\nSua opinião é muito importante pra gente. E quando quiser voltar, sua agenda está esperando:\n👉 {link_agenda}'
+  },
+  {
+    titulo: '🎁 Oferta exclusiva',
+    texto: 'Oi, {nome}! 🎉\n\nTemos uma oferta especial para clientes fiéis como você na *Formen Barbearia*! ✂️\n\nAgende agora e aproveite:\n👉 {link_agenda}\n\nValidade limitada!'
+  }
+];
+
+const AGENDA_LINK = 'https://crm.formenstore.com.br/agenda.php?empresa=minhaloja';
+
+let PB = { clients: [], selected: new Set() };
+
+// Renderiza previews das mensagens
+function pbRenderPreviews() {
+  const varidx = parseInt(document.getElementById('pb-variacao').value || '0');
+  const wrap   = document.getElementById('pb-msg-previews');
+  if (!wrap) return;
+
+  wrap.innerHTML = PB_MSGS.map((m, i) => {
+    const preview = m.texto.replace(/\{nome\}/g, 'Carlos').replace(/\{link_agenda\}/g, AGENDA_LINK);
+    const isActive = i === varidx;
+    return `<div style="border:${isActive?'2px solid #22c55e':'1.5px solid #e2e8f0'};border-radius:10px;padding:.85rem 1rem;background:${isActive?'#f0fdf4':'#f8fafc'};">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;">
+        <span style="font-size:.7rem;font-weight:700;background:${isActive?'#bbf7d0':'#f1f5f9'};color:${isActive?'#15803d':'#64748b'};padding:.15rem .5rem;border-radius:20px;">Variação ${i+1}</span>
+        <span style="font-size:.78rem;font-weight:600;color:#0f172a;">${m.titulo}</span>
+        ${isActive?'<span style="margin-left:auto;font-size:.65rem;font-weight:700;color:#16a34a;">✓ Selecionada</span>':''}
+      </div>
+      <div style="font-size:.75rem;color:#475569;white-space:pre-line;line-height:1.55;">${esc(preview)}</div>
+    </div>`;
+  }).join('');
+}
+
+// Atualiza preview quando muda variação
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('pb-variacao');
+  if (sel) {
+    sel.addEventListener('change', () => {
+      pbRenderPreviews();
+      pbUpdateMsgPreview();
+    });
+    pbRenderPreviews();
+  }
+});
+
+function pbUpdateMsgPreview() {
+  const varidx = parseInt(document.getElementById('pb-variacao')?.value || '0');
+  const msg    = PB_MSGS[varidx] || PB_MSGS[0];
+  return msg.texto.replace(/\{nome\}/g, '{nome}').replace(/\{link_agenda\}/g, AGENDA_LINK);
+}
+
+// Carrega clientes recentes da barbearia
+async function pbLoad() {
+  const dias   = document.getElementById('pb-dias').value;
+  const limite = document.getElementById('pb-limite').value;
+  const varidx = document.getElementById('pb-variacao').value;
+
+  document.getElementById('pb-loading').innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Buscando clientes recentes...</div>';
+  document.getElementById('pb-loading').style.display = 'block';
+  document.getElementById('pb-table').style.display   = 'none';
+
+  pbRenderPreviews();
+
+  try {
+    const r = await fetch(`${API}?action=get_pos_barbearia&dias=${dias}&limite=${limite}&variacao=${varidx}`);
+    const d = await r.json();
+
+    if (!d.ok) {
+      document.getElementById('pb-loading').innerHTML = `<div class="rv-empty">❌ ${esc(d.error||'Erro ao buscar clientes.')}</div>`;
+      return;
+    }
+
+    PB.clients  = d.clients || [];
+    PB.selected = new Set(PB.clients.map(c => parseInt(c.id)));
+    pbRender();
+
+  } catch(e) {
+    document.getElementById('pb-loading').innerHTML = '<div class="rv-empty">❌ Erro de comunicação.</div>';
+  }
+}
+
+function pbRender() {
+  const varidx  = parseInt(document.getElementById('pb-variacao').value || '0');
+  const msg     = PB_MSGS[varidx] || PB_MSGS[0];
+  const loading = document.getElementById('pb-loading');
+  const table   = document.getElementById('pb-table');
+  const tbody   = document.getElementById('pb-tbody');
+
+  if (!PB.clients.length) {
+    loading.innerHTML = '<div class="rv-empty">✨ Nenhum cliente encontrado neste período. Tente ampliar o filtro de dias.</div>';
+    loading.style.display = 'block';
+    table.style.display   = 'none';
+    return;
+  }
+
+  loading.style.display = 'none';
+  table.style.display   = 'table';
+
+  tbody.innerHTML = PB.clients.map(c => {
+    const preview  = msg.texto
+      .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
+      .replace(/\{link_agenda\}/g, AGENDA_LINK)
+      .replace(/\n/g, ' ').slice(0, 90) + '…';
+    const wa = (c.whatsapp || '').slice(0,4) + '****' + (c.whatsapp || '').slice(-4);
+    const chk = PB.selected.has(parseInt(c.id)) ? 'checked' : '';
+    const diasC = parseInt(c.dias_desde_agendamento) <= 20 ? 'dias-cold' : parseInt(c.dias_desde_agendamento) <= 40 ? 'dias-warm' : 'dias-hot';
+
+    return `<tr>
+      <td><input type="checkbox" class="pb-ck" data-id="${c.id}" ${chk} onchange="pbToggleRow(${c.id},this)"></td>
+      <td style="font-weight:600;color:#0f172a;">
+        ${esc(c.nome)}
+        <div style="font-size:.7rem;color:#94a3b8;margin-top:.1rem;">
+          ${esc(c.ultimo_servico || '')}
+        </div>
+      </td>
+      <td style="font-family:monospace;font-size:.78rem;color:#64748b;">${wa}</td>
+      <td style="font-size:.78rem;color:#475569;">${esc(c.ultimo_agendamento_fmt || '—')}</td>
+      <td><span class="dias-badge ${diasC}">${c.dias_desde_agendamento}d</span></td>
+      <td style="font-size:.73rem;color:#64748b;font-style:italic;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(msg.texto.replace(/\n/g,' '))}">
+        ${esc(preview)}
+      </td>
+    </tr>`;
+  }).join('');
+
+  pbUpdateSelBar();
+}
+
+function pbToggleRow(id, cb) {
+  if (cb.checked) PB.selected.add(parseInt(id));
+  else            PB.selected.delete(parseInt(id));
+  pbUpdateSelBar();
+}
+
+function pbToggleAll(cb) {
+  PB.clients.forEach(c => {
+    if (cb.checked) PB.selected.add(parseInt(c.id));
+    else            PB.selected.delete(parseInt(c.id));
+  });
+  document.querySelectorAll('.pb-ck').forEach(c => c.checked = cb.checked);
+  pbUpdateSelBar();
+}
+
+function pbSelectAll(v) {
+  document.getElementById('pb-check-all').checked = v;
+  pbToggleAll({ checked: v });
+}
+
+function pbUpdateSelBar() {
+  document.getElementById('pb-sel-count').textContent    = PB.selected.size;
+  document.getElementById('pb-sel-bar').style.display   = PB.selected.size > 0 ? 'flex' : 'none';
+}
+
+function pbOpenModal() {
+  if (!PB.selected.size) return;
+  const varidx   = parseInt(document.getElementById('pb-variacao').value || '0');
+  const msg      = PB_MSGS[varidx] || PB_MSGS[0];
+  const primeiro = PB.clients.find(c => PB.selected.has(parseInt(c.id)));
+  const preview  = msg.texto
+    .replace(/\{nome\}/g, primeiro?.primeiro_nome || 'Cliente')
+    .replace(/\{link_agenda\}/g, AGENDA_LINK);
+
+  document.getElementById('pb-cfg-total').textContent    = PB.selected.size + ' clientes';
+  document.getElementById('pb-modal-preview').textContent = preview;
+  document.getElementById('pb-modal-summary').textContent = `Lote de lembrete pós-barbearia com ${PB.selected.size} cliente(s) — "${msg.titulo}"`;
+  document.getElementById('pb-modal').classList.add('open');
+}
+
+function pbCloseModal() {
+  document.getElementById('pb-modal').classList.remove('open');
+}
+
+async function pbConfirmLote() {
+  const btn    = document.getElementById('pb-btn-confirm');
+  const varidx = parseInt(document.getElementById('pb-variacao').value || '0');
+  const msg    = PB_MSGS[varidx] || PB_MSGS[0];
+  const obs    = document.getElementById('pb-modal-obs').value;
+
+  btn.disabled = true; btn.textContent = 'Criando...';
+
+  // Monta os envios com a mensagem já interpolada por cliente
+  const envios = PB.clients
+    .filter(c => PB.selected.has(parseInt(c.id)))
+    .map(c => ({
+      client_id: c.id,
+      whatsapp:  c.whatsapp,
+      nome:      c.nome,
+      mensagem:  msg.texto
+        .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
+        .replace(/\{link_agenda\}/g, AGENDA_LINK),
+    }));
+
+  try {
+    const r = await fetch(`${API}?action=create_lote_pos_barbearia`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ envios, observacoes: obs, variacao_idx: varidx }),
+    });
+    const d = await r.json();
+    pbCloseModal();
+
+    if (d.ok) {
+      ST.activeLoteId = d.lote_id;
+      alert(`✅ Lote criado com ${d.total} clientes!\n\nVá para Histórico para iniciar o envio.`);
+      switchTab('lotes');
+    } else {
+      alert('Erro: ' + (d.error || 'Falha'));
+    }
+  } catch(e) {
+    alert('Erro de comunicação.');
+  }
+
+  btn.disabled = false; btn.textContent = 'Criar lote';
 }
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});

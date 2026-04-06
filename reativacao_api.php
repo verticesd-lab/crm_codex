@@ -460,6 +460,134 @@ if ($action === 'get_eligible') {
 /* ═══════════════════════════════════════════════════
    CREATE LOTE
 ═══════════════════════════════════════════════════ */
+// ── GET: clientes recentes da barbearia ──────────────────────
+if ($action === 'get_pos_barbearia') {
+    $dias   = max(1, min(90, (int)($_GET['dias']   ?? 30)));
+    $limite = max(5, min(100,(int)($_GET['limite'] ?? 20)));
+
+    try {
+        // Tenta buscar via appointments
+        $rows = $pdo->prepare("
+            SELECT
+                c.id,
+                c.nome,
+                c.whatsapp,
+                SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
+                MAX(a.date) AS ultimo_agendamento,
+                DATE_FORMAT(MAX(a.date),'%d/%m/%Y') AS ultimo_agendamento_fmt,
+                DATEDIFF(CURDATE(), MAX(a.date)) AS dias_desde_agendamento,
+                GROUP_CONCAT(DISTINCT a.services_json ORDER BY a.date DESC SEPARATOR '|') AS servicos_raw
+            FROM clients c
+            INNER JOIN appointments a ON a.client_id = c.id AND a.company_id = c.company_id
+            WHERE c.company_id = ?
+              AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
+              AND a.status IN ('concluido', 'agendado', 'confirmado')
+              AND a.date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+              AND a.date <= CURDATE()
+            GROUP BY c.id
+            ORDER BY MAX(a.date) DESC
+            LIMIT ?
+        ");
+        $rows->execute([$companyId, $dias, $limite]);
+        $clients = $rows->fetchAll(PDO::FETCH_ASSOC);
+
+        // Se não tem client_id na appointments, fallback por tags
+        if (empty($clients)) {
+            $rows2 = $pdo->prepare("
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.whatsapp,
+                    SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
+                    c.updated_at AS ultimo_agendamento,
+                    DATE_FORMAT(c.updated_at,'%d/%m/%Y') AS ultimo_agendamento_fmt,
+                    DATEDIFF(CURDATE(), DATE(c.updated_at)) AS dias_desde_agendamento,
+                    '' AS servicos_raw
+                FROM clients c
+                WHERE c.company_id = ?
+                  AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
+                  AND FIND_IN_SET('barbearia', REPLACE(IFNULL(c.tags,''),', ',',')) > 0
+                  AND c.updated_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+                ORDER BY c.updated_at DESC
+                LIMIT ?
+            ");
+            $rows2->execute([$companyId, $dias, $limite]);
+            $clients = $rows2->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        // Simplifica o último serviço para exibição
+        foreach ($clients as &$c) {
+            $raw = $c['servicos_raw'] ?? '';
+            $svc = '';
+            if ($raw) {
+                // Tenta decodificar o JSON do primeiro agendamento
+                $parts = explode('|', $raw);
+                $decoded = json_decode($parts[0], true);
+                if (is_array($decoded)) {
+                    $svc = implode(', ', array_slice($decoded, 0, 2));
+                }
+            }
+            $c['ultimo_servico'] = $svc;
+            unset($c['servicos_raw']);
+        }
+        unset($c);
+
+        echo json_encode(['ok' => true, 'clients' => $clients, 'total' => count($clients)]);
+
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// ── POST: criar lote pós-barbearia ───────────────────────────
+if ($action === 'create_lote_pos_barbearia') {
+    $body    = json_decode(file_get_contents('php://input'), true) ?? [];
+    $envios  = $body['envios']      ?? [];
+    $obs     = $body['observacoes'] ?? 'Pós-barbearia';
+    $varidx  = (int)($body['variacao_idx'] ?? 0);
+
+    if (empty($envios)) {
+        echo json_encode(['ok' => false, 'error' => 'Nenhum cliente selecionado.']);
+        exit;
+    }
+
+    try {
+        $now = gmdate('Y-m-d H:i:s');
+
+        // Cria o lote
+        $pdo->prepare("INSERT INTO reativacao_lotes
+            (company_id, criado_em, status, contexto, total_clientes, enviados, erros, mensagem_idx, observacoes)
+            VALUES (?, ?, 'aguardando', 'barbearia', ?, 0, 0, ?, ?)")
+            ->execute([$companyId, $now, count($envios), $varidx,
+                       ($obs ?: 'Pós-barbearia — variação '.($varidx+1))]);
+
+        $loteId = (int)$pdo->lastInsertId();
+
+        // Insere envios individuais
+        $stmt = $pdo->prepare("INSERT INTO reativacao_envios
+            (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status)
+            VALUES (?, ?, ?, ?, ?, 'barbearia', ?, 1, 'pendente')");
+
+        foreach ($envios as $e) {
+            $stmt->execute([
+                $loteId,
+                (int)$e['client_id'],
+                $companyId,
+                $e['whatsapp'],
+                $e['nome'],
+                $e['mensagem'],
+            ]);
+        }
+
+        echo json_encode(['ok' => true, 'lote_id' => $loteId, 'total' => count($envios)]);
+
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $body      = json_decode(file_get_contents('php://input'), true) ?? $_POST;
     $clientIds = array_values(array_unique(array_filter(array_map('intval', $body['client_ids'] ?? []))));
