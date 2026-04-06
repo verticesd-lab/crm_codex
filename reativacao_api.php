@@ -466,32 +466,38 @@ if ($action === 'get_pos_barbearia') {
     $limite = max(5, min(100,(int)($_GET['limite'] ?? 20)));
 
     try {
-        // Tenta buscar via appointments
-        $rows = $pdo->prepare("
-            SELECT
-                c.id,
-                c.nome,
-                c.whatsapp,
-                SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
-                MAX(a.date) AS ultimo_agendamento,
-                DATE_FORMAT(MAX(a.date),'%d/%m/%Y') AS ultimo_agendamento_fmt,
-                DATEDIFF(CURDATE(), MAX(a.date)) AS dias_desde_agendamento,
-                GROUP_CONCAT(DISTINCT a.services_json ORDER BY a.date DESC SEPARATOR '|') AS servicos_raw
-            FROM clients c
-            INNER JOIN appointments a ON a.client_id = c.id AND a.company_id = c.company_id
-            WHERE c.company_id = ?
-              AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
-              AND a.status IN ('concluido', 'agendado', 'confirmado')
-              AND a.date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-              AND a.date <= CURDATE()
-            GROUP BY c.id
-            ORDER BY MAX(a.date) DESC
-            LIMIT ?
-        ");
-        $rows->execute([$companyId, $dias, $limite]);
-        $clients = $rows->fetchAll(PDO::FETCH_ASSOC);
+        // Verifica se a coluna client_id existe em appointments
+        $apptCols = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN);
+        $hasClientId = in_array('client_id', $apptCols);
 
-        // Se não tem client_id na appointments, fallback por tags
+        $clients = [];
+
+        if ($hasClientId) {
+            $rows = $pdo->prepare("
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.whatsapp,
+                    SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
+                    MAX(a.date) AS ultimo_agendamento,
+                    DATE_FORMAT(MAX(a.date),'%d/%m/%Y') AS ultimo_agendamento_fmt,
+                    DATEDIFF(CURDATE(), MAX(a.date)) AS dias_desde_agendamento,
+                    '' AS servicos_raw
+                FROM clients c
+                INNER JOIN appointments a ON a.client_id = c.id AND a.company_id = c.company_id
+                WHERE c.company_id = ?
+                  AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
+                  AND a.date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+                  AND a.date <= CURDATE()
+                GROUP BY c.id
+                ORDER BY MAX(a.date) DESC
+                LIMIT ?
+            ");
+            $rows->execute([$companyId, $dias, $limite]);
+            $clients = $rows->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        // Fallback: busca por tag barbearia quando não tem client_id ou retornou vazio
         if (empty($clients)) {
             $rows2 = $pdo->prepare("
                 SELECT
@@ -499,14 +505,17 @@ if ($action === 'get_pos_barbearia') {
                     c.nome,
                     c.whatsapp,
                     SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
-                    c.updated_at AS ultimo_agendamento,
+                    DATE(c.updated_at) AS ultimo_agendamento,
                     DATE_FORMAT(c.updated_at,'%d/%m/%Y') AS ultimo_agendamento_fmt,
                     DATEDIFF(CURDATE(), DATE(c.updated_at)) AS dias_desde_agendamento,
                     '' AS servicos_raw
                 FROM clients c
                 WHERE c.company_id = ?
                   AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
-                  AND FIND_IN_SET('barbearia', REPLACE(IFNULL(c.tags,''),', ',',')) > 0
+                  AND (
+                    FIND_IN_SET('barbearia', REPLACE(IFNULL(c.tags,''), ', ', ',')) > 0
+                    OR IFNULL(c.tags,'') LIKE '%barbearia%'
+                  )
                   AND c.updated_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
                 ORDER BY c.updated_at DESC
                 LIMIT ?
@@ -515,20 +524,8 @@ if ($action === 'get_pos_barbearia') {
             $clients = $rows2->fetchAll(PDO::FETCH_ASSOC);
         }
 
-        // Simplifica o último serviço para exibição
         foreach ($clients as &$c) {
-            $raw = $c['servicos_raw'] ?? '';
-            $svc = '';
-            if ($raw) {
-                // Tenta decodificar o JSON do primeiro agendamento
-                $parts = explode('|', $raw);
-                $decoded = json_decode($parts[0], true);
-                if (is_array($decoded)) {
-                    $svc = implode(', ', array_slice($decoded, 0, 2));
-                }
-            }
-            $c['ultimo_servico'] = $svc;
-            unset($c['servicos_raw']);
+            $c['ultimo_servico'] = '';
         }
         unset($c);
 
