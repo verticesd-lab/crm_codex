@@ -481,14 +481,20 @@ if ($action === 'get_pos_barbearia') {
     $limite = max(5, min(100,(int)($_GET['limite'] ?? 20)));
 
     try {
-        // Verifica se client_id existe em appointments
+        /* -- Garante UNIQUE key se nao existir -- */
+        try {
+            $pdo->exec("ALTER TABLE pos_barbearia_cooldown
+                        ADD UNIQUE KEY uq_company_client (company_id, client_id)");
+        } catch(Throwable $e) { /* ja existe */ }
+
         $apptCols    = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN);
         $hasClientId = in_array('client_id', $apptCols);
 
         $clients = [];
 
+        /* -- Busca clientes -- */
         if ($hasClientId) {
-            $rows = $pdo->prepare("
+            $stmt = $pdo->prepare("
                 SELECT
                     c.id,
                     c.nome,
@@ -498,22 +504,24 @@ if ($action === 'get_pos_barbearia') {
                     DATE_FORMAT(MAX(a.date),'%d/%m/%Y') AS ultimo_agendamento_fmt,
                     DATEDIFF(CURDATE(), MAX(a.date)) AS dias_desde_agendamento
                 FROM clients c
-                INNER JOIN appointments a ON a.client_id = c.id AND a.company_id = c.company_id
+                INNER JOIN appointments a
+                    ON a.client_id = c.id
+                    AND a.company_id = c.company_id
                 WHERE c.company_id = ?
                   AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
                   AND a.date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
                   AND a.date <= CURDATE()
-                GROUP BY c.id
+                GROUP BY c.id, c.nome, c.whatsapp
                 ORDER BY MAX(a.date) DESC
-                LIMIT ?
+                LIMIT 200
             ");
-            $rows->execute([$companyId, $dias, $limite * 3]); // busca mais para filtrar depois
-            $clients = $rows->fetchAll(PDO::FETCH_ASSOC);
+            $stmt->execute([$companyId, $dias]);
+            $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
 
         // Fallback: busca por tag barbearia quando não tem client_id ou retornou vazio
         if (empty($clients)) {
-            $rows2 = $pdo->prepare("
+            $stmt2 = $pdo->prepare("
                 SELECT
                     c.id,
                     c.nome,
@@ -528,82 +536,86 @@ if ($action === 'get_pos_barbearia') {
                   AND IFNULL(c.tags,'') LIKE '%barbearia%'
                   AND c.updated_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
                 ORDER BY c.updated_at DESC
-                LIMIT ?
+                LIMIT 200
             ");
-            $rows2->execute([$companyId, $dias, $limite * 3]);
-            $clients = $rows2->fetchAll(PDO::FETCH_ASSOC);
+            $stmt2->execute([$companyId, $dias]);
+            $clients = $stmt2->fetchAll(PDO::FETCH_ASSOC);
         }
 
         // ── 1. Deduplicação por WhatsApp ─────────────────────────
-        $seen       = [];
-        $dedupedIds = [];
-        $deduped    = [];
+        $seenWa = [];
+        $unique = [];
         foreach ($clients as $c) {
+            // Normaliza: so digitos, garante DDI 55
             $wa = preg_replace('/\D/', '', $c['whatsapp'] ?? '');
             if (!$wa) continue;
-            if (isset($seen[$wa])) continue;
-            $seen[$wa]    = true;
-            $dedupedIds[] = (int)$c['id'];
-            $deduped[]    = $c;
+            if (strlen($wa) <= 11 && !str_starts_with($wa, '55')) {
+                $wa = '55' . $wa;
+            }
+            // Ja vimos esse numero? Pula.
+            if (isset($seenWa[$wa])) continue;
+            $seenWa[$wa] = true;
+            $unique[] = $c;
         }
-        $clients = $deduped;
+        $clients = $unique;
 
         // ── 2. Remove clientes em cooldown (receberam msg < 7 dias) ──
-        $inCooldown = [];
-        if (!empty($dedupedIds)) {
-            $placeholders = implode(',', array_fill(0, count($dedupedIds), '?'));
-            $cooldownStmt = $pdo->prepare("
-                SELECT DISTINCT client_id
+        $allIds = array_column($clients, 'id');
+        $cooldownIds = [];
+
+        if (!empty($allIds)) {
+            $ph = implode(',', array_fill(0, count($allIds), '?'));
+            $cStmt = $pdo->prepare("
+                SELECT client_id
                 FROM pos_barbearia_cooldown
                 WHERE company_id = ?
-                  AND client_id IN ($placeholders)
+                  AND client_id IN ($ph)
                   AND expira_em > NOW()
             ");
-            $cooldownStmt->execute(array_merge([$companyId], $dedupedIds));
-            $inCooldown = array_flip($cooldownStmt->fetchAll(PDO::FETCH_COLUMN));
+            $cStmt->execute(array_merge([$companyId], $allIds));
+            $cooldownIds = array_flip($cStmt->fetchAll(PDO::FETCH_COLUMN));
         }
 
         // ── 3. Remove clientes que já re-agendaram após o último lote ──
-        $jaAgendou = [];
-        if ($hasClientId && !empty($dedupedIds)) {
-            $placeholders2 = implode(',', array_fill(0, count($dedupedIds), '?'));
-            $reAgStmt = $pdo->prepare("
-                SELECT DISTINCT a.client_id
-                FROM appointments a
-                INNER JOIN pos_barbearia_cooldown pbc
-                    ON pbc.client_id = a.client_id AND pbc.company_id = a.company_id
-                WHERE a.company_id = ?
-                  AND a.client_id IN ($placeholders2)
-                  AND a.date > pbc.enviado_em
-                  AND a.date > CURDATE()
+        $jaAgendouIds = [];
+        if ($hasClientId && !empty($allIds)) {
+            $ph2 = implode(',', array_fill(0, count($allIds), '?'));
+            $aStmt = $pdo->prepare("
+                SELECT DISTINCT client_id
+                FROM appointments
+                WHERE company_id = ?
+                  AND client_id IN ($ph2)
+                  AND date > CURDATE()
+                  AND status NOT IN ('cancelado','cancelado_cliente')
             ");
-            $reAgStmt->execute(array_merge([$companyId], $dedupedIds));
-            $jaAgendou = array_flip($reAgStmt->fetchAll(PDO::FETCH_COLUMN));
+            $aStmt->execute(array_merge([$companyId], $allIds));
+            $jaAgendouIds = array_flip($aStmt->fetchAll(PDO::FETCH_COLUMN));
         }
 
         // ── 4. Aplica filtros e limita resultado final ────────────
-        $filtered  = [];
-        $removidos = ['cooldown' => 0, 'reagendou' => 0, 'sem_wa' => 0];
+        $final     = [];
+        $removidos = ['cooldown' => 0, 'reagendou' => 0];
 
         foreach ($clients as $c) {
             $cid = (int)$c['id'];
-            if (isset($inCooldown[$cid])) {
+            if (isset($cooldownIds[$cid])) {
                 $removidos['cooldown']++;
                 continue;
             }
-            if (isset($jaAgendou[$cid])) {
+            if (isset($jaAgendouIds[$cid])) {
                 $removidos['reagendou']++;
                 continue;
             }
-            $filtered[] = array_merge($c, ['ultimo_servico' => '']);
-            if (count($filtered) >= $limite) break;
+            $c['ultimo_servico'] = '';
+            $final[] = $c;
+            if (count($final) >= $limite) break;
         }
 
         echo json_encode([
-            'ok'       => true,
-            'clients'  => $filtered,
-            'total'    => count($filtered),
-            'removidos'=> $removidos,
+            'ok'        => true,
+            'clients'   => $final,
+            'total'     => count($final),
+            'removidos' => $removidos,
         ]);
 
     } catch (Throwable $e) {
@@ -652,10 +664,12 @@ if ($action === 'create_lote_pos_barbearia') {
             ]);
         }
 
-        // Registra cooldown de 7 dias para cada cliente do lote
+        // Registra cooldown 7 dias (ON DUPLICATE KEY atualiza se ja existir)
         $coolStmt = $pdo->prepare("
-            INSERT INTO pos_barbearia_cooldown (company_id, client_id, whatsapp, lote_id, enviado_em, expira_em)
-            VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY))
+            INSERT INTO pos_barbearia_cooldown 
+                (company_id, client_id, whatsapp, lote_id, enviado_em, expira_em)
+            VALUES 
+                (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY))
             ON DUPLICATE KEY UPDATE
                 lote_id    = VALUES(lote_id),
                 enviado_em = NOW(),
@@ -663,8 +677,13 @@ if ($action === 'create_lote_pos_barbearia') {
         ");
         foreach ($envios as $e) {
             try {
-                $coolStmt->execute([$companyId, (int)$e['client_id'], $e['whatsapp'], $loteId]);
-            } catch (Throwable $e2) {}
+                $coolStmt->execute([
+                    $companyId,
+                    (int)$e['client_id'],
+                    $e['whatsapp'],
+                    $loteId
+                ]);
+            } catch (Throwable $ignored) {}
         }
 
         echo json_encode(['ok' => true, 'lote_id' => $loteId, 'total' => count($envios)]);
