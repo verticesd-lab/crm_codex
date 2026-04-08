@@ -239,7 +239,7 @@ try {
         lote_id     INT NOT NULL,
         enviado_em  DATETIME NOT NULL DEFAULT NOW(),
         expira_em   DATETIME NOT NULL,
-        INDEX idx_company_client (company_id, client_id),
+        UNIQUE KEY uq_company_client (company_id, client_id),
         INDEX idx_expira (expira_em)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 } catch (Throwable $e) {}
@@ -477,8 +477,14 @@ if ($action === 'get_eligible') {
 ═══════════════════════════════════════════════════ */
 // ── GET: clientes recentes da barbearia ──────────────────────
 if ($action === 'get_pos_barbearia') {
-    $dias   = max(1, min(90, (int)($_GET['dias']   ?? 30)));
-    $limite = max(5, min(100,(int)($_GET['limite'] ?? 20)));
+    $limite  = max(5, min(100, (int)($_GET['limite']   ?? 20)));
+    $dataIni = $_GET['data_ini'] ?? date('Y-m-d', strtotime('-7 days'));
+    $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
+
+    // Valida formato de data
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataIni)) $dataIni = date('Y-m-d', strtotime('-7 days'));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataFim))  $dataFim = date('Y-m-d');
+    if ($dataIni > $dataFim) $dataIni = $dataFim; // segurança
 
     try {
         /* -- Garante UNIQUE key se nao existir -- */
@@ -509,13 +515,13 @@ if ($action === 'get_pos_barbearia') {
                     AND a.company_id = c.company_id
                 WHERE c.company_id = ?
                   AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
-                  AND a.date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-                  AND a.date <= CURDATE()
+                  AND a.date >= ?
+                  AND a.date <= ?
                 GROUP BY c.id, c.nome, c.whatsapp
                 ORDER BY MAX(a.date) DESC
                 LIMIT 200
             ");
-            $stmt->execute([$companyId, $dias]);
+            $stmt->execute([$companyId, $dataIni, $dataFim]);
             $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
 
@@ -534,11 +540,12 @@ if ($action === 'get_pos_barbearia') {
                 WHERE c.company_id = ?
                   AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
                   AND IFNULL(c.tags,'') LIKE '%barbearia%'
-                  AND c.updated_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+                  AND DATE(c.updated_at) >= ?
+                  AND DATE(c.updated_at) <= ?
                 ORDER BY c.updated_at DESC
                 LIMIT 200
             ");
-            $stmt2->execute([$companyId, $dias]);
+            $stmt2->execute([$companyId, $dataIni, $dataFim]);
             $clients = $stmt2->fetchAll(PDO::FETCH_ASSOC);
         }
 
@@ -638,6 +645,11 @@ if ($action === 'create_lote_pos_barbearia') {
 
     try {
         $now = gmdate('Y-m-d H:i:s');
+
+        try {
+            $pdo->exec("ALTER TABLE pos_barbearia_cooldown
+                        ADD UNIQUE KEY uq_company_client (company_id, client_id)");
+        } catch (Throwable $ignored) {}
 
         // Cria o lote
         $pdo->prepare("INSERT INTO reativacao_lotes

@@ -487,13 +487,12 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   <!-- Filtros -->
   <div class="rv-filters">
     <div class="rv-fg">
-      <label>Período do último agendamento</label>
-      <select class="rv-select" id="pb-dias">
-        <option value="20">Últimos 20 dias</option>
-        <option value="30" selected>Últimos 30 dias</option>
-        <option value="45">Últimos 45 dias</option>
-        <option value="60">Últimos 60 dias</option>
-      </select>
+      <label>Data inicial do agendamento</label>
+      <input type="date" class="rv-select" id="pb-data-ini" style="font-family:inherit;">
+    </div>
+    <div class="rv-fg">
+      <label>Data final do agendamento</label>
+      <input type="date" class="rv-select" id="pb-data-fim" style="font-family:inherit;">
     </div>
     <div class="rv-fg">
       <label>Variação de mensagem</label>
@@ -514,6 +513,18 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
         <option value="50">50 clientes</option>
       </select>
     </div>
+    <script>
+    // Preenche datas padrão: últimos 7 dias
+    (function(){
+      const hoje = new Date();
+      const ini  = new Date(hoje); ini.setDate(hoje.getDate() - 7);
+      const fmt  = d => d.toISOString().split('T')[0];
+      const elI  = document.getElementById('pb-data-ini');
+      const elF  = document.getElementById('pb-data-fim');
+      if (elI && !elI.value) elI.value = fmt(ini);
+      if (elF && !elF.value) elF.value = fmt(hoje);
+    })();
+    </script>
     <div class="rv-fg" style="justify-content:flex-end;padding-top:18px">
       <button class="btn btn-primary" onclick="pbLoad()">🔍 Buscar</button>
     </div>
@@ -1336,20 +1347,58 @@ function pbUpdateMsgPreview() {
   return msg.texto.replace(/\{nome\}/g, '{nome}').replace(/\{link_agenda\}/g, AGENDA_LINK);
 }
 
+function pbDateToYmd(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function pbEnsureDateRange() {
+  const ini = document.getElementById('pb-data-ini');
+  const fim = document.getElementById('pb-data-fim');
+  if (!ini || !fim) return { dataIni: '', dataFim: '' };
+
+  const hoje = new Date();
+  const dataFimPadrao = pbDateToYmd(hoje);
+  const dataIniPadraoDate = new Date(hoje);
+  dataIniPadraoDate.setDate(dataIniPadraoDate.getDate() - 7);
+  const dataIniPadrao = pbDateToYmd(dataIniPadraoDate);
+
+  if (!fim.value) fim.value = dataFimPadrao;
+  if (!ini.value) ini.value = dataIniPadrao;
+
+  if (ini.value > fim.value) {
+    const tmp = ini.value;
+    ini.value = fim.value;
+    fim.value = tmp;
+  }
+
+  return { dataIni: ini.value, dataFim: fim.value };
+}
+
 // Carrega clientes recentes da barbearia
 async function pbLoad() {
-  const dias   = document.getElementById('pb-dias').value;
-  const limite = document.getElementById('pb-limite').value;
-  const varidx = document.getElementById('pb-variacao').value;
+  const dataIni = document.getElementById('pb-data-ini')?.value || '';
+  const dataFim = document.getElementById('pb-data-fim')?.value || '';
+  const limite  = document.getElementById('pb-limite').value;
+  const varidx  = document.getElementById('pb-variacao').value;
 
-  document.getElementById('pb-loading').innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Buscando clientes recentes...</div>';
+  if (!dataIni || !dataFim) {
+    alert('Preencha as datas inicial e final.'); return;
+  }
+  if (dataIni > dataFim) {
+    alert('A data inicial deve ser menor ou igual à data final.'); return;
+  }
+
+  document.getElementById('pb-loading').innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Buscando clientes do período ' + dataIni.split('-').reverse().join('/') + ' até ' + dataFim.split('-').reverse().join('/') + '...</div>';
   document.getElementById('pb-loading').style.display = 'block';
   document.getElementById('pb-table').style.display   = 'none';
 
   pbRenderPreviews();
 
   try {
-    const r = await fetch(`${API}?action=get_pos_barbearia&dias=${dias}&limite=${limite}&variacao=${varidx}`);
+    const r = await fetch(`${API}?action=get_pos_barbearia&data_ini=${dataIni}&data_fim=${dataFim}&limite=${limite}&variacao=${varidx}`);
     const d = await r.json();
 
     if (!d.ok) {
@@ -1372,15 +1421,26 @@ function pbRender() {
   const loading = document.getElementById('pb-loading');
   const table   = document.getElementById('pb-table');
   const tbody   = document.getElementById('pb-tbody');
+  const oldPeriodoInfo = document.querySelector('.pb-periodo-info');
+  if (oldPeriodoInfo) oldPeriodoInfo.remove();
 
   if (!PB.clients.length) {
-    loading.innerHTML = '<div class="rv-empty">✨ Nenhum cliente encontrado neste período. Tente ampliar o filtro de dias.</div>';
+    loading.innerHTML = '<div class="rv-empty">✨ Nenhum cliente encontrado neste período. Ajuste o intervalo de datas e tente novamente.</div>';
     loading.style.display = 'block';
     table.style.display   = 'none';
     return;
   }
 
   loading.style.display = 'none';
+  // Mostra período no topo da tabela
+  const ini = document.getElementById('pb-data-ini')?.value || '';
+  const fim = document.getElementById('pb-data-fim')?.value || '';
+  const fmtD = s => s ? s.split('-').reverse().join('/') : '';
+  const periodoInfo = document.createElement('div');
+  periodoInfo.className = 'pb-periodo-info';
+  periodoInfo.style.cssText = 'padding:.6rem 1rem;background:#f0fdf4;border-bottom:1px solid #bbf7d0;font-size:.78rem;color:#166534;font-weight:600;';
+  periodoInfo.textContent = `✅ ${PB.clients.length} cliente(s) encontrado(s) · Período: ${fmtD(ini)} → ${fmtD(fim)}`;
+  table.parentNode.insertBefore(periodoInfo, table);
   table.style.display   = 'table';
 
   tbody.innerHTML = PB.clients.map(c => {
@@ -1500,6 +1560,7 @@ async function pbConfirmLote() {
 }
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+pbEnsureDateRange();
 syncReactivationPolicyUI();
 </script>
 <?php include __DIR__ . '/views/partials/footer.php'; ?>
