@@ -477,76 +477,166 @@ if ($action === 'get_eligible') {
 ═══════════════════════════════════════════════════ */
 // ── GET: clientes recentes da barbearia ──────────────────────
 if ($action === 'get_pos_barbearia') {
-    $limite  = max(5, min(100, (int)($_GET['limite']   ?? 20)));
+    $limite  = max(5, min(100, (int)($_GET['limite'] ?? 20)));
     $dataIni = $_GET['data_ini'] ?? date('Y-m-d', strtotime('-7 days'));
     $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
 
-    // Valida formato de data
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataIni)) $dataIni = date('Y-m-d', strtotime('-7 days'));
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataFim))  $dataFim = date('Y-m-d');
+    if ($dataIni > $dataFim) [$dataIni, $dataFim] = [$dataFim, $dataIni];
     if ($dataIni > $dataFim) $dataIni = $dataFim; // segurança
 
     try {
-        /* -- Garante UNIQUE key se nao existir -- */
-        try {
-            $pdo->exec("ALTER TABLE pos_barbearia_cooldown
-                        ADD UNIQUE KEY uq_company_client (company_id, client_id)");
-        } catch(Throwable $e) { /* ja existe */ }
-
         $apptCols    = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN);
         $hasClientId = in_array('client_id', $apptCols);
 
         $clients = [];
 
-        /* -- Busca clientes -- */
+        /* ── Estratégia 1: appointments com client_id vinculado ── */
         if ($hasClientId) {
-            $stmt = $pdo->prepare("
+            $s = $pdo->prepare("
                 SELECT
                     c.id,
                     c.nome,
                     c.whatsapp,
-                    SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
-                    MAX(a.date) AS ultimo_agendamento,
-                    DATE_FORMAT(MAX(a.date),'%d/%m/%Y') AS ultimo_agendamento_fmt,
-                    DATEDIFF(CURDATE(), MAX(a.date)) AS dias_desde_agendamento
+                    SUBSTRING_INDEX(TRIM(c.nome),' ',1)    AS primeiro_nome,
+                    MAX(a.date)                             AS ultimo_agendamento,
+                    DATE_FORMAT(MAX(a.date),'%d/%m/%Y')    AS ultimo_agendamento_fmt,
+                    DATEDIFF(CURDATE(), MAX(a.date))        AS dias_desde_agendamento
                 FROM clients c
                 INNER JOIN appointments a
-                    ON a.client_id = c.id
+                    ON  a.client_id  = c.id
                     AND a.company_id = c.company_id
-                WHERE c.company_id = ?
+                WHERE c.company_id  = ?
                   AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
-                  AND a.date >= ?
-                  AND a.date <= ?
+                  AND a.date BETWEEN ? AND ?
                 GROUP BY c.id, c.nome, c.whatsapp
                 ORDER BY MAX(a.date) DESC
-                LIMIT 200
+                LIMIT 300
             ");
-            $stmt->execute([$companyId, $dataIni, $dataFim]);
-            $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $s->execute([$companyId, $dataIni, $dataFim]);
+            $clients = $s->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        /* ── Estratégia 2: busca pelo telefone do agendamento ──
+           Funciona mesmo sem client_id, cruzando pelo número de telefone
+        ── */
+        if (empty($clients)) {
+            // Descobre colunas disponíveis em appointments
+            $aColsAll = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN);
+            $phoneCol = in_array('phone', $aColsAll) ? 'a.phone'
+                      : (in_array('customer_phone', $aColsAll) ? 'a.customer_phone' : null);
+
+            if ($phoneCol) {
+                $s2 = $pdo->prepare("
+                    SELECT
+                        c.id,
+                        c.nome,
+                        c.whatsapp,
+                        SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
+                        MAX(a.date)                          AS ultimo_agendamento,
+                        DATE_FORMAT(MAX(a.date),'%d/%m/%Y') AS ultimo_agendamento_fmt,
+                        DATEDIFF(CURDATE(), MAX(a.date))     AS dias_desde_agendamento
+                    FROM appointments a
+                    INNER JOIN clients c
+                        ON  c.company_id = a.company_id
+                        AND (
+                            REGEXP_REPLACE(c.whatsapp,'[^0-9]','') LIKE CONCAT('%', RIGHT(REGEXP_REPLACE({$phoneCol},'[^0-9]',''),8))
+                            OR
+                            REGEXP_REPLACE({$phoneCol},'[^0-9]','') LIKE CONCAT('%', RIGHT(REGEXP_REPLACE(c.whatsapp,'[^0-9]',''),8))
+                        )
+                    WHERE a.company_id = ?
+                      AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
+                      AND a.date BETWEEN ? AND ?
+                    GROUP BY c.id, c.nome, c.whatsapp
+                    ORDER BY MAX(a.date) DESC
+                    LIMIT 300
+                ");
+                $s2->execute([$companyId, $dataIni, $dataFim]);
+                $clients = $s2->fetchAll(PDO::FETCH_ASSOC);
+            }
         }
 
         // Fallback: busca por tag barbearia quando não tem client_id ou retornou vazio
         if (empty($clients)) {
-            $stmt2 = $pdo->prepare("
+            $s3 = $pdo->prepare("
                 SELECT
                     c.id,
                     c.nome,
                     c.whatsapp,
                     SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
-                    DATE(c.updated_at) AS ultimo_agendamento,
+                    DATE(c.updated_at)                  AS ultimo_agendamento,
                     DATE_FORMAT(c.updated_at,'%d/%m/%Y') AS ultimo_agendamento_fmt,
                     DATEDIFF(CURDATE(), DATE(c.updated_at)) AS dias_desde_agendamento
                 FROM clients c
                 WHERE c.company_id = ?
                   AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
                   AND IFNULL(c.tags,'') LIKE '%barbearia%'
-                  AND DATE(c.updated_at) >= ?
-                  AND DATE(c.updated_at) <= ?
+                  AND DATE(c.updated_at) BETWEEN ? AND ?
                 ORDER BY c.updated_at DESC
-                LIMIT 200
+                LIMIT 300
             ");
-            $stmt2->execute([$companyId, $dataIni, $dataFim]);
-            $clients = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+            $s3->execute([$companyId, $dataIni, $dataFim]);
+            $clients = $s3->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        /* ── Estratégia 4 (último recurso): busca direta na tabela
+           appointments pelo nome do cliente, sem JOIN ── */
+        if (empty($clients)) {
+            $aColsAll = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN);
+            $nameCol  = in_array('customer_name', $aColsAll) ? 'customer_name'
+                      : (in_array('nome', $aColsAll) ? 'nome' : null);
+            $phoneCol = in_array('phone', $aColsAll) ? 'phone'
+                      : (in_array('customer_phone', $aColsAll) ? 'customer_phone' : null);
+
+            if ($nameCol && $phoneCol) {
+                $s4 = $pdo->prepare("
+                    SELECT
+                        MIN(0)                              AS id,
+                        {$nameCol}                          AS nome,
+                        {$phoneCol}                         AS whatsapp,
+                        SUBSTRING_INDEX(TRIM({$nameCol}),' ',1) AS primeiro_nome,
+                        MAX(date)                           AS ultimo_agendamento,
+                        DATE_FORMAT(MAX(date),'%d/%m/%Y')  AS ultimo_agendamento_fmt,
+                        DATEDIFF(CURDATE(), MAX(date))      AS dias_desde_agendamento
+                    FROM appointments
+                    WHERE company_id = ?
+                      AND {$phoneCol} IS NOT NULL AND {$phoneCol} != ''
+                      AND date BETWEEN ? AND ?
+                    GROUP BY {$phoneCol}, {$nameCol}
+                    ORDER BY MAX(date) DESC
+                    LIMIT 300
+                ");
+                $s4->execute([$companyId, $dataIni, $dataFim]);
+                $rawAppts = $s4->fetchAll(PDO::FETCH_ASSOC);
+
+                // Tenta cruzar com clients pelo telefone
+                foreach ($rawAppts as $ra) {
+                    $waClean = preg_replace('/\D/', '', $ra['whatsapp'] ?? '');
+                    if (strlen($waClean) < 8) continue;
+                    $last8 = substr($waClean, -8);
+                    $cFind = $pdo->prepare("
+                        SELECT id, nome, whatsapp
+                        FROM clients
+                        WHERE company_id = ?
+                          AND REGEXP_REPLACE(whatsapp,'[^0-9]','') LIKE ?
+                        LIMIT 1
+                    ");
+                    $cFind->execute([$companyId, '%' . $last8]);
+                    $found = $cFind->fetch(PDO::FETCH_ASSOC);
+
+                    if ($found) {
+                        $clients[] = array_merge($ra, [
+                            'id'      => $found['id'],
+                            'nome'    => $found['nome'],
+                            'whatsapp'=> $found['whatsapp'],
+                        ]);
+                    } else {
+                        // Não tem cadastro ainda — usa dados do agendamento
+                        $clients[] = array_merge($ra, ['id' => 0]);
+                    }
+                }
+            }
         }
 
         // ── 1. Deduplicação por WhatsApp ─────────────────────────
@@ -555,10 +645,8 @@ if ($action === 'get_pos_barbearia') {
         foreach ($clients as $c) {
             // Normaliza: so digitos, garante DDI 55
             $wa = preg_replace('/\D/', '', $c['whatsapp'] ?? '');
-            if (!$wa) continue;
-            if (strlen($wa) <= 11 && !str_starts_with($wa, '55')) {
-                $wa = '55' . $wa;
-            }
+            if (strlen($wa) < 8) continue;
+            if (strlen($wa) <= 11 && !str_starts_with($wa, '55')) $wa = '55' . $wa;
             // Ja vimos esse numero? Pula.
             if (isset($seenWa[$wa])) continue;
             $seenWa[$wa] = true;
@@ -567,50 +655,31 @@ if ($action === 'get_pos_barbearia') {
         $clients = $unique;
 
         // ── 2. Remove clientes em cooldown (receberam msg < 7 dias) ──
-        $allIds = array_column($clients, 'id');
+        $allIds      = array_filter(array_map('intval', array_column($clients, 'id')));
         $cooldownIds = [];
 
         if (!empty($allIds)) {
             $ph = implode(',', array_fill(0, count($allIds), '?'));
             $cStmt = $pdo->prepare("
-                SELECT client_id
-                FROM pos_barbearia_cooldown
+                SELECT client_id FROM pos_barbearia_cooldown
                 WHERE company_id = ?
                   AND client_id IN ($ph)
                   AND expira_em > NOW()
             ");
-            $cStmt->execute(array_merge([$companyId], $allIds));
+            $cStmt->execute(array_merge([$companyId], array_values($allIds)));
             $cooldownIds = array_flip($cStmt->fetchAll(PDO::FETCH_COLUMN));
         }
 
         // ── 3. Remove clientes que já re-agendaram após o último lote ──
-        $jaAgendouIds = [];
-        if ($hasClientId && !empty($allIds)) {
-            $ph2 = implode(',', array_fill(0, count($allIds), '?'));
-            $aStmt = $pdo->prepare("
-                SELECT DISTINCT client_id
-                FROM appointments
-                WHERE company_id = ?
-                  AND client_id IN ($ph2)
-                  AND date > CURDATE()
-                  AND status NOT IN ('cancelado','cancelado_cliente')
-            ");
-            $aStmt->execute(array_merge([$companyId], $allIds));
-            $jaAgendouIds = array_flip($aStmt->fetchAll(PDO::FETCH_COLUMN));
-        }
 
         // ── 4. Aplica filtros e limita resultado final ────────────
         $final     = [];
-        $removidos = ['cooldown' => 0, 'reagendou' => 0];
+        $removidos = ['cooldown' => 0, 'sem_cadastro' => 0];
 
         foreach ($clients as $c) {
             $cid = (int)$c['id'];
-            if (isset($cooldownIds[$cid])) {
+            if ($cid > 0 && isset($cooldownIds[$cid])) {
                 $removidos['cooldown']++;
-                continue;
-            }
-            if (isset($jaAgendouIds[$cid])) {
-                $removidos['reagendou']++;
                 continue;
             }
             $c['ultimo_servico'] = '';
@@ -622,6 +691,7 @@ if ($action === 'get_pos_barbearia') {
             'ok'        => true,
             'clients'   => $final,
             'total'     => count($final),
+            'periodo'   => ['ini' => $dataIni, 'fim' => $dataFim],
             'removidos' => $removidos,
         ]);
 
