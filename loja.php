@@ -291,18 +291,55 @@ function render_sizes(string $sizesStr): string {
                         </div>
                     </div>
                     <div class="w-full md:w-80">
-                        <div class="relative h-48 rounded-xl border border-white/10 overflow-hidden" id="hero-carousel">
+                        <div class="relative rounded-xl border border-white/10 overflow-hidden" id="hero-carousel" style="height:240px;">
                             <?php foreach ($featured ?: array_slice($products, 0, 3) as $idx => $item): ?>
-                                <div data-slide
-                                     class="absolute inset-0 <?= $idx === 0 ? 'opacity-100' : 'opacity-0' ?> transition-opacity duration-700 ease-in-out bg-white/10 backdrop-blur flex flex-col justify-center p-4">
-                                    <p class="text-xs uppercase tracking-wide text-emerald-200/80">
-                                        <?= sanitize($item['categoria']) ?>
-                                    </p>
-                                    <h3 class="text-xl font-semibold"><?= sanitize($item['nome']) ?></h3>
-                                    <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($item['descricao']) ?></p>
-                                    <p class="mt-2 text-lg font-bold text-emerald-300"><?= format_currency($item['preco']) ?></p>
-                                </div>
+                                <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$item['id'] ?>"
+                                   data-slide
+                                   class="absolute inset-0 <?= $idx === 0 ? 'opacity-100' : 'opacity-0' ?> transition-opacity duration-700 ease-in-out flex">
+
+                                    <!-- Imagem a esquerda -->
+                                    <?php if (!empty($item['imagem'])): ?>
+                                    <div class="w-2/5 flex-shrink-0 bg-black/30 flex items-center justify-center overflow-hidden">
+                                        <img src="<?= sanitize(image_url($item['imagem'])) ?>"
+                                             alt="<?= sanitize($item['nome']) ?>"
+                                             class="w-full h-full object-cover">
+                                    </div>
+                                    <?php else: ?>
+                                    <div class="w-2/5 flex-shrink-0 bg-white/10 flex items-center justify-center text-4xl">
+                                        🛍️
+                                    </div>
+                                    <?php endif; ?>
+
+                                    <!-- Texto a direita -->
+                                    <div class="flex-1 bg-white/10 backdrop-blur p-4 flex flex-col justify-center gap-1">
+                                        <p class="text-xs uppercase tracking-wide text-emerald-300/90 font-semibold">
+                                            <?= sanitize($item['categoria']) ?>
+                                        </p>
+                                        <h3 class="text-base font-bold leading-tight line-clamp-2">
+                                            <?= sanitize($item['nome']) ?>
+                                        </h3>
+                                        <p class="text-xs text-slate-300/80 line-clamp-2">
+                                            <?= sanitize($item['descricao']) ?>
+                                        </p>
+                                        <p class="text-lg font-bold text-emerald-300 mt-1">
+                                            <?= format_currency($item['preco']) ?>
+                                        </p>
+                                        <span class="mt-1 self-start text-xs px-3 py-1 rounded-full bg-brand-600/80 text-white font-semibold">
+                                            Ver produto →
+                                        </span>
+                                    </div>
+                                </a>
                             <?php endforeach; ?>
+
+                            <!-- Dots de navegacao -->
+                            <?php $itensCarrossel = $featured ?: array_slice($products, 0, 3); ?>
+                            <?php if (count($itensCarrossel) > 1): ?>
+                            <div class="absolute bottom-2 right-3 flex gap-1.5 z-10" id="hero-dots">
+                                <?php foreach ($itensCarrossel as $di => $_): ?>
+                                <div class="w-1.5 h-1.5 rounded-full transition-all duration-300 <?= $di===0?'bg-white w-3':'bg-white/40' ?>"></div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -554,14 +591,17 @@ function render_sizes(string $sizesStr): string {
 
     <script>
         const slides = document.querySelectorAll('[data-slide]');
+        const dots   = document.querySelectorAll('#hero-dots > div');
         let idx = 0;
         if (slides.length > 1) {
             setInterval(() => {
                 slides[idx].classList.add('opacity-0');
                 slides[idx].classList.remove('opacity-100');
+                if (dots[idx]) { dots[idx].classList.remove('w-3'); dots[idx].classList.add('bg-white/40'); }
                 idx = (idx + 1) % slides.length;
                 slides[idx].classList.remove('opacity-0');
                 slides[idx].classList.add('opacity-100');
+                if (dots[idx]) { dots[idx].classList.add('w-3'); dots[idx].classList.remove('bg-white/40'); }
             }, 3500);
         }
     </script>
