@@ -226,6 +226,14 @@ try {
     }
 } catch (Throwable $_mig) {}
 
+// Adiciona coluna validade em reativacao_mensagens
+try {
+    $rmCols = $pdo->query('SHOW COLUMNS FROM reativacao_mensagens')->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('validade', $rmCols)) {
+        $pdo->exec("ALTER TABLE reativacao_mensagens ADD COLUMN validade VARCHAR(255) NULL AFTER mensagem");
+    }
+} catch (Throwable $e) {}
+
 /* ═══════════════════════════════════════════════════
    SETUP TABLES
 ═══════════════════════════════════════════════════ */
@@ -323,6 +331,7 @@ if ($action === 'setup_tables') {
             tentativa    TINYINT NOT NULL,
             variacao_idx TINYINT NOT NULL,
             mensagem     TEXT NOT NULL,
+            validade     VARCHAR(255) NULL,
             updated_at   DATETIME NOT NULL,
             UNIQUE KEY uq_msg (company_id, contexto, tentativa, variacao_idx),
             INDEX idx_company (company_id)
@@ -1139,6 +1148,7 @@ if ($action === 'get_messages_config') {
             company_id INT UNSIGNED NOT NULL,
             contexto VARCHAR(20) NOT NULL, tentativa TINYINT NOT NULL,
             variacao_idx TINYINT NOT NULL, mensagem TEXT NOT NULL,
+            validade VARCHAR(255) NULL,
             updated_at DATETIME NOT NULL,
             UNIQUE KEY uq_msg (company_id, contexto, tentativa, variacao_idx),
             INDEX idx_company (company_id)
@@ -1190,6 +1200,7 @@ if ($action === 'save_messages_config') {
             company_id INT UNSIGNED NOT NULL,
             contexto VARCHAR(20) NOT NULL, tentativa TINYINT NOT NULL,
             variacao_idx TINYINT NOT NULL, mensagem TEXT NOT NULL,
+            validade VARCHAR(255) NULL,
             updated_at DATETIME NOT NULL,
             UNIQUE KEY uq_msg (company_id, contexto, tentativa, variacao_idx),
             INDEX idx_company (company_id)
@@ -1319,6 +1330,90 @@ if ($action === 'test_evolution_connection') {
     if ($curlErr) { echo json_encode(['ok' => false, 'error' => 'cURL: ' . $curlErr]); exit; }
     if ($code >= 200 && $code < 300) { echo json_encode(['ok' => true, 'message' => 'Conexão estabelecida com sucesso! ✅']); exit; }
     echo json_encode(['ok' => false, 'error' => "HTTP {$code} — verifique URL e API Key."]);
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   GET / SAVE PÓS-BARBEARIA MESSAGES CONFIG
+═══════════════════════════════════════════════════ */
+if ($action === 'get_pb_messages_config') {
+    // Mensagens padrão do pós-barbearia
+    $defaults = [
+        ['titulo' => '📅 Lembrete de agenda',    'texto' => "Oi, {nome}! 👋\n\nJá faz alguns dias desde sua última visita na *Formen Barbearia*. ✂️\n\nSua agenda está aberta — escolha o melhor horário:\n👉 {link_agenda}\n\nTe esperamos!", 'validade' => ''],
+        ['titulo' => '🛍️ Promoção / Lançamento', 'texto' => "Oi, {nome}! 😎\n\nTemos novidades esperando por você na *Formen Barbearia*! ✂️\n\nNovos produtos, novos serviços e promoções imperdíveis.\n\nAgende seu horário:\n👉 {link_agenda}\n\nAté breve!", 'validade' => ''],
+        ['titulo' => '🔗 Link da agenda online', 'texto' => "Oi, {nome}! Tudo bem? ✂️\n\nQue tal marcar sua próxima visita na *Formen Barbearia*?\n\nAgende online em qualquer horário:\n👉 {link_agenda}\n\nÉ rápido e fácil! 😉", 'validade' => ''],
+        ['titulo' => '⭐ Feedback + retorno',     'texto' => "Oi, {nome}! 🙏\n\nEsperamos que tenha gostado do seu atendimento na *Formen Barbearia*! ✂️\n\nSua opinião é muito importante pra gente. E quando quiser voltar, sua agenda está esperando:\n👉 {link_agenda}", 'validade' => ''],
+        ['titulo' => '🎁 Oferta exclusiva',       'texto' => "Oi, {nome}! 🎉\n\nTemos uma oferta especial para clientes fiéis como você na *Formen Barbearia*! ✂️\n\nAgende agora e aproveite:\n👉 {link_agenda}\n\nValidade limitada!", 'validade' => ''],
+    ];
+
+    try {
+        // Garante coluna validade
+        $rmCols = $pdo->query('SHOW COLUMNS FROM reativacao_mensagens')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('validade', $rmCols)) {
+            $pdo->exec("ALTER TABLE reativacao_mensagens ADD COLUMN validade VARCHAR(255) NULL AFTER mensagem");
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT variacao_idx, mensagem, validade
+            FROM reativacao_mensagens
+            WHERE company_id=? AND contexto='pos_barbearia' AND tentativa=1
+            ORDER BY variacao_idx ASC
+        ");
+        $stmt->execute([$companyId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $custom = [];
+        foreach ($rows as $r) $custom[(int)$r['variacao_idx']] = $r;
+
+        $result = [];
+        foreach ($defaults as $i => $d) {
+            $result[] = [
+                'variacao_idx' => $i,
+                'titulo' => $d['titulo'],
+                'texto' => $custom[$i]['mensagem'] ?? $d['texto'],
+                'validade' => $custom[$i]['validade'] ?? $d['validade'],
+                'is_custom' => isset($custom[$i]),
+                'default_texto' => $d['texto'],
+            ];
+        }
+        echo json_encode(['ok' => true, 'mensagens' => $result]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'save_pb_messages_config') {
+    $body = json_decode(file_get_contents('php://input'), true) ?? [];
+    $mensagens = $body['mensagens'] ?? [];
+
+    try {
+        $rmCols = $pdo->query('SHOW COLUMNS FROM reativacao_mensagens')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('validade', $rmCols)) {
+            $pdo->exec("ALTER TABLE reativacao_mensagens ADD COLUMN validade VARCHAR(255) NULL AFTER mensagem");
+        }
+
+        $saved = 0;
+        foreach ($mensagens as $m) {
+            $idx = (int)($m['variacao_idx'] ?? 0);
+            $texto = trim($m['texto'] ?? '');
+            $validade = trim($m['validade'] ?? '');
+            if (!$texto) continue;
+
+            $pdo->prepare("
+                INSERT INTO reativacao_mensagens
+                    (company_id, contexto, tentativa, variacao_idx, mensagem, validade, updated_at)
+                VALUES (?, 'pos_barbearia', 1, ?, ?, ?, NOW())
+                ON DUPLICATE KEY UPDATE
+                    mensagem   = VALUES(mensagem),
+                    validade   = VALUES(validade),
+                    updated_at = NOW()
+            ")->execute([$companyId, $idx, $texto, $validade ?: null]);
+            $saved++;
+        }
+        echo json_encode(['ok' => true, 'saved' => $saved]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
     exit;
 }
 

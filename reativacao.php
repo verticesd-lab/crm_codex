@@ -551,6 +551,30 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     </div>
   </div>
 
+  <!-- Editor de mensagens -->
+  <div class="rv-card" style="margin-bottom:1.25rem;">
+    <div class="rv-card-hd" style="cursor:pointer;" onclick="document.getElementById('pb-editor-body').style.display=document.getElementById('pb-editor-body').style.display==='none'?'block':'none';this.querySelector('.pb-arrow').textContent=document.getElementById('pb-editor-body').style.display==='none'?'▼':'▲'">
+      <h3>✏️ Editar Mensagens & Validade</h3>
+      <div style="display:flex;align-items:center;gap:.75rem;">
+        <span style="font-size:.73rem;color:#94a3b8;">Clique para expandir e editar os textos e datas de validade</span>
+        <span class="pb-arrow" style="color:#94a3b8;font-size:.8rem;">▼</span>
+      </div>
+    </div>
+    <div id="pb-editor-body" style="display:none;padding:1rem 1.25rem;">
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.8rem;color:#a16207;">
+        💡 <strong>Como usar:</strong> Edite o texto e preencha a <strong>Validade/Observação</strong> para promoções com prazo ou dias específicos.
+        Ex: <em>"Válido seg. e ter."</em> · <em>"Promoção até 30/04"</em> · <em>"Fim de mês"</em> · <em>"50% off na semana do aniversário"</em>
+      </div>
+      <div id="pb-editor-wrap">
+        <!-- Preenchido pelo JS -->
+      </div>
+      <button id="pb-save-msgs-btn" onclick="pbSaveMessages()"
+        style="display:inline-flex;align-items:center;gap:.4rem;padding:.65rem 1.4rem;background:#6366f1;color:#fff;border:none;border-radius:9px;font-size:.83rem;font-weight:700;cursor:pointer;margin-top:.5rem;">
+        💾 Salvar mensagens
+      </button>
+    </div>
+  </div>
+
   <!-- Tabela de clientes -->
   <div class="rv-table-wrap">
     <div id="pb-loading" class="rv-empty">Clique em <strong>Buscar</strong> para carregar clientes recentes da barbearia.</div>
@@ -703,6 +727,7 @@ function switchTab(tab){
   if(tab==='lotes')loadLotes();
   if(tab==='segmentos')loadSeg(ST.seg);
   if(tab==='mensagens')loadMessages();
+  if(tab==='pos_barbearia') { pbLoadMessages(); pbEnsureDateRange(); }
 }
 
 async function loadEligible(){
@@ -1280,48 +1305,171 @@ async function saveAllMessages() {
 /* ══════════════════════════════════
    PÓS-BARBEARIA
 ══════════════════════════════════ */
-
-// Mensagens padrão (editáveis futuramente via banco)
-const PB_MSGS = [
-  {
-    titulo: '📅 Lembrete de agenda',
-    texto: 'Oi, {nome}! 👋\n\nJá faz alguns dias desde sua última visita na *Formen Barbearia*. ✂️\n\nSua agenda está aberta — escolha o melhor horário:\n👉 {link_agenda}\n\nTe esperamos!'
-  },
-  {
-    titulo: '🛍️ Promoção / Lançamento',
-    texto: 'Oi, {nome}! 😎\n\nTemos novidades esperando por você na *Formen Barbearia*! ✂️\n\nNovos produtos, novos serviços e promoções imperdíveis.\n\nAgende seu horário:\n👉 {link_agenda}\n\nAté breve!'
-  },
-  {
-    titulo: '🔗 Link da agenda online',
-    texto: 'Oi, {nome}! Tudo bem? ✂️\n\nQue tal marcar sua próxima visita na *Formen Barbearia*?\n\nAgende online em qualquer horário:\n👉 {link_agenda}\n\nÉ rápido e fácil! 😉'
-  },
-  {
-    titulo: '⭐ Feedback + retorno',
-    texto: 'Oi, {nome}! 🙏\n\nEsperamos que tenha gostado do seu atendimento na *Formen Barbearia*! ✂️\n\nSua opinião é muito importante pra gente. E quando quiser voltar, sua agenda está esperando:\n👉 {link_agenda}'
-  },
-  {
-    titulo: '🎁 Oferta exclusiva',
-    texto: 'Oi, {nome}! 🎉\n\nTemos uma oferta especial para clientes fiéis como você na *Formen Barbearia*! ✂️\n\nAgende agora e aproveite:\n👉 {link_agenda}\n\nValidade limitada!'
-  }
-];
-
 const AGENDA_LINK = 'https://crm.formenstore.com.br/agenda.php?empresa=minhaloja';
+
+// Mensagens carregadas do banco (com fallback nos defaults)
+let PB_MSGS = [
+  { titulo:'📅 Lembrete de agenda',    texto:'Oi, {nome}! 👋\n\nJá faz alguns dias desde sua última visita na *Formen Barbearia*. ✂️\n\nSua agenda está aberta — escolha o melhor horário:\n👉 {link_agenda}\n\nTe esperamos!', validade:'' },
+  { titulo:'🛍️ Promoção / Lançamento', texto:'Oi, {nome}! 😎\n\nTemos novidades esperando por você na *Formen Barbearia*! ✂️\n\nNovos produtos, novos serviços e promoções imperdíveis.\n\nAgende seu horário:\n👉 {link_agenda}\n\nAté breve!', validade:'' },
+  { titulo:'🔗 Link da agenda online', texto:'Oi, {nome}! Tudo bem? ✂️\n\nQue tal marcar sua próxima visita na *Formen Barbearia*?\n\nAgende online em qualquer horário:\n👉 {link_agenda}\n\nÉ rápido e fácil! 😉', validade:'' },
+  { titulo:'⭐ Feedback + retorno',     texto:'Oi, {nome}! 🙏\n\nEsperamos que tenha gostado do seu atendimento na *Formen Barbearia*! ✂️\n\nSua opinião é muito importante pra gente. E quando quiser voltar, sua agenda está esperando:\n👉 {link_agenda}', validade:'' },
+  { titulo:'🎁 Oferta exclusiva',       texto:'Oi, {nome}! 🎉\n\nTemos uma oferta especial para clientes fiéis como você na *Formen Barbearia*! ✂️\n\nAgende agora e aproveite:\n👉 {link_agenda}\n\nValidade limitada!', validade:'' },
+];
 
 let PB = { clients: [], selected: new Set() };
 
-// Renderiza previews das mensagens
+// Carrega mensagens do banco ao abrir a aba
+async function pbLoadMessages() {
+  try {
+    const d = await fetch(`${API}?action=get_pb_messages_config`).then(r=>r.json());
+    if (d.ok && d.mensagens) {
+      d.mensagens.forEach((m, i) => {
+        if (PB_MSGS[i]) {
+          PB_MSGS[i].texto    = m.texto    || PB_MSGS[i].texto;
+          PB_MSGS[i].validade = m.validade || '';
+        }
+      });
+    }
+  } catch(e) {}
+  pbRenderPreviews();
+  pbRenderEditor();
+}
+
+// Salva mensagens no banco
+async function pbSaveMessages() {
+  const btn = document.getElementById('pb-save-msgs-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Salvando...'; }
+
+  const toSave = PB_MSGS.map((m, i) => {
+    const ta  = document.getElementById(`pb-ta-${i}`);
+    const val = document.getElementById(`pb-val-${i}`);
+    return {
+      variacao_idx: i,
+      texto:    ta  ? ta.value  : m.texto,
+      validade: val ? val.value : m.validade,
+    };
+  });
+
+  // Atualiza PB_MSGS local
+  toSave.forEach((s, i) => {
+    PB_MSGS[i].texto    = s.texto;
+    PB_MSGS[i].validade = s.validade;
+  });
+
+  const d = await fetch(`${API}?action=save_pb_messages_config`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ mensagens: toSave })
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = d.ok ? `✅ ${d.saved} salvas!` : '❌ Erro ao salvar';
+    setTimeout(() => { if(btn) btn.textContent = '💾 Salvar mensagens'; }, 3000);
+  }
+
+  pbRenderPreviews();
+}
+
+// Renderiza o editor de mensagens
+function pbRenderEditor() {
+  const wrap = document.getElementById('pb-editor-wrap');
+  if (!wrap) return;
+
+  wrap.innerHTML = PB_MSGS.map((m, i) => `
+    <div style="border:1.5px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:.75rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:.65rem 1rem;background:#f8fafc;border-bottom:1px solid #f1f5f9;flex-wrap:wrap;gap:.5rem;">
+        <div style="display:flex;align-items:center;gap:.5rem;">
+          <span style="font-size:.7rem;font-weight:700;background:#ede9fe;color:#6d28d9;padding:.15rem .5rem;border-radius:20px;">Variação ${i+1}</span>
+          <span style="font-size:.84rem;font-weight:600;color:#0f172a;">${m.titulo}</span>
+          ${m.is_custom ? '<span style="font-size:.65rem;font-weight:700;background:#dcfce7;color:#15803d;padding:.15rem .45rem;border-radius:4px;">✏️ customizada</span>' : ''}
+        </div>
+        <button onclick="pbResetMsg(${i})" style="font-size:.72rem;color:#d97706;border:1px solid #fde68a;background:#fefce8;border-radius:6px;padding:.2rem .6rem;cursor:pointer;">↺ Restaurar padrão</button>
+      </div>
+      <div style="padding:.85rem 1rem;display:grid;grid-template-columns:1fr 1fr;gap:.85rem;">
+        <div>
+          <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;display:block;margin-bottom:.3rem;">✏️ Texto da mensagem</label>
+          <textarea id="pb-ta-${i}"
+            oninput="pbLivePreview(${i})"
+            rows="7"
+            style="width:100%;padding:.65rem .85rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;font-family:inherit;resize:vertical;outline:none;background:#f8fafc;line-height:1.55;box-sizing:border-box;"
+            onfocus="this.style.borderColor='#6366f1';this.style.background='#fff'"
+            onblur="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc'"
+          >${esc(m.texto)}</textarea>
+          <p style="font-size:.65rem;color:#94a3b8;margin-top:.25rem;">Use <code style="background:#f1f5f9;padding:.05rem .25rem;border-radius:3px;">{nome}</code> e <code style="background:#f1f5f9;padding:.05rem .25rem;border-radius:3px;">{link_agenda}</code></p>
+
+          <!-- Campo de validade -->
+          <div style="margin-top:.65rem;">
+            <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;display:block;margin-bottom:.3rem;">⏰ Validade / Observação</label>
+            <input id="pb-val-${i}" type="text"
+              value="${esc(m.validade || '')}"
+              placeholder="Ex: Válido seg. e ter. · Promoção até 30/04 · Fim de mês"
+              oninput="pbLivePreview(${i})"
+              style="width:100%;padding:.5rem .75rem;border:1.5px solid #fde68a;border-radius:8px;font-size:.82rem;font-family:inherit;outline:none;background:#fffbeb;box-sizing:border-box;"
+              onfocus="this.style.borderColor='#f59e0b';this.style.background='#fef3c7'"
+              onblur="this.style.borderColor='#fde68a';this.style.background='#fffbeb'">
+            <p style="font-size:.65rem;color:#a16207;margin-top:.25rem;">ℹ️ Será adicionada ao final da mensagem automaticamente quando preenchida.</p>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;display:block;margin-bottom:.3rem;">👁 Prévia (com "Carlos")</label>
+          <div id="pb-prev-${i}"
+            style="background:#f0fdf4;border:1px solid #bbf7d0;border-left:3px solid #22c55e;border-radius:8px;padding:.75rem 1rem;font-size:.82rem;color:#166534;white-space:pre-line;line-height:1.55;min-height:140px;">
+            ${pbBuildPreview(i, 'Carlos')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function pbBuildPreview(idx, nome) {
+  const ta  = document.getElementById(`pb-ta-${idx}`);
+  const val = document.getElementById(`pb-val-${idx}`);
+  const texto    = ta  ? ta.value  : (PB_MSGS[idx]?.texto    || '');
+  const validade = val ? val.value : (PB_MSGS[idx]?.validade || '');
+
+  let msg = texto
+    .replace(/\{nome\}/g, nome || 'Carlos')
+    .replace(/\{link_agenda\}/g, AGENDA_LINK);
+
+  if (validade.trim()) {
+    msg += `\n\n⏰ *${validade.trim()}*`;
+  }
+  return esc(msg);
+}
+
+function pbLivePreview(idx) {
+  const prev = document.getElementById(`pb-prev-${idx}`);
+  if (prev) prev.innerHTML = pbBuildPreview(idx, 'Carlos');
+}
+
+// Restaura mensagem padrão
+const PB_DEFAULTS = JSON.parse(JSON.stringify(PB_MSGS)); // cópia dos defaults iniciais
+function pbResetMsg(idx) {
+  const ta  = document.getElementById(`pb-ta-${idx}`);
+  const val = document.getElementById(`pb-val-${idx}`);
+  if (ta)  ta.value  = PB_DEFAULTS[idx]?.texto    || '';
+  if (val) val.value = '';
+  pbLivePreview(idx);
+}
+
 function pbRenderPreviews() {
-  const varidx = parseInt(document.getElementById('pb-variacao').value || '0');
+  const varidx = parseInt(document.getElementById('pb-variacao')?.value || '0');
   const wrap   = document.getElementById('pb-msg-previews');
   if (!wrap) return;
 
   wrap.innerHTML = PB_MSGS.map((m, i) => {
-    const preview = m.texto.replace(/\{nome\}/g, 'Carlos').replace(/\{link_agenda\}/g, AGENDA_LINK);
     const isActive = i === varidx;
+    const preview  = m.texto
+      .replace(/\{nome\}/g, 'Carlos')
+      .replace(/\{link_agenda\}/g, AGENDA_LINK)
+      + (m.validade ? `\n\n⏰ *${m.validade}*` : '');
+
     return `<div style="border:${isActive?'2px solid #22c55e':'1.5px solid #e2e8f0'};border-radius:10px;padding:.85rem 1rem;background:${isActive?'#f0fdf4':'#f8fafc'};">
-      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;flex-wrap:wrap;">
         <span style="font-size:.7rem;font-weight:700;background:${isActive?'#bbf7d0':'#f1f5f9'};color:${isActive?'#15803d':'#64748b'};padding:.15rem .5rem;border-radius:20px;">Variação ${i+1}</span>
         <span style="font-size:.78rem;font-weight:600;color:#0f172a;">${m.titulo}</span>
+        ${m.validade ? `<span style="font-size:.65rem;font-weight:700;background:#fef9c3;color:#a16207;padding:.15rem .45rem;border-radius:4px;">⏰ ${esc(m.validade)}</span>` : ''}
         ${isActive?'<span style="margin-left:auto;font-size:.65rem;font-weight:700;color:#16a34a;">✓ Selecionada</span>':''}
       </div>
       <div style="font-size:.75rem;color:#475569;white-space:pre-line;line-height:1.55;">${esc(preview)}</div>
@@ -1329,87 +1477,49 @@ function pbRenderPreviews() {
   }).join('');
 }
 
-// Atualiza preview quando muda variação
-document.addEventListener('DOMContentLoaded', () => {
-  const sel = document.getElementById('pb-variacao');
-  if (sel) {
-    sel.addEventListener('change', () => {
-      pbRenderPreviews();
-      pbUpdateMsgPreview();
-    });
-    pbRenderPreviews();
-  }
-});
-
-function pbUpdateMsgPreview() {
-  const varidx = parseInt(document.getElementById('pb-variacao')?.value || '0');
-  const msg    = PB_MSGS[varidx] || PB_MSGS[0];
-  return msg.texto.replace(/\{nome\}/g, '{nome}').replace(/\{link_agenda\}/g, AGENDA_LINK);
-}
-
 function pbDateToYmd(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 }
 
 function pbEnsureDateRange() {
   const ini = document.getElementById('pb-data-ini');
   const fim = document.getElementById('pb-data-fim');
-  if (!ini || !fim) return { dataIni: '', dataFim: '' };
-
+  if (!ini || !fim) return;
   const hoje = new Date();
-  const dataFimPadrao = pbDateToYmd(hoje);
-  const dataIniPadraoDate = new Date(hoje);
-  dataIniPadraoDate.setDate(dataIniPadraoDate.getDate() - 7);
-  const dataIniPadrao = pbDateToYmd(dataIniPadraoDate);
-
-  if (!fim.value) fim.value = dataFimPadrao;
-  if (!ini.value) ini.value = dataIniPadrao;
-
-  if (ini.value > fim.value) {
-    const tmp = ini.value;
-    ini.value = fim.value;
-    fim.value = tmp;
-  }
-
-  return { dataIni: ini.value, dataFim: fim.value };
+  if (!fim.value) fim.value = pbDateToYmd(hoje);
+  if (!ini.value) { const d=new Date(hoje); d.setDate(d.getDate()-7); ini.value=pbDateToYmd(d); }
+  if (ini.value > fim.value) { const t=ini.value; ini.value=fim.value; fim.value=t; }
 }
 
-// Carrega clientes recentes da barbearia
 async function pbLoad() {
   const dataIni = document.getElementById('pb-data-ini')?.value || '';
   const dataFim = document.getElementById('pb-data-fim')?.value || '';
   const limite  = document.getElementById('pb-limite').value;
   const varidx  = document.getElementById('pb-variacao').value;
 
-  if (!dataIni || !dataFim) {
-    alert('Preencha as datas inicial e final.'); return;
-  }
-  if (dataIni > dataFim) {
-    alert('A data inicial deve ser menor ou igual à data final.'); return;
-  }
+  if (!dataIni || !dataFim) { alert('Preencha as datas inicial e final.'); return; }
+  if (dataIni > dataFim)    { alert('A data inicial deve ser menor ou igual à data final.'); return; }
 
-  document.getElementById('pb-loading').innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Buscando clientes do período ' + dataIni.split('-').reverse().join('/') + ' até ' + dataFim.split('-').reverse().join('/') + '...</div>';
+  // Sincroniza PB_MSGS com o que está no editor antes de buscar
+  PB_MSGS.forEach((m, i) => {
+    const ta  = document.getElementById(`pb-ta-${i}`);
+    const val = document.getElementById(`pb-val-${i}`);
+    if (ta)  m.texto    = ta.value;
+    if (val) m.validade = val.value;
+  });
+
+  document.getElementById('pb-loading').innerHTML = `<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Buscando clientes de ${dataIni.split('-').reverse().join('/')} até ${dataFim.split('-').reverse().join('/')}...</div>`;
   document.getElementById('pb-loading').style.display = 'block';
   document.getElementById('pb-table').style.display   = 'none';
-
   pbRenderPreviews();
 
   try {
     const r = await fetch(`${API}?action=get_pos_barbearia&data_ini=${dataIni}&data_fim=${dataFim}&limite=${limite}&variacao=${varidx}`);
     const d = await r.json();
-
-    if (!d.ok) {
-      document.getElementById('pb-loading').innerHTML = `<div class="rv-empty">❌ ${esc(d.error||'Erro ao buscar clientes.')}</div>`;
-      return;
-    }
-
+    if (!d.ok) { document.getElementById('pb-loading').innerHTML = `<div class="rv-empty">❌ ${esc(d.error||'Erro ao buscar clientes.')}</div>`; return; }
     PB.clients  = d.clients || [];
     PB.selected = new Set(PB.clients.map(c => parseInt(c.id)));
     pbRender();
-
   } catch(e) {
     document.getElementById('pb-loading').innerHTML = '<div class="rv-empty">❌ Erro de comunicação.</div>';
   }
@@ -1421,142 +1531,92 @@ function pbRender() {
   const loading = document.getElementById('pb-loading');
   const table   = document.getElementById('pb-table');
   const tbody   = document.getElementById('pb-tbody');
-  const oldPeriodoInfo = document.querySelector('.pb-periodo-info');
-  if (oldPeriodoInfo) oldPeriodoInfo.remove();
+  document.querySelector('.pb-periodo-info')?.remove();
 
   if (!PB.clients.length) {
     loading.innerHTML = '<div class="rv-empty">✨ Nenhum cliente encontrado neste período. Ajuste o intervalo de datas e tente novamente.</div>';
-    loading.style.display = 'block';
-    table.style.display   = 'none';
-    return;
+    loading.style.display = 'block'; table.style.display = 'none'; return;
   }
 
   loading.style.display = 'none';
-  // Mostra período no topo da tabela
   const ini = document.getElementById('pb-data-ini')?.value || '';
   const fim = document.getElementById('pb-data-fim')?.value || '';
   const fmtD = s => s ? s.split('-').reverse().join('/') : '';
-  const periodoInfo = document.createElement('div');
-  periodoInfo.className = 'pb-periodo-info';
-  periodoInfo.style.cssText = 'padding:.6rem 1rem;background:#f0fdf4;border-bottom:1px solid #bbf7d0;font-size:.78rem;color:#166534;font-weight:600;';
-  periodoInfo.textContent = `✅ ${PB.clients.length} cliente(s) encontrado(s) · Período: ${fmtD(ini)} → ${fmtD(fim)}`;
-  table.parentNode.insertBefore(periodoInfo, table);
-  table.style.display   = 'table';
+  const pi = document.createElement('div');
+  pi.className = 'pb-periodo-info';
+  pi.style.cssText = 'padding:.6rem 1rem;background:#f0fdf4;border-bottom:1px solid #bbf7d0;font-size:.78rem;color:#166534;font-weight:600;';
+  pi.textContent = `✅ ${PB.clients.length} cliente(s) · Período: ${fmtD(ini)} → ${fmtD(fim)}${msg.validade ? ' · ⏰ ' + msg.validade : ''}`;
+  table.parentNode.insertBefore(pi, table);
+  table.style.display = 'table';
 
   tbody.innerHTML = PB.clients.map(c => {
-    const preview  = msg.texto
+    const textoFull = (msg.texto + (msg.validade ? `\n\n⏰ *${msg.validade}*` : ''))
       .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
-      .replace(/\{link_agenda\}/g, AGENDA_LINK)
-      .replace(/\n/g, ' ').slice(0, 90) + '…';
-    const wa = (c.whatsapp || '').slice(0,4) + '****' + (c.whatsapp || '').slice(-4);
+      .replace(/\{link_agenda\}/g, AGENDA_LINK);
+    const preview  = textoFull.replace(/\n/g,' ').slice(0, 90) + '…';
+    const wa = (c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4);
     const chk = PB.selected.has(parseInt(c.id)) ? 'checked' : '';
     const diasC = parseInt(c.dias_desde_agendamento) <= 20 ? 'dias-cold' : parseInt(c.dias_desde_agendamento) <= 40 ? 'dias-warm' : 'dias-hot';
-
     return `<tr>
       <td><input type="checkbox" class="pb-ck" data-id="${c.id}" ${chk} onchange="pbToggleRow(${c.id},this)"></td>
-      <td style="font-weight:600;color:#0f172a;">
-        ${esc(c.nome)}
-        <div style="font-size:.7rem;color:#94a3b8;margin-top:.1rem;">
-          ${esc(c.ultimo_servico || '')}
-        </div>
-      </td>
+      <td style="font-weight:600;color:#0f172a;">${esc(c.nome)}<div style="font-size:.7rem;color:#94a3b8;">${esc(c.ultimo_servico||'')}</div></td>
       <td style="font-family:monospace;font-size:.78rem;color:#64748b;">${wa}</td>
-      <td style="font-size:.78rem;color:#475569;">${esc(c.ultimo_agendamento_fmt || '—')}</td>
+      <td style="font-size:.78rem;color:#475569;">${esc(c.ultimo_agendamento_fmt||'—')}</td>
       <td><span class="dias-badge ${diasC}">${c.dias_desde_agendamento}d</span></td>
-      <td style="font-size:.73rem;color:#64748b;font-style:italic;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(msg.texto.replace(/\n/g,' '))}">
-        ${esc(preview)}
-      </td>
+      <td style="font-size:.73rem;color:#64748b;font-style:italic;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(preview)}</td>
     </tr>`;
   }).join('');
-
   pbUpdateSelBar();
 }
 
-function pbToggleRow(id, cb) {
-  if (cb.checked) PB.selected.add(parseInt(id));
-  else            PB.selected.delete(parseInt(id));
-  pbUpdateSelBar();
-}
-
-function pbToggleAll(cb) {
-  PB.clients.forEach(c => {
-    if (cb.checked) PB.selected.add(parseInt(c.id));
-    else            PB.selected.delete(parseInt(c.id));
-  });
-  document.querySelectorAll('.pb-ck').forEach(c => c.checked = cb.checked);
-  pbUpdateSelBar();
-}
-
-function pbSelectAll(v) {
-  document.getElementById('pb-check-all').checked = v;
-  pbToggleAll({ checked: v });
-}
-
-function pbUpdateSelBar() {
-  document.getElementById('pb-sel-count').textContent    = PB.selected.size;
-  document.getElementById('pb-sel-bar').style.display   = PB.selected.size > 0 ? 'flex' : 'none';
-}
+function pbToggleRow(id, cb) { if(cb.checked) PB.selected.add(parseInt(id)); else PB.selected.delete(parseInt(id)); pbUpdateSelBar(); }
+function pbToggleAll(cb) { PB.clients.forEach(c => { if(cb.checked) PB.selected.add(parseInt(c.id)); else PB.selected.delete(parseInt(c.id)); }); document.querySelectorAll('.pb-ck').forEach(c=>c.checked=cb.checked); pbUpdateSelBar(); }
+function pbSelectAll(v) { document.getElementById('pb-check-all').checked=v; pbToggleAll({checked:v}); }
+function pbUpdateSelBar() { document.getElementById('pb-sel-count').textContent=PB.selected.size; document.getElementById('pb-sel-bar').style.display=PB.selected.size>0?'flex':'none'; }
 
 function pbOpenModal() {
   if (!PB.selected.size) return;
-  const varidx   = parseInt(document.getElementById('pb-variacao').value || '0');
-  const msg      = PB_MSGS[varidx] || PB_MSGS[0];
-  const primeiro = PB.clients.find(c => PB.selected.has(parseInt(c.id)));
-  const preview  = msg.texto
-    .replace(/\{nome\}/g, primeiro?.primeiro_nome || 'Cliente')
+  const varidx   = parseInt(document.getElementById('pb-variacao').value||'0');
+  const msg      = PB_MSGS[varidx]||PB_MSGS[0];
+  const primeiro = PB.clients.find(c=>PB.selected.has(parseInt(c.id)));
+  const preview  = (msg.texto+(msg.validade?`\n\n⏰ *${msg.validade}*`:'')) 
+    .replace(/\{nome\}/g, primeiro?.primeiro_nome||'Cliente')
     .replace(/\{link_agenda\}/g, AGENDA_LINK);
 
-  document.getElementById('pb-cfg-total').textContent    = PB.selected.size + ' clientes';
-  document.getElementById('pb-modal-preview').textContent = preview;
-  document.getElementById('pb-modal-summary').textContent = `Lote de lembrete pós-barbearia com ${PB.selected.size} cliente(s) — "${msg.titulo}"`;
+  document.getElementById('pb-cfg-total').textContent     = PB.selected.size+' clientes';
+  document.getElementById('pb-modal-preview').textContent  = preview;
+  document.getElementById('pb-modal-summary').textContent  = `Lote pós-barbearia com ${PB.selected.size} cliente(s) — "${msg.titulo}"${msg.validade?' · ⏰ '+msg.validade:''}`;
   document.getElementById('pb-modal').classList.add('open');
 }
 
-function pbCloseModal() {
-  document.getElementById('pb-modal').classList.remove('open');
-}
+function pbCloseModal() { document.getElementById('pb-modal').classList.remove('open'); }
 
 async function pbConfirmLote() {
   const btn    = document.getElementById('pb-btn-confirm');
-  const varidx = parseInt(document.getElementById('pb-variacao').value || '0');
-  const msg    = PB_MSGS[varidx] || PB_MSGS[0];
+  const varidx = parseInt(document.getElementById('pb-variacao').value||'0');
+  const msg    = PB_MSGS[varidx]||PB_MSGS[0];
   const obs    = document.getElementById('pb-modal-obs').value;
-
   btn.disabled = true; btn.textContent = 'Criando...';
 
-  // Monta os envios com a mensagem já interpolada por cliente
   const envios = PB.clients
-    .filter(c => PB.selected.has(parseInt(c.id)))
+    .filter(c=>PB.selected.has(parseInt(c.id)))
     .map(c => ({
       client_id: c.id,
       whatsapp:  c.whatsapp,
       nome:      c.nome,
-      mensagem:  msg.texto
-        .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
+      mensagem:  (msg.texto+(msg.validade?`\n\n⏰ *${msg.validade}*`:'')) 
+        .replace(/\{nome\}/g, c.primeiro_nome||c.nome||'Cliente')
         .replace(/\{link_agenda\}/g, AGENDA_LINK),
     }));
 
   try {
-    const r = await fetch(`${API}?action=create_lote_pos_barbearia`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ envios, observacoes: obs, variacao_idx: varidx }),
-    });
+    const r = await fetch(`${API}?action=create_lote_pos_barbearia`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({envios,observacoes:obs,variacao_idx:varidx})});
     const d = await r.json();
     pbCloseModal();
-
-    if (d.ok) {
-      ST.activeLoteId = d.lote_id;
-      alert(`✅ Lote criado com ${d.total} clientes!\n\nVá para Histórico para iniciar o envio.`);
-      switchTab('lotes');
-    } else {
-      alert('Erro: ' + (d.error || 'Falha'));
-    }
-  } catch(e) {
-    alert('Erro de comunicação.');
-  }
-
-  btn.disabled = false; btn.textContent = 'Criar lote';
+    if (d.ok) { ST.activeLoteId=d.lote_id; alert(`✅ Lote criado com ${d.total} clientes!\n\nVá para Histórico para iniciar o envio.`); switchTab('lotes'); }
+    else alert('Erro: '+(d.error||'Falha'));
+  } catch(e) { alert('Erro de comunicação.'); }
+  btn.disabled=false; btn.textContent='Criar lote';
 }
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
