@@ -221,6 +221,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   <button class="rv-tab" data-tab="lotes">📋 Histórico</button>
   <button class="rv-tab" data-tab="segmentos">🗂️ Segmentos</button>
   <button class="rv-tab" data-tab="pos_barbearia">✂️ Pós-Barbearia</button>
+  <button class="rv-tab" data-tab="promocoes">📣 Promoções</button>
   <button class="rv-tab" data-tab="mensagens">📝 Mensagens</button>
 </div>
 
@@ -616,6 +617,167 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   </div>
 </div>
 
+<!-- ═══ PROMOÇÕES ═══ -->
+<div id="tab-promocoes" class="rv-panel">
+
+  <!-- KPI do dia -->
+  <div id="promo-kpi-bar" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.25rem;">
+    <div class="rv-kpi" style="--c:#f59e0b;">
+      <div class="rv-kpi-lbl">Disponíveis hoje</div>
+      <div class="rv-kpi-val" id="promo-kpi-disp">—</div>
+      <div class="rv-kpi-sub">contatos não enviados</div>
+    </div>
+    <div class="rv-kpi" style="--c:#6366f1;">
+      <div class="rv-kpi-lbl">Enviados hoje</div>
+      <div class="rv-kpi-val" id="promo-kpi-env">—</div>
+      <div class="rv-kpi-sub">bloqueados até amanhã</div>
+    </div>
+    <div class="rv-kpi" style="--c:#22c55e;">
+      <div class="rv-kpi-lbl">Lote atual</div>
+      <div class="rv-kpi-val" id="promo-kpi-lote">—</div>
+      <div class="rv-kpi-sub">clientes selecionados</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 340px;gap:1.25rem;align-items:start;">
+
+    <!-- COLUNA ESQUERDA: contatos + ação -->
+    <div>
+
+      <!-- Filtros -->
+      <div class="rv-filters">
+        <div class="rv-fg">
+          <label>Tamanho do lote</label>
+          <select class="rv-select" id="promo-limite">
+            <option value="20">20 contatos</option>
+            <option value="30" selected>30 contatos</option>
+            <option value="50">50 contatos</option>
+          </select>
+        </div>
+        <div class="rv-fg">
+          <label>Lote nº (paginação)</label>
+          <select class="rv-select" id="promo-lote-num">
+            <option value="0">1º lote (início)</option>
+            <option value="1">2º lote</option>
+            <option value="2">3º lote</option>
+            <option value="3">4º lote</option>
+            <option value="4">5º lote</option>
+          </select>
+        </div>
+        <div class="rv-fg" style="padding-top:18px;">
+          <button class="btn btn-primary" onclick="promoLoad()">🔍 Carregar contatos</button>
+        </div>
+      </div>
+
+      <!-- Barra de seleção -->
+      <div id="promo-sel-bar" class="rv-sel-bar" style="display:none;">
+        <span><strong id="promo-sel-count">0</strong> selecionados</span>
+        <div style="display:flex;gap:.5rem;">
+          <button class="btn btn-ghost btn-sm" onclick="promoSelectAll(true)">Todos</button>
+          <button class="btn btn-ghost btn-sm" onclick="promoSelectAll(false)">Limpar</button>
+          <button class="btn btn-primary btn-sm" onclick="promoOpenModal()">Criar lote →</button>
+        </div>
+      </div>
+
+      <!-- Tabela -->
+      <div class="rv-table-wrap">
+        <div id="promo-loading" class="rv-empty">
+          Selecione o tamanho e o número do lote, depois clique em <strong>Carregar contatos</strong>.
+        </div>
+        <table class="rv-table" id="promo-table" style="display:none;">
+          <thead><tr>
+            <th style="width:36px;"><input type="checkbox" id="promo-check-all" onchange="promoToggleAll(this)"></th>
+            <th>Nome</th>
+            <th>WhatsApp</th>
+            <th>Tags</th>
+            <th>Prévia da mensagem</th>
+          </tr></thead>
+          <tbody id="promo-tbody"></tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- COLUNA DIREITA: editor de mensagem -->
+    <div style="position:sticky;top:1rem;">
+
+      <!-- Selector de mensagem -->
+      <div class="rv-card" style="margin-bottom:.85rem;">
+        <div class="rv-card-hd"><h3>📋 Mensagem da promoção</h3></div>
+        <div style="padding:.85rem 1rem;">
+          <div class="rv-fg" style="margin-bottom:.75rem;">
+            <label>Selecionar mensagem salva</label>
+            <select class="rv-select" id="promo-msg-sel" onchange="promoSelectMsg(this.value)" style="width:100%;">
+              <option value="">— Escolha ou crie nova —</option>
+            </select>
+          </div>
+          <div class="rv-fg" style="margin-bottom:.65rem;">
+            <label>Título</label>
+            <input type="text" id="promo-titulo" class="rv-select" style="width:100%;font-family:inherit;" placeholder="Ex: Promoção Fim de Mês">
+          </div>
+          <div class="rv-fg" style="margin-bottom:.65rem;">
+            <label>Mensagem <small style="color:#94a3b8;">(use {nome}, {link_loja}, {link_agenda})</small></label>
+            <textarea id="promo-msg" rows="7" oninput="promoLivePreview()"
+              style="width:100%;padding:.6rem .8rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.82rem;font-family:inherit;resize:vertical;outline:none;background:#f8fafc;line-height:1.55;box-sizing:border-box;"
+              onfocus="this.style.borderColor='#6366f1';this.style.background='#fff'"
+              onblur="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc'"
+              placeholder="Oi, {nome}! Temos uma promoção especial..."></textarea>
+          </div>
+          <div class="rv-fg" style="margin-bottom:.85rem;">
+            <label>⏰ Validade / Observação</label>
+            <input type="text" id="promo-validade"
+              oninput="promoLivePreview()"
+              style="width:100%;padding:.5rem .75rem;border:1.5px solid #fde68a;border-radius:8px;font-size:.82rem;font-family:inherit;outline:none;background:#fffbeb;box-sizing:border-box;"
+              placeholder="Ex: Válido seg. e ter. · Até 30/04 · Esta semana">
+            <p style="font-size:.67rem;color:#a16207;margin-top:.2rem;">Será adicionada ao final da mensagem automaticamente.</p>
+          </div>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" onclick="promoSaveMsg()">💾 Salvar mensagem</button>
+            <button class="btn btn-ghost btn-sm" onclick="promoNewMsg()">＋ Nova</button>
+            <button class="btn btn-danger btn-sm" id="promo-del-btn" onclick="promoDeleteMsg()" style="display:none;">🗑 Excluir</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Prévia -->
+      <div class="rv-card">
+        <div class="rv-card-hd"><h3>👁 Prévia</h3></div>
+        <div style="padding:.85rem 1rem;">
+          <div id="promo-preview"
+            style="background:#f0fdf4;border:1px solid #bbf7d0;border-left:3px solid #22c55e;border-radius:8px;padding:.75rem 1rem;font-size:.82rem;color:#166534;white-space:pre-line;line-height:1.55;min-height:80px;">
+            Preencha a mensagem ao lado...
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PROMOÇÕES -->
+<div class="rv-modal-ov" id="promo-modal" onclick="if(event.target===this)promoCloseModal()">
+  <div class="rv-modal">
+    <h2>📣 Confirmar lote de promoção</h2>
+    <div id="promo-modal-summary" style="font-size:.82rem;color:#64748b;margin-bottom:1rem;"></div>
+    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.4rem;">Prévia da mensagem</p>
+    <div class="rv-msg-preview" id="promo-modal-preview" style="border-left-color:#f59e0b;"></div>
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:.65rem .9rem;margin:.75rem 0;font-size:.78rem;color:#a16207;">
+      ⚠️ Todos os contatos deste lote serão <strong>bloqueados pelo resto do dia</strong> — não aparecerão em novos lotes até amanhã.
+    </div>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;">
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Contatos</span><span class="rv-cfg-val" id="promo-cfg-total">—</span></div>
+      <div class="rv-cfg-row"><span class="rv-cfg-lbl">Intervalo</span><span class="rv-cfg-val">180–320s randomizado</span></div>
+      <div class="rv-cfg-row" style="border:none;"><span class="rv-cfg-lbl">Horário</span><span class="rv-cfg-val">09:00 – 20:00</span></div>
+    </div>
+    <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem;">Observação (opcional)</p>
+    <textarea class="rv-obs" id="promo-modal-obs" rows="2" placeholder="Ex: Promoção semana fecha mês, abril/2026..."></textarea>
+    <div style="display:flex;gap:.6rem;justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="promoCloseModal()">Cancelar</button>
+      <button class="btn btn-primary" id="promo-btn-confirm" onclick="promoConfirmLote()">Criar lote</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ MENSAGENS ═══ -->
 <div id="tab-mensagens" class="rv-panel">
 
@@ -728,6 +890,7 @@ function switchTab(tab){
   if(tab==='segmentos')loadSeg(ST.seg);
   if(tab==='mensagens')loadMessages();
   if(tab==='pos_barbearia') { pbLoadMessages(); pbEnsureDateRange(); }
+  if(tab==='promocoes') { promoInit(); }
 }
 
 async function loadEligible(){
@@ -1305,6 +1468,360 @@ async function saveAllMessages() {
 /* ══════════════════════════════════
    PÓS-BARBEARIA
 ══════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   PROMOÇÕES
+═══════════════════════════════════════════════════ */
+const PROMO_COMPANY_SLUG = <?= json_encode($_SESSION['company_slug'] ?? 'minhaloja', JSON_UNESCAPED_UNICODE) ?>;
+const PROMO_BASE_URL = <?= json_encode(rtrim(BASE_URL ?: '', '/'), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+
+let PROMO_LEGACY = {
+  initialized: false,
+  clients: [],
+  selected: new Set(),
+  mensagens: [],
+  currentIndex: -1,
+  currentId: 0,
+  totalDisp: null,
+  enviadosHoje: null
+};
+
+const PROMO_DEFAULTS = [
+  {id:0,titulo:'🏷️ Promoção Fim de Mês',mensagem:"Oi, {nome}! 🎉\n\nÉ fim de mês na *Formen Store* e preparamos uma promoção especial pra você!\n\n👕 Confira os lançamentos e aproveite as ofertas:\n👉 {link_loja}\n\nVálido por tempo limitado!",validade:'Fim de mês',ativa:1},
+  {id:0,titulo:'✂️ Promoção Barbearia Seg/Ter',mensagem:"Oi, {nome}! ✂️\n\nSabia que às *Segundas e Terças* temos condições especiais na *Formen Barbearia*?\n\nAproveite e agende agora:\n👉 {link_agenda}\n\nVálido: Segunda e Terça-feira.",validade:'Seg. e Ter.',ativa:1},
+  {id:0,titulo:'🎁 Voucher da Semana',mensagem:"Oi, {nome}! 😎\n\nTemos um voucher especial essa semana pra você na *Formen*!\n\nMostra essa mensagem na loja ou menciona ao agendar e garanta seu desconto exclusivo.\n\n✂️ Agenda: {link_agenda}\n👕 Loja: {link_loja}",validade:'Válido essa semana',ativa:1},
+  {id:0,titulo:'📣 Novidade / Lançamento',mensagem:"Oi, {nome}! 👋\n\nA *Formen* tem novidades chegando essa semana!\n\nPasse na loja ou confira online:\n👉 {link_loja}\n\nSempre bom ter você por aqui! 😊",validade:'',ativa:1},
+];
+
+function promoBaseUrl() {
+  return PROMO_BASE_URL || window.location.origin;
+}
+
+function promoLojaLink() {
+  return `${promoBaseUrl()}/loja.php?empresa=${encodeURIComponent(PROMO_COMPANY_SLUG || 'minhaloja')}`;
+}
+
+function promoAgendaLink() {
+  return `${promoBaseUrl()}/agenda.php?empresa=${encodeURIComponent(PROMO_COMPANY_SLUG || 'minhaloja')}`;
+}
+
+async function promoInit() {
+  if (PROMO.initialized) {
+    promoLivePreview();
+    promoUpdateKpis();
+    return;
+  }
+  PROMO.initialized = true;
+  await promoLoadMsgs();
+  promoUpdateKpis();
+}
+
+async function promoLoadMsgs(selectId = null) {
+  const sel = document.getElementById('promo-msg-sel');
+  if (sel) sel.innerHTML = '<option value="">Carregando...</option>';
+
+  const d = await fetch(`${API}?action=get_promo_mensagens`).then(r=>r.json()).catch(()=>({ok:false}));
+  PROMO.mensagens = d.ok && Array.isArray(d.mensagens) && d.mensagens.length ? d.mensagens : PROMO_DEFAULTS;
+
+  promoRenderMsgOptions();
+
+  let idx = 0;
+  if (selectId) {
+    const found = PROMO.mensagens.findIndex(m => parseInt(m.id || 0) === parseInt(selectId));
+    if (found >= 0) idx = found;
+  } else if (PROMO.currentId > 0) {
+    const found = PROMO.mensagens.findIndex(m => parseInt(m.id || 0) === PROMO.currentId);
+    if (found >= 0) idx = found;
+  }
+  promoSelectMsg(String(idx));
+}
+
+function promoRenderMsgOptions() {
+  const sel = document.getElementById('promo-msg-sel');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Escolha ou crie nova —</option>' + PROMO.mensagens.map((m, i) => {
+    const label = `${m.titulo || 'Mensagem'}${parseInt(m.id || 0) > 0 ? '' : ' (padrão)'}`;
+    return `<option value="${i}">${esc(label)}</option>`;
+  }).join('');
+}
+
+function promoSelectMsg(value) {
+  if (value === '') {
+    promoNewMsg();
+    return;
+  }
+  const idx = parseInt(value, 10);
+  const msg = PROMO.mensagens[idx];
+  if (!msg) return;
+
+  PROMO.currentIndex = idx;
+  PROMO.currentId = parseInt(msg.id || 0, 10);
+  document.getElementById('promo-msg-sel').value = String(idx);
+  document.getElementById('promo-titulo').value = msg.titulo || '';
+  document.getElementById('promo-msg').value = msg.mensagem || '';
+  document.getElementById('promo-validade').value = msg.validade || '';
+  document.getElementById('promo-del-btn').style.display = PROMO.currentId > 0 ? 'inline-flex' : 'none';
+  promoLivePreview();
+}
+
+function promoNewMsg() {
+  PROMO.currentIndex = -1;
+  PROMO.currentId = 0;
+  const sel = document.getElementById('promo-msg-sel');
+  if (sel) sel.value = '';
+  document.getElementById('promo-titulo').value = '';
+  document.getElementById('promo-msg').value = '';
+  document.getElementById('promo-validade').value = '';
+  document.getElementById('promo-del-btn').style.display = 'none';
+  promoLivePreview();
+}
+
+function promoCurrentMsg() {
+  return {
+    id: PROMO.currentId,
+    titulo: document.getElementById('promo-titulo')?.value.trim() || 'Promoção',
+    mensagem: document.getElementById('promo-msg')?.value.trim() || '',
+    validade: document.getElementById('promo-validade')?.value.trim() || ''
+  };
+}
+
+function promoApplyVars(text, client = null) {
+  const nome = client?.primeiro_nome || String(client?.nome || 'Carlos').trim().split(/\s+/)[0] || 'Cliente';
+  return String(text || '')
+    .replace(/\{nome\}/g, nome)
+    .replace(/\{link_loja\}/g, promoLojaLink())
+    .replace(/\{link_agenda\}/g, promoAgendaLink());
+}
+
+function promoBuildMessage(client = null) {
+  const msg = promoCurrentMsg();
+  let text = promoApplyVars(msg.mensagem, client);
+  if (msg.validade) text += `\n\n⏰ *${msg.validade}*`;
+  return text;
+}
+
+function promoLivePreview() {
+  const prev = document.getElementById('promo-preview');
+  if (prev) prev.textContent = promoBuildMessage({nome:'Carlos', primeiro_nome:'Carlos'}) || 'Preencha a mensagem ao lado...';
+  promoRefreshRowPreviews();
+}
+
+async function promoSaveMsg() {
+  const msg = promoCurrentMsg();
+  if (!msg.titulo || !msg.mensagem) {
+    alert('Título e mensagem são obrigatórios.');
+    return;
+  }
+
+  const d = await fetch(`${API}?action=save_promo_mensagem`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      id: PROMO.currentId,
+      titulo: msg.titulo,
+      mensagem: msg.mensagem,
+      validade: msg.validade,
+      ativa: 1
+    })
+  }).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de comunicação'}));
+
+  if (!d.ok) {
+    alert('Erro: ' + (d.error || 'Falha ao salvar.'));
+    return;
+  }
+  await promoLoadMsgs(d.id);
+}
+
+async function promoDeleteMsg() {
+  if (PROMO.currentId <= 0) return;
+  if (!confirm('Excluir esta mensagem de promoção?')) return;
+
+  const d = await fetch(`${API}?action=delete_promo_mensagem`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({id: PROMO.currentId})
+  }).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de comunicação'}));
+
+  if (!d.ok) {
+    alert('Erro: ' + (d.error || 'Falha ao excluir.'));
+    return;
+  }
+  PROMO.currentId = 0;
+  await promoLoadMsgs();
+}
+
+async function promoLoad() {
+  await promoInit();
+  const limite = parseInt(document.getElementById('promo-limite')?.value || '30', 10);
+  const loteNum = parseInt(document.getElementById('promo-lote-num')?.value || '0', 10);
+  const offset = limite * loteNum;
+  const loading = document.getElementById('promo-loading');
+  const table = document.getElementById('promo-table');
+
+  if (loading) {
+    loading.innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Carregando contatos disponíveis...</div>';
+    loading.style.display = 'block';
+  }
+  if (table) table.style.display = 'none';
+
+  const d = await fetch(`${API}?action=get_promo_contacts&limite=${limite}&offset=${offset}`).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de comunicação'}));
+  if (!d.ok) {
+    if (loading) loading.innerHTML = `<div class="rv-empty">❌ ${esc(d.error || 'Erro ao carregar contatos.')}</div>`;
+    return;
+  }
+
+  PROMO.clients = d.clients || [];
+  PROMO.selected = new Set(PROMO.clients.map(c => parseInt(c.id, 10)));
+  PROMO.totalDisp = parseInt(d.total_disp || 0, 10);
+  PROMO.enviadosHoje = parseInt(d.enviados_hoje || 0, 10);
+  promoRender();
+}
+
+function promoRender() {
+  const loading = document.getElementById('promo-loading');
+  const table = document.getElementById('promo-table');
+  const tbody = document.getElementById('promo-tbody');
+  const checkAll = document.getElementById('promo-check-all');
+
+  if (!PROMO.clients.length) {
+    if (loading) {
+      loading.innerHTML = '<div class="rv-empty">✨ Nenhum contato disponível para promoção neste lote.</div>';
+      loading.style.display = 'block';
+    }
+    if (table) table.style.display = 'none';
+    promoUpdateKpis();
+    promoUpdateSelBar();
+    return;
+  }
+
+  if (loading) loading.style.display = 'none';
+  if (table) table.style.display = 'table';
+  if (checkAll) checkAll.checked = true;
+
+  tbody.innerHTML = PROMO.clients.map(c => {
+    const checked = PROMO.selected.has(parseInt(c.id, 10)) ? 'checked' : '';
+    const wa = maskPhone(c.whatsapp);
+    const tags = c.tags ? esc(c.tags) : '—';
+    const preview = promoBuildMessage(c).replace(/\n/g, ' ').slice(0, 110);
+    return `<tr>
+      <td><input type="checkbox" class="promo-ck" data-id="${c.id}" ${checked} onchange="promoToggleRow(${c.id},this)"></td>
+      <td style="font-weight:600;color:#0f172a;">${esc(c.nome)}</td>
+      <td style="font-family:monospace;font-size:.78rem;color:#64748b;">${wa}</td>
+      <td style="font-size:.75rem;color:#64748b;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${tags}">${tags}</td>
+      <td id="promo-prev-${c.id}" style="font-size:.73rem;color:#64748b;font-style:italic;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(preview)}${preview.length >= 110 ? '…' : ''}</td>
+    </tr>`;
+  }).join('');
+
+  promoUpdateKpis();
+  promoUpdateSelBar();
+}
+
+function promoRefreshRowPreviews() {
+  if (!PROMO.clients.length) return;
+  PROMO.clients.forEach(c => {
+    const el = document.getElementById('promo-prev-' + c.id);
+    if (!el) return;
+    const preview = promoBuildMessage(c).replace(/\n/g, ' ').slice(0, 110);
+    el.textContent = preview + (preview.length >= 110 ? '…' : '');
+  });
+}
+
+function promoToggleRow(id, cb) {
+  if (cb.checked) PROMO.selected.add(parseInt(id, 10));
+  else PROMO.selected.delete(parseInt(id, 10));
+  promoUpdateSelBar();
+}
+
+function promoToggleAll(cb) {
+  PROMO.clients.forEach(c => {
+    if (cb.checked) PROMO.selected.add(parseInt(c.id, 10));
+    else PROMO.selected.delete(parseInt(c.id, 10));
+  });
+  document.querySelectorAll('.promo-ck').forEach(c => c.checked = cb.checked);
+  promoUpdateSelBar();
+}
+
+function promoSelectAll(v) {
+  const all = document.getElementById('promo-check-all');
+  if (all) all.checked = v;
+  promoToggleAll({checked:v});
+}
+
+function promoUpdateSelBar() {
+  const count = document.getElementById('promo-sel-count');
+  const bar = document.getElementById('promo-sel-bar');
+  if (count) count.textContent = PROMO.selected.size;
+  if (bar) bar.style.display = PROMO.selected.size > 0 ? 'flex' : 'none';
+  promoUpdateKpis();
+}
+
+function promoUpdateKpis() {
+  const disp = document.getElementById('promo-kpi-disp');
+  const env = document.getElementById('promo-kpi-env');
+  const lote = document.getElementById('promo-kpi-lote');
+  if (disp) disp.textContent = PROMO.totalDisp === null ? '—' : PROMO.totalDisp;
+  if (env) env.textContent = PROMO.enviadosHoje === null ? '—' : PROMO.enviadosHoje;
+  if (lote) lote.textContent = PROMO.selected.size || '—';
+}
+
+function promoOpenModal() {
+  if (!PROMO.selected.size) return;
+  const msg = promoCurrentMsg();
+  if (!msg.mensagem) {
+    alert('Escolha ou escreva uma mensagem antes de criar o lote.');
+    return;
+  }
+  const first = PROMO.clients.find(c => PROMO.selected.has(parseInt(c.id, 10))) || null;
+  document.getElementById('promo-cfg-total').textContent = PROMO.selected.size + ' contatos';
+  document.getElementById('promo-modal-preview').textContent = promoBuildMessage(first);
+  document.getElementById('promo-modal-summary').textContent = `Lote de promoção com ${PROMO.selected.size} contato(s) — "${msg.titulo}"`;
+  document.getElementById('promo-modal').classList.add('open');
+}
+
+function promoCloseModal() {
+  document.getElementById('promo-modal').classList.remove('open');
+}
+
+async function promoConfirmLote() {
+  if (!PROMO.selected.size) return;
+
+  const btn = document.getElementById('promo-btn-confirm');
+  const msg = promoCurrentMsg();
+  const obs = document.getElementById('promo-modal-obs').value;
+  btn.disabled = true;
+  btn.textContent = 'Criando...';
+
+  const envios = PROMO.clients
+    .filter(c => PROMO.selected.has(parseInt(c.id, 10)))
+    .map(c => ({
+      client_id: c.id,
+      whatsapp: c.whatsapp,
+      nome: c.nome,
+      mensagem: promoBuildMessage(c)
+    }));
+
+  const d = await fetch(`${API}?action=create_lote_promo`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      envios,
+      observacoes: obs || msg.titulo,
+      msg_titulo: msg.titulo
+    })
+  }).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de comunicação'}));
+
+  promoCloseModal();
+  btn.disabled = false;
+  btn.textContent = 'Criar lote';
+
+  if (d.ok) {
+    ST.activeLoteId = d.lote_id;
+    alert(`✅ Lote criado com ${d.total} contatos!\n\nVá para Histórico para iniciar o envio.`);
+    switchTab('lotes');
+  } else {
+    alert('Erro: ' + (d.error || 'Falha'));
+  }
+}
+
 const AGENDA_LINK = 'https://crm.formenstore.com.br/agenda.php?empresa=minhaloja';
 
 // Mensagens carregadas do banco (com fallback nos defaults)
@@ -1617,6 +2134,250 @@ async function pbConfirmLote() {
     else alert('Erro: '+(d.error||'Falha'));
   } catch(e) { alert('Erro de comunicação.'); }
   btn.disabled=false; btn.textContent='Criar lote';
+}
+/* ══════════════════════════════════
+   PROMOÇÕES
+══════════════════════════════════ */
+const PROMO_LINK_LOJA   = 'https://crm.formenstore.com.br/loja.php?empresa=minhaloja';
+const PROMO_LINK_AGENDA = 'https://crm.formenstore.com.br/agenda.php?empresa=minhaloja';
+
+let PROMO = {
+  clients:    [],
+  selected:   new Set(),
+  msgs:       [],
+  activeMsgId: null,
+};
+
+async function promoInit() {
+  await promoLoadMsgs();
+  await promoLoadKpi();
+}
+
+async function promoLoadKpi() {
+  try {
+    const d = await fetch(`${API}?action=get_promo_contacts&limite=1&offset=0`).then(r=>r.json());
+    if (d.ok) {
+      document.getElementById('promo-kpi-disp').textContent = d.total_disp ?? '—';
+      document.getElementById('promo-kpi-env').textContent  = d.enviados_hoje ?? '—';
+    }
+  } catch(e) {}
+}
+
+async function promoLoad() {
+  const limite   = parseInt(document.getElementById('promo-limite').value || '30');
+  const loteNum  = parseInt(document.getElementById('promo-lote-num').value || '0');
+  const offset   = loteNum * limite;
+
+  document.getElementById('promo-loading').innerHTML = `<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Carregando lote ${loteNum+1}...</div>`;
+  document.getElementById('promo-loading').style.display = 'block';
+  document.getElementById('promo-table').style.display   = 'none';
+
+  try {
+    const d = await fetch(`${API}?action=get_promo_contacts&limite=${limite}&offset=${offset}`).then(r=>r.json());
+    if (!d.ok) { document.getElementById('promo-loading').innerHTML = `<div class="rv-empty">❌ ${esc(d.error||'Erro.')}</div>`; return; }
+
+    PROMO.clients  = d.clients || [];
+    PROMO.selected = new Set(PROMO.clients.map(c => parseInt(c.id)));
+
+    document.getElementById('promo-kpi-disp').textContent = d.total_disp  ?? '—';
+    document.getElementById('promo-kpi-env').textContent  = d.enviados_hoje ?? '—';
+    document.getElementById('promo-kpi-lote').textContent = PROMO.clients.length;
+
+    promoRender();
+  } catch(e) {
+    document.getElementById('promo-loading').innerHTML = '<div class="rv-empty">❌ Erro de comunicação.</div>';
+  }
+}
+
+function promoRender() {
+  const loading = document.getElementById('promo-loading');
+  const table   = document.getElementById('promo-table');
+  const tbody   = document.getElementById('promo-tbody');
+
+  if (!PROMO.clients.length) {
+    loading.innerHTML = '<div class="rv-empty">✨ Nenhum contato disponível neste lote. Todos já foram enviados hoje ou não há mais contatos.</div>';
+    loading.style.display = 'block';
+    table.style.display   = 'none';
+    return;
+  }
+
+  loading.style.display = 'none';
+  table.style.display   = 'table';
+
+  const msg      = document.getElementById('promo-msg')?.value || '';
+  const validade = document.getElementById('promo-validade')?.value || '';
+
+  tbody.innerHTML = PROMO.clients.map(c => {
+    const textoFull = (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
+      .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
+      .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
+      .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA);
+    const preview = textoFull.replace(/\n/g,' ').slice(0, 80) + (textoFull.length > 80 ? '…' : '');
+    const wa  = (c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4);
+    const chk = PROMO.selected.has(parseInt(c.id)) ? 'checked' : '';
+    const tags = (c.tags||'').split(',').filter(Boolean).slice(0,2)
+      .map(t => `<span style="font-size:.62rem;font-weight:600;background:#f1f5f9;color:#64748b;padding:.12rem .4rem;border-radius:20px;margin-right:.2rem;">${esc(t.trim())}</span>`).join('');
+
+    return `<tr>
+      <td><input type="checkbox" class="promo-ck" data-id="${c.id}" ${chk} onchange="promoToggleRow(${c.id},this)"></td>
+      <td style="font-weight:600;color:#0f172a;">${esc(c.nome)}</td>
+      <td style="font-family:monospace;font-size:.78rem;color:#64748b;">${wa}</td>
+      <td>${tags || '—'}</td>
+      <td style="font-size:.73rem;color:#64748b;font-style:italic;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(textoFull)}">${esc(preview)}</td>
+    </tr>`;
+  }).join('');
+
+  promoUpdateSelBar();
+}
+
+function promoToggleRow(id, cb) { if(cb.checked) PROMO.selected.add(parseInt(id)); else PROMO.selected.delete(parseInt(id)); promoUpdateSelBar(); }
+function promoToggleAll(cb) { PROMO.clients.forEach(c => { if(cb.checked) PROMO.selected.add(parseInt(c.id)); else PROMO.selected.delete(parseInt(c.id)); }); document.querySelectorAll('.promo-ck').forEach(c=>c.checked=cb.checked); promoUpdateSelBar(); }
+function promoSelectAll(v) { document.getElementById('promo-check-all').checked=v; promoToggleAll({checked:v}); }
+function promoUpdateSelBar() {
+  const n = PROMO.selected.size;
+  document.getElementById('promo-sel-count').textContent = n;
+  document.getElementById('promo-sel-bar').style.display = n > 0 ? 'flex' : 'none';
+  document.getElementById('promo-kpi-lote').textContent  = n;
+}
+
+function promoLivePreview() {
+  const msg      = document.getElementById('promo-msg')?.value || '';
+  const validade = document.getElementById('promo-validade')?.value || '';
+  const full = (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
+    .replace(/\{nome\}/g, 'Carlos')
+    .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
+    .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA);
+  const prev = document.getElementById('promo-preview');
+  if (prev) prev.textContent = full || 'Preencha a mensagem ao lado...';
+  // Re-render table preview se tiver clientes
+  if (PROMO.clients.length) promoRender();
+}
+
+/* ── Mensagens salvas ── */
+async function promoLoadMsgs() {
+  const d = await fetch(`${API}?action=get_promo_mensagens`).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!d.ok) return;
+  PROMO.msgs = d.mensagens || [];
+  const sel = document.getElementById('promo-msg-sel');
+  sel.innerHTML = '<option value="">— Escolha ou crie nova —</option>' +
+    PROMO.msgs.map(m => `<option value="${m.id}">${esc(m.titulo)}</option>`).join('');
+}
+
+function promoSelectMsg(id) {
+  if (!id) { promoNewMsg(); return; }
+  const m = PROMO.msgs.find(x => String(x.id) === String(id));
+  if (!m) return;
+  PROMO.activeMsgId = m.id;
+  document.getElementById('promo-titulo').value   = m.titulo   || '';
+  document.getElementById('promo-msg').value      = m.mensagem || '';
+  document.getElementById('promo-validade').value = m.validade || '';
+  document.getElementById('promo-del-btn').style.display = m.id > 0 ? 'inline-flex' : 'none';
+  promoLivePreview();
+}
+
+function promoNewMsg() {
+  PROMO.activeMsgId = null;
+  document.getElementById('promo-msg-sel').value  = '';
+  document.getElementById('promo-titulo').value   = '';
+  document.getElementById('promo-msg').value      = '';
+  document.getElementById('promo-validade').value = '';
+  document.getElementById('promo-del-btn').style.display = 'none';
+  document.getElementById('promo-preview').textContent = 'Preencha a mensagem ao lado...';
+}
+
+async function promoSaveMsg() {
+  const titulo   = document.getElementById('promo-titulo').value.trim();
+  const mensagem = document.getElementById('promo-msg').value.trim();
+  const validade = document.getElementById('promo-validade').value.trim();
+  if (!titulo || !mensagem) { alert('Preencha o título e a mensagem.'); return; }
+
+  const d = await fetch(`${API}?action=save_promo_mensagem`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ id: PROMO.activeMsgId || 0, titulo, mensagem, validade, ativa:1 })
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+
+  if (d.ok) {
+    PROMO.activeMsgId = d.id;
+    await promoLoadMsgs();
+    document.getElementById('promo-msg-sel').value = d.id;
+    document.getElementById('promo-del-btn').style.display = 'inline-flex';
+    alert('✅ Mensagem salva!');
+  } else {
+    alert('Erro: ' + (d.error || 'Falha'));
+  }
+}
+
+async function promoDeleteMsg() {
+  if (!PROMO.activeMsgId) return;
+  if (!confirm('Excluir esta mensagem?')) return;
+  await fetch(`${API}?action=delete_promo_mensagem`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ id: PROMO.activeMsgId })
+  }).then(r=>r.json());
+  promoNewMsg();
+  await promoLoadMsgs();
+}
+
+function promoOpenModal() {
+  if (!PROMO.selected.size) return;
+  const msg      = document.getElementById('promo-msg')?.value || '';
+  const validade = document.getElementById('promo-validade')?.value || '';
+  const titulo   = document.getElementById('promo-titulo')?.value || 'Promoção';
+
+  if (!msg.trim()) { alert('Preencha a mensagem antes de criar o lote.'); return; }
+
+  const primeiro = PROMO.clients.find(c => PROMO.selected.has(parseInt(c.id)));
+  const preview  = (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
+    .replace(/\{nome\}/g, primeiro?.primeiro_nome || 'Cliente')
+    .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
+    .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA);
+
+  document.getElementById('promo-cfg-total').textContent     = PROMO.selected.size + ' contatos';
+  document.getElementById('promo-modal-preview').textContent  = preview;
+  document.getElementById('promo-modal-summary').textContent  = `Promoção "${titulo}" para ${PROMO.selected.size} contato(s).${validade ? ' · ⏰ ' + validade : ''}`;
+  document.getElementById('promo-modal').classList.add('open');
+}
+
+function promoCloseModal() { document.getElementById('promo-modal').classList.remove('open'); }
+
+async function promoConfirmLote() {
+  const btn      = document.getElementById('promo-btn-confirm');
+  const msg      = document.getElementById('promo-msg')?.value || '';
+  const validade = document.getElementById('promo-validade')?.value || '';
+  const titulo   = document.getElementById('promo-titulo')?.value || 'Promoção';
+  const obs      = document.getElementById('promo-modal-obs')?.value || '';
+
+  btn.disabled = true; btn.textContent = 'Criando...';
+
+  const envios = PROMO.clients
+    .filter(c => PROMO.selected.has(parseInt(c.id)))
+    .map(c => ({
+      client_id: c.id,
+      whatsapp:  c.whatsapp,
+      nome:      c.nome,
+      mensagem:  (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
+        .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
+        .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
+        .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA),
+    }));
+
+  try {
+    const r = await fetch(`${API}?action=create_lote_promo`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ envios, observacoes: obs || titulo, msg_titulo: titulo }),
+    });
+    const d = await r.json();
+    promoCloseModal();
+    if (d.ok) {
+      ST.activeLoteId = d.lote_id;
+      alert(`✅ Lote criado com ${d.total} contatos!\n\nVá para Histórico para iniciar o envio.`);
+      switchTab('lotes');
+    } else {
+      alert('Erro: ' + (d.error || 'Falha'));
+    }
+  } catch(e) { alert('Erro de comunicação.'); }
+
+  btn.disabled = false; btn.textContent = 'Criar lote';
 }
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});

@@ -252,6 +252,34 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 } catch (Throwable $e) {}
 
+// Tabela de cooldown diário de promoções
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS promocoes_cooldown (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        whatsapp   VARCHAR(30) NOT NULL,
+        lote_id    INT NOT NULL,
+        enviado_em DATE NOT NULL DEFAULT (CURDATE()),
+        UNIQUE KEY uq_promo_dia (company_id, whatsapp, enviado_em),
+        INDEX idx_company_data (company_id, enviado_em)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Throwable $e) {}
+
+// Tabela de mensagens de promoção
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS promocoes_mensagens (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        titulo     VARCHAR(120) NOT NULL,
+        mensagem   TEXT NOT NULL,
+        validade   VARCHAR(255) NULL,
+        ativa      TINYINT(1) DEFAULT 1,
+        created_at DATETIME DEFAULT NOW(),
+        updated_at DATETIME DEFAULT NOW(),
+        INDEX idx_company (company_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Throwable $e) {}
+
 if ($action === 'setup_tables') {
     $errors = [];
 
@@ -1411,6 +1439,225 @@ if ($action === 'save_pb_messages_config') {
             $saved++;
         }
         echo json_encode(['ok' => true, 'saved' => $saved]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   PROMOÇÕES — GET CONTATOS DISPONÍVEIS HOJE
+═══════════════════════════════════════════════════ */
+if ($action === 'get_promo_contacts') {
+    $limite = max(10, min(100, (int)($_GET['limite'] ?? 30)));
+    $offset = max(0, (int)($_GET['offset'] ?? 0)); // paginação por lote
+
+    try {
+        // Busca todos com WhatsApp válido, exceto os que já receberam hoje
+        $stmt = $pdo->prepare("
+            SELECT
+                c.id,
+                c.nome,
+                c.whatsapp,
+                SUBSTRING_INDEX(TRIM(c.nome),' ',1) AS primeiro_nome,
+                IFNULL(c.tags,'') AS tags,
+                c.ultimo_atendimento_em
+            FROM clients c
+            WHERE c.company_id = ?
+              AND c.whatsapp IS NOT NULL
+              AND c.whatsapp != ''
+              AND LENGTH(REGEXP_REPLACE(c.whatsapp,'[^0-9]','')) >= 10
+              AND NOT EXISTS (
+                SELECT 1 FROM promocoes_cooldown pc
+                WHERE pc.company_id = c.company_id
+                  AND pc.whatsapp   = c.whatsapp
+                  AND pc.enviado_em = CURDATE()
+              )
+            ORDER BY c.nome ASC
+            LIMIT ? OFFSET ?
+        ");
+        $stmt->execute([$companyId, $limite, $offset]);
+        $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Total disponíveis hoje
+        $totalStmt = $pdo->prepare("
+            SELECT COUNT(*) FROM clients c
+            WHERE c.company_id = ?
+              AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
+              AND LENGTH(REGEXP_REPLACE(c.whatsapp,'[^0-9]','')) >= 10
+              AND NOT EXISTS (
+                SELECT 1 FROM promocoes_cooldown pc
+                WHERE pc.company_id = c.company_id
+                  AND pc.whatsapp   = c.whatsapp
+                  AND pc.enviado_em = CURDATE()
+              )
+        ");
+        $totalStmt->execute([$companyId]);
+        $total = (int)$totalStmt->fetchColumn();
+
+        // Total já enviados hoje
+        $enviadosHojeStmt = $pdo->prepare("
+            SELECT COUNT(*) FROM promocoes_cooldown
+            WHERE company_id = ? AND enviado_em = CURDATE()
+        ");
+        $enviadosHojeStmt->execute([$companyId]);
+        $enviadosHoje = (int)$enviadosHojeStmt->fetchColumn();
+
+        // Deduplicação por WhatsApp normalizado
+        $seen   = [];
+        $unique = [];
+        foreach ($clients as $c) {
+            $wa = preg_replace('/\D/', '', $c['whatsapp']);
+            if (strlen($wa) <= 11 && !str_starts_with($wa, '55')) $wa = '55' . $wa;
+            if (isset($seen[$wa])) continue;
+            $seen[$wa] = true;
+            $unique[]  = $c;
+        }
+
+        echo json_encode([
+            'ok'            => true,
+            'clients'       => $unique,
+            'total_disp'    => $total,
+            'enviados_hoje' => $enviadosHoje,
+            'offset_atual'  => $offset,
+            'proximo_offset'=> $offset + $limite,
+        ]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   PROMOÇÕES — GET / SAVE MENSAGENS
+═══════════════════════════════════════════════════ */
+if ($action === 'get_promo_mensagens') {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT id, titulo, mensagem, validade, ativa
+            FROM promocoes_mensagens
+            WHERE company_id = ?
+            ORDER BY id ASC
+        ");
+        $stmt->execute([$companyId]);
+        $msgs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Se não tem nenhuma, retorna defaults
+        if (empty($msgs)) {
+            $msgs = [
+                ['id'=>0,'titulo'=>'🏷️ Promoção Fim de Mês',    'mensagem'=>"Oi, {nome}! 🎉\n\nÉ fim de mês na *Formen Store* e preparamos uma promoção especial pra você!\n\n👕 Confira os lançamentos e aproveite as ofertas:\n👉 {link_loja}\n\nVálido por tempo limitado!", 'validade'=>'Fim de mês', 'ativa'=>1],
+                ['id'=>0,'titulo'=>'✂️ Promoção Barbearia Seg/Ter','mensagem'=>"Oi, {nome}! ✂️\n\nSabia que às *Segundas e Terças* temos condições especiais na *Formen Barbearia*?\n\nAproveite e agende agora:\n👉 {link_agenda}\n\nVálido: Segunda e Terça-feira.", 'validade'=>'Seg. e Ter.', 'ativa'=>1],
+                ['id'=>0,'titulo'=>'🎁 Voucher da Semana',        'mensagem'=>"Oi, {nome}! 😎\n\nTemos um voucher especial essa semana pra você na *Formen*!\n\nMostra essa mensagem na loja ou menciona ao agendar e garanta seu desconto exclusivo.\n\n✂️ Agenda: {link_agenda}\n👕 Loja: {link_loja}", 'validade'=>'Válido essa semana', 'ativa'=>1],
+                ['id'=>0,'titulo'=>'📣 Novidade / Lançamento',    'mensagem'=>"Oi, {nome}! 👋\n\nA *Formen* tem novidades chegando essa semana!\n\nPasse na loja ou confira online:\n👉 {link_loja}\n\nSempre bom ter você por aqui! 😊", 'validade'=>'', 'ativa'=>1],
+            ];
+        }
+        echo json_encode(['ok' => true, 'mensagens' => $msgs]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'save_promo_mensagem') {
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $id       = (int)($body['id']       ?? 0);
+    $titulo   = trim($body['titulo']    ?? '');
+    $mensagem = trim($body['mensagem']  ?? '');
+    $validade = trim($body['validade']  ?? '');
+    $ativa    = isset($body['ativa']) ? (int)$body['ativa'] : 1;
+
+    if (!$titulo || !$mensagem) {
+        echo json_encode(['ok' => false, 'error' => 'Título e mensagem são obrigatórios.']);
+        exit;
+    }
+    try {
+        if ($id > 0) {
+            $pdo->prepare("UPDATE promocoes_mensagens SET titulo=?,mensagem=?,validade=?,ativa=?,updated_at=NOW() WHERE id=? AND company_id=?")
+                ->execute([$titulo, $mensagem, $validade ?: null, $ativa, $id, $companyId]);
+        } else {
+            $pdo->prepare("INSERT INTO promocoes_mensagens (company_id,titulo,mensagem,validade,ativa) VALUES (?,?,?,?,?)")
+                ->execute([$companyId, $titulo, $mensagem, $validade ?: null, $ativa]);
+            $id = (int)$pdo->lastInsertId();
+        }
+        echo json_encode(['ok' => true, 'id' => $id]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'delete_promo_mensagem') {
+    $body = json_decode(file_get_contents('php://input'), true) ?? [];
+    $id   = (int)($body['id'] ?? 0);
+    try {
+        $pdo->prepare("DELETE FROM promocoes_mensagens WHERE id=? AND company_id=?")->execute([$id, $companyId]);
+        echo json_encode(['ok' => true]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   PROMOÇÕES — CRIAR LOTE
+═══════════════════════════════════════════════════ */
+if ($action === 'create_lote_promo') {
+    $body      = json_decode(file_get_contents('php://input'), true) ?? [];
+    $envios    = $body['envios']      ?? [];
+    $obs       = $body['observacoes'] ?? 'Promoção';
+    $msgTitulo = $body['msg_titulo']  ?? 'Promoção';
+
+    if (empty($envios)) {
+        echo json_encode(['ok' => false, 'error' => 'Nenhum cliente selecionado.']);
+        exit;
+    }
+
+    try {
+        $now = gmdate('Y-m-d H:i:s');
+
+        // Deduplicação por WhatsApp antes de inserir
+        $seenWa  = [];
+        $uniqEnv = [];
+        foreach ($envios as $e) {
+            $wa = preg_replace('/\D/', '', $e['whatsapp'] ?? '');
+            if (!$wa || isset($seenWa[$wa])) continue;
+            $seenWa[$wa] = true;
+            $uniqEnv[]   = $e;
+        }
+        $envios = $uniqEnv;
+
+        // Cria lote
+        $pdo->prepare("
+            INSERT INTO reativacao_lotes
+                (company_id, criado_em, status, contexto, total_clientes, enviados, erros, mensagem_idx, observacoes)
+            VALUES (?, ?, 'aguardando', 'promocao', ?, 0, 0, 0, ?)
+        ")->execute([$companyId, $now, count($envios), $obs ?: $msgTitulo]);
+        $loteId = (int)$pdo->lastInsertId();
+
+        // Insere envios
+        $stmtE = $pdo->prepare("
+            INSERT INTO reativacao_envios
+                (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status)
+            VALUES (?, ?, ?, ?, ?, 'promocao', ?, 1, 'pendente')
+        ");
+        foreach ($envios as $e) {
+            $stmtE->execute([$loteId, (int)$e['client_id'], $companyId, $e['whatsapp'], $e['nome'], $e['mensagem']]);
+        }
+
+        // Registra cooldown DIÁRIO — bloqueia o número pelo resto do dia
+        $stmtC = $pdo->prepare("
+            INSERT INTO promocoes_cooldown (company_id, whatsapp, lote_id, enviado_em)
+            VALUES (?, ?, ?, CURDATE())
+            ON DUPLICATE KEY UPDATE lote_id = VALUES(lote_id)
+        ");
+        foreach ($envios as $e) {
+            try {
+                $wa = preg_replace('/\D/', '', $e['whatsapp']);
+                $stmtC->execute([$companyId, $wa, $loteId]);
+            } catch (Throwable $ignored) {}
+        }
+
+        echo json_encode(['ok' => true, 'lote_id' => $loteId, 'total' => count($envios)]);
     } catch (Throwable $e) {
         echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
     }
