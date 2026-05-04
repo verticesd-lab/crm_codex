@@ -172,44 +172,103 @@ function get_evolution_config(?PDO $pdo = null, ?int $companyId = null): array {
  * Envia mensagem via Evolution API
  * Retorna ['ok'=>true] ou ['ok'=>false,'error'=>'msg']
  */
+function whatsapp_number_candidates(string $number): array {
+    $digits = preg_replace('/\D/', '', $number);
+    if ($digits === '') return [];
+    if (!str_starts_with($digits, '55')) $digits = '55' . $digits;
+
+    $candidates = [$digits];
+
+    // Brasil: testa variações com/sem o nono dígito após DDD.
+    if (str_starts_with($digits, '55')) {
+        if (strlen($digits) === 13 && substr($digits, 4, 1) === '9') {
+            $candidates[] = substr($digits, 0, 4) . substr($digits, 5);
+        } elseif (strlen($digits) === 12) {
+            $candidates[] = substr($digits, 0, 4) . '9' . substr($digits, 4);
+        }
+    }
+
+    return array_values(array_unique(array_filter($candidates)));
+}
+
+function response_indicates_whatsapp_missing($data): bool {
+    if (is_array($data)) {
+        foreach ($data as $key => $value) {
+            $keyLower = strtolower((string)$key);
+            if (str_contains($keyLower, 'exists') && ($value === false || $value === 0 || $value === 'false')) {
+                return true;
+            }
+            if (response_indicates_whatsapp_missing($value)) return true;
+        }
+        return false;
+    }
+
+    if (!is_string($data)) return false;
+    $lower = strtolower($data);
+    return preg_match('/"[^"]*exists[^"]*"\s*:\s*false/i', $data)
+        || str_contains($lower, 'not exists')
+        || str_contains($lower, 'does not exist')
+        || str_contains($lower, 'not registered')
+        || str_contains($lower, 'number not found');
+}
+
 function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $companyId = null): array {
     $cfg = get_evolution_config($pdo, $companyId);
     if (!$cfg['base'] || !$cfg['key'] || !$cfg['instance']) {
         return ['ok' => false, 'error' => 'Evolution API não configurada.'];
     }
 
-    // Normaliza número: apenas dígitos, garante DDI 55
-    $digits = preg_replace('/\D/', '', $number);
-    if (!str_starts_with($digits, '55')) $digits = '55' . $digits;
+    $candidates = whatsapp_number_candidates($number);
+    if (empty($candidates)) {
+        return ['ok' => false, 'error' => 'Número de WhatsApp inválido.'];
+    }
 
     $url = "{$cfg['base']}/message/sendText/{$cfg['instance']}";
+    $lastError = '';
 
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => [
-            'Content-Type: application/json',
-            'apikey: ' . $cfg['key'],
-        ],
-        CURLOPT_POSTFIELDS      => json_encode([
-            'number' => $digits,
-            'text'   => $text,
-        ]),
-        CURLOPT_TIMEOUT         => 20,
-        CURLOPT_FOLLOWLOCATION  => true,   // segue redirects (307/301)
-        CURLOPT_MAXREDIRS       => 3,
-        CURLOPT_SSL_VERIFYPEER  => false,  // evita erro de cert em alguns hosts
-    ]);
+    foreach ($candidates as $idx => $digits) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/json',
+                'apikey: ' . $cfg['key'],
+            ],
+            CURLOPT_POSTFIELDS      => json_encode([
+                'number' => $digits,
+                'text'   => $text,
+            ]),
+            CURLOPT_TIMEOUT         => 20,
+            CURLOPT_FOLLOWLOCATION  => true,   // segue redirects (307/301)
+            CURLOPT_MAXREDIRS       => 3,
+            CURLOPT_SSL_VERIFYPEER  => false,  // evita erro de cert em alguns hosts
+        ]);
 
-    $resp    = curl_exec($ch);
-    $httpCode= curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr = curl_error($ch);
-    curl_close($ch);
+        $resp     = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr  = curl_error($ch);
+        curl_close($ch);
 
-    if ($curlErr) return ['ok' => false, 'error' => 'cURL: ' . $curlErr];
-    if ($httpCode >= 200 && $httpCode < 300) return ['ok' => true, 'response' => $resp];
-    return ['ok' => false, 'error' => "HTTP {$httpCode}: " . $resp];
+        if ($curlErr) return ['ok' => false, 'error' => 'cURL: ' . $curlErr];
+
+        $decoded = json_decode((string)$resp, true);
+        $missing = response_indicates_whatsapp_missing(is_array($decoded) ? $decoded : (string)$resp);
+        if ($missing) {
+            $lastError = "WhatsApp não encontrado para {$digits}.";
+            if ($idx < count($candidates) - 1) continue;
+            return ['ok' => false, 'error' => $lastError];
+        }
+
+        if ($httpCode >= 200 && $httpCode < 300) {
+            return ['ok' => true, 'response' => $resp, 'number_used' => $digits];
+        }
+
+        $lastError = "HTTP {$httpCode}: " . $resp;
+        break;
+    }
+
+    return ['ok' => false, 'error' => $lastError ?: 'Falha ao enviar WhatsApp.'];
 }
 
 /* ═══════════════════════════════════════════════════
