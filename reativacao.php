@@ -1117,7 +1117,7 @@ function openModal(){
     const dist  = Array.from({length:n},(_,i)=>`<span style="color:${colors[i]};font-weight:700;">Var.${['A','B','C'][i]}: ${base+(i<extra?1:0)}</span>`).join(' · ');
     document.getElementById('modal-preview').innerHTML = `
       <div style="margin-bottom:.75rem;font-size:.78rem;">📊 Distribuição: ${dist}</div>
-      ${vars.map((v,i)=>`<div style="margin-bottom:.6rem;padding:.6rem .85rem;border-left:3px solid ${colors[i]};background:#f8fafc;border-radius:0 6px 6px 0;font-size:.78rem;color:#475569;white-space:pre-line;">${esc(v.replace(/\{nome\}/g,'Carlos').slice(0,120))}${v.length>120?'…':''}</div>`).join('')}
+      ${vars.map((v,i)=>`<div style="margin-bottom:.6rem;padding:.6rem .85rem;border-left:3px solid ${colors[i]};background:#f8fafc;border-radius:0 6px 6px 0;font-size:.78rem;color:#475569;white-space:pre-line;">${esc(v.replace(/\{nome\}/gi,'Carlos').slice(0,120))}${v.length>120?'…':''}</div>`).join('')}
     `;
   } else {
     const first = ST.eligible.find(c=>ST.selected.has(parseInt(c.id)));
@@ -1541,7 +1541,7 @@ function renderMessages(ctxFilter) {
       vars.forEach(m => {
         const key = `${m.contexto}_${m.tentativa}_${m.variacao_idx}`;
         const cur = MSG_DIRTY[key] ?? m.mensagem;
-        const preview = cur.replace(/\{nome\}/g, nome);
+        const preview = cur.replace(/\{nome\}/gi, nome);
         const isModified = MSG_DIRTY[key] !== undefined && MSG_DIRTY[key] !== m.default;
         const isCustom   = m.is_custom || isModified;
 
@@ -1584,7 +1584,7 @@ function onMsgInput(key, ta) {
   // Update preview
   const nome = document.getElementById('msg-preview-nome').value || 'Carlos';
   const prev = document.getElementById('prev-' + key);
-  if (prev) prev.textContent = ta.value.replace(/\{nome\}/g, nome);
+  if (prev) prev.textContent = ta.value.replace(/\{nome\}/gi, nome);
   // Mark as modified visually
   ta.classList.toggle('modified', true);
   // Update custom badge
@@ -1601,7 +1601,7 @@ function refreshAllPreviews() {
   document.querySelectorAll('[id^="ta-"]').forEach(ta => {
     const key = ta.id.replace('ta-','');
     const prev = document.getElementById('prev-' + key);
-    if (prev) prev.textContent = ta.value.replace(/\{nome\}/g, nome);
+    if (prev) prev.textContent = ta.value.replace(/\{nome\}/gi, nome);
   });
 }
 
@@ -1628,7 +1628,7 @@ async function sendTest(key) {
   const ta = document.getElementById('ta-'+key);
   if (!ta) return;
   const nome = document.getElementById('msg-preview-nome').value || 'Carlos';
-  const msg  = ta.value.replace(/\{nome\}/g, nome);
+  const msg  = ta.value.replace(/\{nome\}/gi, nome);
 
   const btn = document.querySelector(`#card-${key} .btn-test`);
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando...'; }
@@ -1803,9 +1803,9 @@ function promoCurrentMsg() {
 function promoApplyVars(text, client = null) {
   const nome = client?.primeiro_nome || String(client?.nome || 'Carlos').trim().split(/\s+/)[0] || 'Cliente';
   return String(text || '')
-    .replace(/\{nome\}/g, nome)
-    .replace(/\{link_loja\}/g, promoLojaLink())
-    .replace(/\{link_agenda\}/g, promoAgendaLink());
+    .replace(/\{nome\}/gi, nome)
+    .replace(/\{link_loja\}/gi, promoLojaLink())
+    .replace(/\{link_agenda\}/gi, promoAgendaLink());
 }
 
 function promoBuildMessage(client = null) {
@@ -2162,8 +2162,8 @@ function pbBuildPreview(idx, nome) {
   const validade = val ? val.value : (PB_MSGS[idx]?.validade || '');
 
   let msg = texto
-    .replace(/\{nome\}/g, nome || 'Carlos')
-    .replace(/\{link_agenda\}/g, AGENDA_LINK);
+    .replace(/\{nome\}/gi, nome || 'Carlos')
+    .replace(/\{link_agenda\}/gi, AGENDA_LINK);
 
   if (validade.trim()) {
     msg += `\n\n⏰ *${validade.trim()}*`;
@@ -2194,8 +2194,8 @@ function pbRenderPreviews() {
   wrap.innerHTML = PB_MSGS.map((m, i) => {
     const isActive = i === varidx;
     const preview  = m.texto
-      .replace(/\{nome\}/g, 'Carlos')
-      .replace(/\{link_agenda\}/g, AGENDA_LINK)
+      .replace(/\{nome\}/gi, 'Carlos')
+      .replace(/\{link_agenda\}/gi, AGENDA_LINK)
       + (m.validade ? `\n\n⏰ *${m.validade}*` : '');
 
     return `<div style="border:${isActive?'2px solid #22c55e':'1.5px solid #e2e8f0'};border-radius:10px;padding:.85rem 1rem;background:${isActive?'#f0fdf4':'#f8fafc'};">
@@ -2284,8 +2284,8 @@ function pbRender() {
 
   tbody.innerHTML = PB.clients.map(c => {
     const textoFull = (msg.texto + (msg.validade ? `\n\n⏰ *${msg.validade}*` : ''))
-      .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
-      .replace(/\{link_agenda\}/g, AGENDA_LINK);
+      .replace(/\{nome\}/gi, c.primeiro_nome || c.nome || 'Cliente')
+      .replace(/\{link_agenda\}/gi, AGENDA_LINK);
     const preview  = textoFull.replace(/\n/g,' ').slice(0, 90) + '…';
     const wa = (c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4);
     const chk = PB.selected.has(parseInt(c.id)) ? 'checked' : '';
@@ -2313,8 +2313,8 @@ function pbOpenModal() {
   const msg      = PB_MSGS[varidx]||PB_MSGS[0];
   const primeiro = PB.clients.find(c=>PB.selected.has(parseInt(c.id)));
   const preview  = (msg.texto+(msg.validade?`\n\n⏰ *${msg.validade}*`:'')) 
-    .replace(/\{nome\}/g, primeiro?.primeiro_nome||'Cliente')
-    .replace(/\{link_agenda\}/g, AGENDA_LINK);
+    .replace(/\{nome\}/gi, primeiro?.primeiro_nome||'Cliente')
+    .replace(/\{link_agenda\}/gi, AGENDA_LINK);
 
   document.getElementById('pb-cfg-total').textContent     = PB.selected.size+' clientes';
   document.getElementById('pb-modal-preview').textContent  = preview;
@@ -2338,8 +2338,8 @@ async function pbConfirmLote() {
       whatsapp:  c.whatsapp,
       nome:      c.nome,
       mensagem:  (msg.texto+(msg.validade?`\n\n⏰ *${msg.validade}*`:'')) 
-        .replace(/\{nome\}/g, c.primeiro_nome||c.nome||'Cliente')
-        .replace(/\{link_agenda\}/g, AGENDA_LINK),
+        .replace(/\{nome\}/gi, c.primeiro_nome||c.nome||'Cliente')
+        .replace(/\{link_agenda\}/gi, AGENDA_LINK),
     }));
 
   try {
@@ -2425,9 +2425,9 @@ function promoRender() {
 
   tbody.innerHTML = PROMO.clients.map(c => {
     const textoFull = (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
-      .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
-      .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
-      .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA);
+      .replace(/\{nome\}/gi, c.primeiro_nome || c.nome || 'Cliente')
+      .replace(/\{link_loja\}/gi, PROMO_LINK_LOJA)
+      .replace(/\{link_agenda\}/gi, PROMO_LINK_AGENDA);
     const preview = textoFull.replace(/\n/g,' ').slice(0, 80) + (textoFull.length > 80 ? '…' : '');
     const wa  = (c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4);
     const chk = PROMO.selected.has(parseInt(c.id)) ? 'checked' : '';
@@ -2460,9 +2460,9 @@ function promoLivePreview() {
   const msg      = document.getElementById('promo-msg')?.value || '';
   const validade = document.getElementById('promo-validade')?.value || '';
   const full = (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
-    .replace(/\{nome\}/g, 'Carlos')
-    .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
-    .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA);
+    .replace(/\{nome\}/gi, 'Carlos')
+    .replace(/\{link_loja\}/gi, PROMO_LINK_LOJA)
+    .replace(/\{link_agenda\}/gi, PROMO_LINK_AGENDA);
   const prev = document.getElementById('promo-preview');
   if (prev) prev.textContent = full || 'Preencha a mensagem ao lado...';
   // Re-render table preview se tiver clientes
@@ -2544,9 +2544,9 @@ function promoOpenModal() {
 
   const primeiro = PROMO.clients.find(c => PROMO.selected.has(parseInt(c.id)));
   const preview  = (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
-    .replace(/\{nome\}/g, primeiro?.primeiro_nome || 'Cliente')
-    .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
-    .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA);
+    .replace(/\{nome\}/gi, primeiro?.primeiro_nome || 'Cliente')
+    .replace(/\{link_loja\}/gi, PROMO_LINK_LOJA)
+    .replace(/\{link_agenda\}/gi, PROMO_LINK_AGENDA);
 
   document.getElementById('promo-cfg-total').textContent     = PROMO.selected.size + ' contatos';
   document.getElementById('promo-modal-preview').textContent  = preview;
@@ -2572,9 +2572,9 @@ async function promoConfirmLote() {
       whatsapp:  c.whatsapp,
       nome:      c.nome,
       mensagem:  (msg + (validade ? `\n\n⏰ *${validade}*` : ''))
-        .replace(/\{nome\}/g, c.primeiro_nome || c.nome || 'Cliente')
-        .replace(/\{link_loja\}/g, PROMO_LINK_LOJA)
-        .replace(/\{link_agenda\}/g, PROMO_LINK_AGENDA),
+        .replace(/\{nome\}/gi, c.primeiro_nome || c.nome || 'Cliente')
+        .replace(/\{link_loja\}/gi, PROMO_LINK_LOJA)
+        .replace(/\{link_agenda\}/gi, PROMO_LINK_AGENDA),
     }));
 
   try {

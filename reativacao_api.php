@@ -132,7 +132,7 @@ function build_message(string $context, int $tentativa, string $nome, int $varId
     $idx  = $varIdx >= 0 ? ($varIdx % count($pool)) : array_rand($pool);
     $msg  = $pool[$idx];
     $firstName = explode(' ', trim($nome))[0];
-    return str_replace('{nome}', $firstName, $msg);
+    return preg_replace('/\{nome\}/i', $firstName, $msg);
 }
 
 /**
@@ -923,7 +923,7 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Distribui homogeneamente: cada variação recebe floor(total/numVar) + 1 se sobrar
                 $varIdx = $idx % $numVar;
                 $firstName = explode(' ', trim($cl['nome']))[0];
-                $msg = str_replace('{nome}', $firstName, $variations[$varIdx]);
+                $msg = preg_replace('/\{nome\}/i', $firstName, $variations[$varIdx]);
             } else {
                 $msg = build_message($ctx, $tentativa, $cl['nome'], $idx % 3, $pdo, $companyId);
             }
@@ -1694,7 +1694,10 @@ if ($action === 'create_lote_promo') {
             VALUES (?, ?, ?, ?, ?, 'promocao', ?, 1, 'pendente')
         ");
         foreach ($envios as $e) {
-            $stmtE->execute([$loteId, (int)$e['client_id'], $companyId, $e['whatsapp'], $e['nome'], $e['mensagem']]);
+            $nomeEnvio = $e['nome'] ?? '';
+            $firstName = explode(' ', trim($nomeEnvio))[0] ?: 'Cliente';
+            $mensagem  = preg_replace('/\{nome\}/i', $firstName, $e['mensagem'] ?? '');
+            $stmtE->execute([$loteId, (int)$e['client_id'], $companyId, $e['whatsapp'], $nomeEnvio, $mensagem]);
         }
 
         // Registra cooldown DIÁRIO — bloqueia o número pelo resto do dia
