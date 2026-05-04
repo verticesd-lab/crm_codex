@@ -285,10 +285,13 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
 <!-- ═══ CRIAR LOTE ═══ -->
 <div id="tab-criar" class="rv-panel">
   <div style="margin-bottom:1.25rem">
-    <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Selecionar clientes para o lote</h2>
-    <p style="font-size:.78rem;color:#64748b;margin-top:.15rem">Filtre, revise as mensagens e crie o lote para envio</p>
+    <h2 style="font-size:1rem;font-weight:700;color:#0f172a">Selecionar contatos para o lote</h2>
+    <p style="font-size:.78rem;color:#64748b;margin-top:.15rem">
+      Seleção <strong>aleatória</strong> — contatos enviados nas últimas 24h são excluídos automaticamente.
+    </p>
   </div>
 
+  <!-- Filtros -->
   <div class="rv-filters">
     <div class="rv-fg"><label>Dias sem visita</label>
       <select class="rv-select" id="f-dias">
@@ -312,21 +315,41 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
         <option value="2">2ª mensagem</option>
       </select>
     </div>
-    <div class="rv-fg"><label>Tamanho</label>
+    <div class="rv-fg"><label>Tamanho do lote</label>
       <select class="rv-select" id="f-limite">
-        <option value="15">15 clientes</option>
-        <option value="20" selected>20 clientes</option>
-        <option value="30">30 clientes</option>
+        <option value="20">20 contatos</option>
+        <option value="30" selected>30 contatos</option>
+        <option value="50">50 contatos</option>
       </select>
     </div>
     <div class="rv-fg" style="justify-content:flex-end;padding-top:18px">
-      <button class="btn btn-primary" onclick="loadEligible()">🔍 Buscar</button>
+      <button class="btn btn-primary" onclick="loadEligible()">🎲 Sortear contatos</button>
     </div>
   </div>
 
+  <!-- Info disponíveis -->
+  <div id="rv-avail-info" style="display:none;margin-bottom:.75rem;padding:.6rem 1rem;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:.8rem;color:#166534;font-weight:600;"></div>
+
+  <!-- ═══ EDITOR DE VARIAÇÕES ═══ -->
+  <div class="rv-card" style="margin-bottom:1.25rem;">
+    <div class="rv-card-hd">
+      <h3>✍️ Variações de mensagem <span style="font-size:.72rem;font-weight:400;color:#94a3b8;">— até 3 versões por lote, distribuídas homogeneamente</span></h3>
+      <div style="display:flex;gap:.5rem;">
+        <button onclick="addVariation()" id="btn-add-var"
+          style="padding:.35rem .8rem;border-radius:7px;border:1.5px solid #6366f1;background:#f5f3ff;color:#6366f1;font-size:.75rem;font-weight:700;cursor:pointer;">
+          + Adicionar variação
+        </button>
+      </div>
+    </div>
+    <div id="variations-wrap" style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.85rem;"></div>
+    <div id="variation-dist-info" style="display:none;padding:.5rem 1.25rem 1rem;font-size:.78rem;color:#6366f1;font-weight:600;"></div>
+  </div>
+
+  <!-- Barra de seleção -->
   <div id="rv-sel-bar" class="rv-sel-bar" style="display:none">
-    <span><strong id="rv-sel-count">0</strong> clientes selecionados</span>
-    <div style="display:flex;gap:.5rem">
+    <span><strong id="rv-sel-count">0</strong> contatos selecionados</span>
+    <div style="display:flex;gap:.5rem;align-items:center;">
+      <button class="btn btn-ghost btn-sm" onclick="loadEligible()">🎲 Novo sorteio</button>
       <button class="btn btn-ghost btn-sm" onclick="selectAll(true)">Todos</button>
       <button class="btn btn-ghost btn-sm" onclick="selectAll(false)">Limpar</button>
       <button class="btn btn-primary btn-sm" onclick="openModal()">Criar lote →</button>
@@ -334,11 +357,13 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   </div>
 
   <div class="rv-table-wrap">
-    <div id="rv-eligible-loading" class="rv-empty">Clique em <strong>Buscar</strong> para carregar os clientes elegíveis.</div>
+    <div id="rv-eligible-loading" class="rv-empty">
+      Configure os filtros e as mensagens acima, depois clique em <strong>🎲 Sortear contatos</strong>.
+    </div>
     <table class="rv-table" id="rv-eligible-table" style="display:none">
       <thead><tr>
         <th style="width:36px"><input type="checkbox" id="check-all" onchange="toggleAll(this)"></th>
-        <th>Nome</th><th>WhatsApp</th><th>Contexto</th><th>Sem visita</th><th>Prévia da mensagem</th>
+        <th>Nome</th><th>WhatsApp</th><th>Contexto</th><th>Sem visita</th><th>Variação</th>
       </tr></thead>
       <tbody id="rv-eligible-tbody"></tbody>
     </table>
@@ -893,58 +918,249 @@ function switchTab(tab){
   if(tab==='promocoes') { promoInit(); }
 }
 
-async function loadEligible(){
-  const dias=document.getElementById('f-dias').value,ctx=document.getElementById('f-contexto').value,tent=document.getElementById('f-tentativa').value,limite=document.getElementById('f-limite').value;
-  const loading=document.getElementById('rv-eligible-loading');
-  loading.innerHTML='<div style="padding:2rem;text-align:center;color:#94a3b8">🔍 Buscando...</div>';
-  loading.style.display='block';
-  document.getElementById('rv-eligible-table').style.display='none';
-  try{
-    const r=await fetch(`${API}?action=get_eligible&dias=${dias}&contexto=${ctx}&tentativa=${tent}&limite=${limite}`);
-    const d=await r.json();
-    if(!d.ok){loading.innerHTML=`<div class="rv-empty">❌ Erro: ${esc(d.error||'Falha')}</div>`;return;}
-    ST.eligible=d.clients||[];
-    ST.selected=new Set(ST.eligible.map(c=>parseInt(c.id)));
-    renderEligible();
-  }catch(e){loading.innerHTML='<div class="rv-empty">❌ Erro de comunicação.</div>';}
+/* ════════════════════════════════════════
+   VARIAÇÕES DE MENSAGEM
+════════════════════════════════════════ */
+let VARIATIONS = []; // array de strings
+
+function addVariation() {
+  if (VARIATIONS.length >= 3) {
+    alert('Máximo de 3 variações por lote.'); return;
+  }
+  VARIATIONS.push('');
+  renderVariations();
 }
+
+function removeVariation(idx) {
+  VARIATIONS.splice(idx, 1);
+  renderVariations();
+}
+
+function renderVariations() {
+  const wrap   = document.getElementById('variations-wrap');
+  const btnAdd = document.getElementById('btn-add-var');
+  const dist   = document.getElementById('variation-dist-info');
+  if (!wrap) return;
+
+  if (!VARIATIONS.length) {
+    wrap.innerHTML = `<div style="color:#94a3b8;font-size:.82rem;text-align:center;padding:.75rem;">
+      Nenhuma variação adicionada — clique em <strong>+ Adicionar variação</strong> para criar.<br>
+      <em style="font-size:.75rem;">Sem variação, será usada a mensagem padrão do contexto de cada contato.</em>
+    </div>`;
+    dist.style.display = 'none';
+    if (btnAdd) btnAdd.style.display = 'inline-flex';
+    if (ST.eligible.length) renderEligible();
+    return;
+  }
+
+  if (btnAdd) btnAdd.style.display = VARIATIONS.length < 3 ? 'inline-flex' : 'none';
+
+  const colors = ['#6366f1','#0891b2','#16a34a'];
+  const labels = ['Variação A','Variação B','Variação C'];
+
+  wrap.innerHTML = VARIATIONS.map((v, i) => `
+    <div style="border:1.5px solid ${colors[i]}33;border-radius:10px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:.55rem .9rem;background:${colors[i]}11;border-bottom:1px solid ${colors[i]}22;">
+        <span style="font-size:.78rem;font-weight:700;color:${colors[i]};">${labels[i]}</span>
+        <button onclick="removeVariation(${i})"
+          style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
+          ✕ Remover
+        </button>
+      </div>
+      <textarea id="var-ta-${i}"
+        oninput="syncVariation(${i},this.value)"
+        placeholder="Escreva a variação ${labels[i]}... Use {nome} para o primeiro nome do contato."
+        rows="4"
+        style="width:100%;padding:.75rem 1rem;border:none;outline:none;font-size:.83rem;font-family:inherit;resize:vertical;background:#fff;line-height:1.55;box-sizing:border-box;"
+      >${esc(v)}</textarea>
+    </div>
+  `).join('');
+
+  // Mostra distribuição
+  updateDistInfo();
+  if (ST.eligible.length) renderEligible();
+}
+
+function syncVariation(idx, val) {
+  VARIATIONS[idx] = val;
+  updateDistInfo();
+  if (ST.eligible.length) renderEligible();
+}
+
+function updateDistInfo() {
+  const dist  = document.getElementById('variation-dist-info');
+  const total = ST.selected.size || parseInt(document.getElementById('f-limite')?.value || '30');
+  const n     = VARIATIONS.filter(v => v.trim()).length;
+  if (!dist || n === 0) { if (dist) dist.style.display='none'; return; }
+
+  const base  = Math.floor(total / n);
+  const extra = total % n;
+  const parts = Array.from({length:n}, (_,i) => `${['A','B','C'][i]}: ${base + (i < extra ? 1 : 0)} msgs`);
+  dist.textContent = `📊 Distribuição para ${total} contatos: ${parts.join(' · ')}`;
+  dist.style.display = 'block';
+}
+
+// Init: começa com 1 variação
+document.addEventListener('DOMContentLoaded', () => {
+  VARIATIONS = [''];
+  renderVariations();
+});
+
+/* ════════════════════════════════════════
+   GET ELIGIBLE — aleatório, sem paginação
+════════════════════════════════════════ */
+async function loadEligible(){
+  const dias   = document.getElementById('f-dias').value;
+  const ctx    = document.getElementById('f-contexto').value;
+  const tent   = document.getElementById('f-tentativa').value;
+  const limite = document.getElementById('f-limite').value;
+
+  const loading = document.getElementById('rv-eligible-loading');
+  const avail   = document.getElementById('rv-avail-info');
+  loading.innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8">🎲 Sorteando contatos aleatoriamente...</div>';
+  loading.style.display = 'block';
+  document.getElementById('rv-eligible-table').style.display = 'none';
+  if (avail) avail.style.display = 'none';
+
+  try {
+    const r = await fetch(`${API}?action=get_eligible&dias=${dias}&contexto=${ctx}&tentativa=${tent}&limite=${limite}`);
+    const d = await r.json();
+    if (!d.ok) {
+      loading.innerHTML = `<div class="rv-empty">❌ Erro: ${esc(d.error||'Falha')}</div>`; return;
+    }
+    ST.eligible = d.clients || [];
+    ST.selected = new Set(ST.eligible.map(c => parseInt(c.id)));
+
+    if (avail && d.total_disponivel !== undefined) {
+      avail.textContent = `✅ ${d.total} contatos sorteados aleatoriamente · ${d.total_disponivel} disponíveis no total (excluindo últimas 24h)`;
+      avail.style.display = 'block';
+    }
+
+    updateDistInfo(); // atualiza distribuição com o total real
+    renderEligible();
+  } catch(e) {
+    loading.innerHTML = '<div class="rv-empty">❌ Erro de comunicação.</div>';
+  }
+}
+
 function renderEligible(){
-  const loading=document.getElementById('rv-eligible-loading'),table=document.getElementById('rv-eligible-table'),tbody=document.getElementById('rv-eligible-tbody');
-  if(!ST.eligible.length){loading.innerHTML='<div class="rv-empty">Nenhum cliente elegível com estes filtros.</div>';loading.style.display='block';table.style.display='none';return;}
-  loading.style.display='none';table.style.display='table';
-  tbody.innerHTML=ST.eligible.map(c=>{
-    const ctx=c.contexto_detectado||'whatsapp',dias=c.dias_ausente>=999?'nunca':c.dias_ausente+'d',diasC=c.dias_ausente>=180?'dias-hot':c.dias_ausente>=90?'dias-warm':'dias-cold';
-    const wa=(c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4),ctxN={pdv:'PDV',barbearia:'Barbearia',whatsapp:'WhatsApp'}[ctx]||ctx;
-    const prev=(c.msg_preview||'').replace(/\n/g,' '),chk=ST.selected.has(parseInt(c.id))?'checked':'';
-    return `<tr><td><input type="checkbox" class="row-ck" data-id="${c.id}" ${chk} onchange="toggleRow(${c.id},this)"></td><td style="font-weight:600;color:#0f172a">${esc(c.nome)}</td><td style="font-family:monospace;font-size:.78rem;color:#64748b">${wa}</td><td><span class="ctx-badge ctx-${ctx}">${ctxN}</span></td><td><span class="dias-badge ${diasC}">${dias}</span></td><td style="font-size:.75rem;color:#64748b;font-style:italic;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.msg_preview)}">${esc(prev)}</td></tr>`;
+  const loading = document.getElementById('rv-eligible-loading');
+  const table   = document.getElementById('rv-eligible-table');
+  const tbody   = document.getElementById('rv-eligible-tbody');
+  const n       = VARIATIONS.filter(v=>v.trim()).length || 1;
+  const colors  = ['#6366f1','#0891b2','#16a34a'];
+  const labels  = ['A','B','C'];
+
+  if (!ST.eligible.length) {
+    loading.innerHTML = '<div class="rv-empty">Nenhum contato elegível com estes filtros.</div>';
+    loading.style.display = 'block'; table.style.display = 'none'; return;
+  }
+  loading.style.display = 'none';
+  table.style.display   = 'table';
+
+  tbody.innerHTML = ST.eligible.map((c, idx) => {
+    const varIdx  = idx % n;
+    const varLabel = n > 1 ? `<span style="font-size:.65rem;font-weight:700;background:${colors[varIdx]}22;color:${colors[varIdx]};padding:.15rem .45rem;border-radius:4px;">Var. ${labels[varIdx]}</span>` : '—';
+    const ctxCls  = c.contexto_detectado || 'whatsapp';
+    const ctxN    = {pdv:'PDV',barbearia:'Barbearia',whatsapp:'WhatsApp'}[ctxCls] || ctxCls;
+    const dias    = c.dias_ausente >= 999 ? 'nunca' : c.dias_ausente+'d';
+    const diasC   = c.dias_ausente >= 180 ? 'dias-hot' : c.dias_ausente >= 90 ? 'dias-warm' : 'dias-cold';
+    const wa      = (c.whatsapp||'').slice(0,4)+'****'+(c.whatsapp||'').slice(-4);
+    const chk     = ST.selected.has(parseInt(c.id)) ? 'checked' : '';
+    return `<tr>
+      <td><input type="checkbox" class="row-ck" data-id="${c.id}" ${chk} onchange="toggleRow(${c.id},this)"></td>
+      <td style="font-weight:600;color:#0f172a;">${esc(c.nome)}</td>
+      <td style="font-family:monospace;font-size:.78rem;color:#64748b;">${wa}</td>
+      <td><span class="ctx-badge ctx-${ctxCls}">${ctxN}</span></td>
+      <td><span class="dias-badge ${diasC}">${dias}</span></td>
+      <td>${varLabel}</td>
+    </tr>`;
   }).join('');
   updateSelBar();
 }
-function toggleRow(id,cb){if(cb.checked)ST.selected.add(parseInt(id));else ST.selected.delete(parseInt(id));updateSelBar();}
-function toggleAll(cb){ST.eligible.forEach(c=>{if(cb.checked)ST.selected.add(parseInt(c.id));else ST.selected.delete(parseInt(c.id));});document.querySelectorAll('.row-ck').forEach(c=>c.checked=cb.checked);updateSelBar();}
-function selectAll(v){document.getElementById('check-all').checked=v;toggleAll({checked:v});}
-function updateSelBar(){document.getElementById('rv-sel-count').textContent=ST.selected.size;document.getElementById('rv-sel-bar').style.display=ST.selected.size>0?'flex':'none';}
 
+function toggleRow(id,cb){
+  if(cb.checked) ST.selected.add(parseInt(id));
+  else           ST.selected.delete(parseInt(id));
+  updateSelBar(); updateDistInfo();
+}
+function toggleAll(cb){
+  ST.eligible.forEach(c=>{if(cb.checked)ST.selected.add(parseInt(c.id));else ST.selected.delete(parseInt(c.id));});
+  document.querySelectorAll('.row-ck').forEach(c=>c.checked=cb.checked);
+  updateSelBar(); updateDistInfo();
+}
+function selectAll(v){document.getElementById('check-all').checked=v;toggleAll({checked:v});}
+function updateSelBar(){
+  document.getElementById('rv-sel-count').textContent=ST.selected.size;
+  document.getElementById('rv-sel-bar').style.display=ST.selected.size>0?'flex':'none';
+  updateDistInfo();
+}
+
+/* ════════════════════════════════════════
+   MODAL + CRIAR LOTE COM VARIAÇÕES
+════════════════════════════════════════ */
 function openModal(){
-  if(!ST.selected.size)return;
-  const tent=parseInt(document.getElementById('f-tentativa').value),first=ST.eligible.find(c=>ST.selected.has(parseInt(c.id)));
-  document.getElementById('cfg-total').textContent=ST.selected.size+' clientes';
-  document.getElementById('cfg-tent').textContent=tent+'ª mensagem';
-  document.getElementById('modal-preview').textContent=first?first.msg_preview:'';
-  document.getElementById('modal-summary').textContent=`Lote com ${ST.selected.size} clientes para a ${tent}ª mensagem de reativação.`;
+  if(!ST.selected.size) return;
+  const tent      = parseInt(document.getElementById('f-tentativa').value);
+  const total     = ST.selected.size;
+  const vars      = VARIATIONS.filter(v=>v.trim());
+  const n         = vars.length;
+  const colors    = ['#6366f1','#0891b2','#16a34a'];
+
+  document.getElementById('cfg-total').textContent = total+' contatos';
+  document.getElementById('cfg-tent').textContent  = tent+'ª mensagem';
+
+  // Preview da distribuição no modal
+  if (n > 0) {
+    const base  = Math.floor(total/n);
+    const extra = total%n;
+    const dist  = Array.from({length:n},(_,i)=>`<span style="color:${colors[i]};font-weight:700;">Var.${['A','B','C'][i]}: ${base+(i<extra?1:0)}</span>`).join(' · ');
+    document.getElementById('modal-preview').innerHTML = `
+      <div style="margin-bottom:.75rem;font-size:.78rem;">📊 Distribuição: ${dist}</div>
+      ${vars.map((v,i)=>`<div style="margin-bottom:.6rem;padding:.6rem .85rem;border-left:3px solid ${colors[i]};background:#f8fafc;border-radius:0 6px 6px 0;font-size:.78rem;color:#475569;white-space:pre-line;">${esc(v.replace(/\{nome\}/g,'Carlos').slice(0,120))}${v.length>120?'…':''}</div>`).join('')}
+    `;
+  } else {
+    const first = ST.eligible.find(c=>ST.selected.has(parseInt(c.id)));
+    document.getElementById('modal-preview').textContent = first?.msg_preview || '(mensagem padrão do contexto)';
+  }
+
+  document.getElementById('modal-summary').textContent = `${total} contatos · ${n > 0 ? n+' variações de mensagem' : 'mensagem padrão'} · ${tent}ª tentativa`;
   document.getElementById('rv-modal').classList.add('open');
 }
 function closeModal(){document.getElementById('rv-modal').classList.remove('open');}
+
 async function confirmLote(){
-  const btn=document.getElementById('btn-confirm');btn.disabled=true;btn.textContent='Criando...';
-  const tent=parseInt(document.getElementById('f-tentativa').value),obs=document.getElementById('modal-obs').value,ctx=document.getElementById('f-contexto').value;
-  try{
-    const r=await fetch(`${API}?action=create_lote`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_ids:[...ST.selected],tentativa:tent,observacoes:obs,contexto:ctx})});
-    const d=await r.json();closeModal();
-    if(d.ok){ST.activeLoteId=d.lote_id;alert(`✅ Lote criado com ${d.total} clientes!\n\nVá para Histórico para iniciar o envio.`);switchTab('lotes');}
-    else alert('Erro: '+(d.error||'Falha'));
-  }catch(e){alert('Erro de comunicação.');}
-  btn.disabled=false;btn.textContent='Criar lote';
+  const btn  = document.getElementById('btn-confirm');
+  btn.disabled = true; btn.textContent = 'Criando...';
+  const tent = parseInt(document.getElementById('f-tentativa').value);
+  const obs  = document.getElementById('modal-obs').value;
+  const ctx  = document.getElementById('f-contexto').value;
+  const vars = VARIATIONS.map(v=>v.trim()).filter(Boolean);
+
+  try {
+    const r = await fetch(`${API}?action=create_lote`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        client_ids:  [...ST.selected],
+        tentativa:   tent,
+        observacoes: obs,
+        contexto:    ctx,
+        variations:  vars, // array de 0-3 mensagens
+      })
+    });
+    const d = await r.json();
+    closeModal();
+    if (d.ok) {
+      ST.activeLoteId = d.lote_id;
+      const varInfo = d.variations_used > 1 ? ` com ${d.variations_used} variações` : '';
+      alert(`✅ Lote criado com ${d.total} contatos${varInfo}!\n\nVá para Histórico para iniciar o envio.`);
+      switchTab('lotes');
+    } else {
+      alert('Erro: '+(d.error||'Falha'));
+    }
+  } catch(e) { alert('Erro de comunicação.'); }
+  btn.disabled=false; btn.textContent='Criar lote';
 }
 
 function fmtLocalDateTime(v){

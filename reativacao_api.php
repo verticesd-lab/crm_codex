@@ -475,13 +475,24 @@ if ($action === 'get_eligible') {
             $where .= " AND c.tags LIKE '%whatsapp%' AND c.tags NOT LIKE '%pdv%' AND c.tags NOT LIKE '%barbearia%'";
         }
 
+        // Exclui contatos que já estão em lotes das últimas 24h
+        $where .= " AND c.id NOT IN (
+            SELECT DISTINCT re.client_id
+            FROM reativacao_envios re
+            INNER JOIN reativacao_lotes rl ON rl.id = re.lote_id
+            WHERE rl.company_id = ?
+              AND rl.criado_em > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+              AND rl.status != 'cancelado'
+        )";
+        $params[] = $companyId;
+
         $stmt = $pdo->prepare("
             SELECT c.id, c.nome, c.whatsapp, c.tags, c.ultimo_atendimento_em,
                    c.reativ_status, c.reativ_tentativas,
                    0 as has_appt
             FROM clients c
             WHERE {$where}
-            ORDER BY c.ultimo_atendimento_em ASC
+            ORDER BY RAND()
             LIMIT {$limite}
         ");
         $stmt->execute($params);
@@ -502,7 +513,30 @@ if ($action === 'get_eligible') {
         }
         unset($cl);
 
-        echo json_encode(['ok' => true, 'clients' => $clients, 'total' => count($clients)]);
+        // Conta quantos ainda disponíveis (para info ao usuário)
+        $countAvail = $pdo->prepare("
+            SELECT COUNT(*) FROM clients c
+            WHERE c.company_id = ?
+              AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
+              AND (c.reativ_status IS NULL OR c.reativ_status = '' OR c.reativ_status = 'elegivel')
+              AND c.id NOT IN (
+                  SELECT DISTINCT re.client_id
+                  FROM reativacao_envios re
+                  INNER JOIN reativacao_lotes rl ON rl.id = re.lote_id
+                  WHERE rl.company_id = ?
+                    AND rl.criado_em > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                    AND rl.status != 'cancelado'
+              )
+        ");
+        $countAvail->execute([$companyId, $companyId]);
+        $totalDisponivel = (int)$countAvail->fetchColumn();
+
+        echo json_encode([
+            'ok'               => true,
+            'clients'          => $clients,
+            'total'            => count($clients),
+            'total_disponivel' => $totalDisponivel,
+        ]);
     } catch (Throwable $e) {
         echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
     }
@@ -815,6 +849,13 @@ if ($action === 'create_lote_pos_barbearia') {
 
 if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $body      = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+    $variations = $body['variations'] ?? []; // array de textos (1-3)
+    if (!is_array($variations)) $variations = [];
+
+    // Filtra variações vazias
+    $variations = array_values(array_filter(array_map('trim', $variations)));
+    $numVar     = count($variations);
+
     $clientIds = array_values(array_unique(array_filter(array_map('intval', $body['client_ids'] ?? []))));
     $tentativa = (int)($body['tentativa'] ?? 1);
     $observ    = trim($body['observacoes'] ?? '');
@@ -874,11 +915,18 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("UPDATE reativacao_lotes SET total_clientes=? WHERE id=?")->execute([$realTotal, $loteId]);
 
         // Insere os envios individuais com mensagens já definidas
-        $varIdx = 0;
-        foreach ($clientsData as $cl) {
+        $total = count($clientsData);
+        foreach ($clientsData as $idx => $cl) {
             $ctx = detect_context($cl);
-            $msg = build_message($ctx, $tentativa, $cl['nome'], $varIdx, $pdo, $companyId);
-            $varIdx++;
+
+            if ($numVar > 0) {
+                // Distribui homogeneamente: cada variação recebe floor(total/numVar) + 1 se sobrar
+                $varIdx = $idx % $numVar;
+                $firstName = explode(' ', trim($cl['nome']))[0];
+                $msg = str_replace('{nome}', $firstName, $variations[$varIdx]);
+            } else {
+                $msg = build_message($ctx, $tentativa, $cl['nome'], $idx % 3, $pdo, $companyId);
+            }
 
             $pdo->prepare("
                 INSERT INTO reativacao_envios
@@ -888,7 +936,12 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
-        echo json_encode(['ok' => true, 'lote_id' => $loteId, 'total' => $realTotal]);
+        echo json_encode([
+            'ok'              => true,
+            'lote_id'         => $loteId,
+            'total'           => $realTotal,
+            'variations_used' => $numVar,
+        ]);
 
     } catch (Throwable $e) {
         $pdo->rollBack();
