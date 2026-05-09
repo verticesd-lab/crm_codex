@@ -125,7 +125,7 @@ function format_datetime_br(?string $dt, ?string $dbTz = null): string {
 function reactivation_policy(): array {
     return [
         'max_lotes_per_day'            => 3,
-        'max_contacts_per_day'         => 90,
+        'max_contacts_per_day'         => 120,
         'min_gap_between_lots_seconds' => 3600,
         'send_delay_min_seconds'       => 180,
         'send_delay_max_seconds'       => 320,

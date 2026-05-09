@@ -944,7 +944,8 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             } elseif ($availability['reason'] === 'limite_lotes_dia') {
                 $msg = 'Limite diario de 3 lotes atingido. Proximo lote liberado em ' . $availability['next_at_br'] . '.';
             } elseif ($availability['reason'] === 'limite_contatos_dia') {
-                $msg = 'Limite diario de 90 contatos atingido. Restam ' . $availability['remaining_contacts'] . ' contatos hoje. Proximo lote liberado em ' . $availability['next_at_br'] . '.';
+                $maxContacts = (int)($availability['policy']['max_contacts_per_day'] ?? 120);
+                $msg = 'Limite diario de ' . $maxContacts . ' contatos atingido. Restam ' . $availability['remaining_contacts'] . ' contatos hoje. Proximo lote liberado em ' . $availability['next_at_br'] . '.';
             }
             throw new RuntimeException($msg);
         }

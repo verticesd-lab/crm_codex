@@ -318,8 +318,9 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     <div class="rv-fg"><label>Tamanho do lote</label>
       <select class="rv-select" id="f-limite">
         <option value="20">20 contatos</option>
-        <option value="30" selected>30 contatos</option>
-        <option value="50">50 contatos</option>
+        <option value="30">30 contatos</option>
+        <option value="50" selected>50 contatos</option>
+        <option value="80">80 contatos</option>
       </select>
     </div>
     <div class="rv-fg" style="justify-content:flex-end;padding-top:18px">
@@ -989,7 +990,7 @@ function syncVariation(idx, val) {
 
 function updateDistInfo() {
   const dist  = document.getElementById('variation-dist-info');
-  const total = ST.selected.size || parseInt(document.getElementById('f-limite')?.value || '30');
+  const total = ST.selected.size || parseInt(document.getElementById('f-limite')?.value || '50');
   const n     = VARIATIONS.filter(v => v.trim()).length;
   if (!dist || n === 0) { if (dist) dist.style.display='none'; return; }
 
