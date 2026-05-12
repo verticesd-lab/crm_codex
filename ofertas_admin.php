@@ -134,8 +134,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ── Recupera flash messages ────────────────────────────────────
-$flashMsg  = flash('success');
-$flashErro = flash('error');
+$flashMsg  = get_flash('success');
+$flashErro = get_flash('error');
 
 // ── Busca / Filtro ─────────────────────────────────────────────
 $search = trim($_GET['q']      ?? '');
