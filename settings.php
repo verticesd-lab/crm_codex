@@ -46,6 +46,7 @@ $ALL_MODULES = [
     ['servicos_barbearia',   'Serviços Barbearia',   'Catálogo de serviços da barbearia.',                        'services_admin.php',     '💈', 'agenda',    false],
     ['equipe',               'Equipe',               'Gestão de funcionários e permissões.',                      'staff.php',              '👤', 'config',    false],
     ['configuracoes',        'Configurações',        'Configurações da empresa e do sistema.',                    'settings.php',           '⚙️', 'config',    true ],
+    ['ofertas',              'Ofertas',              'Flash sale com urgência, countdown e WhatsApp.',            'ofertas_admin.php',      '⚡', 'marketing', false],
 ];
 
 /* ── Módulos ativos — SEMPRE um array válido ── */
