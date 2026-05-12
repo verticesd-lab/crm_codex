@@ -28,6 +28,14 @@ try {
     if (!in_array('imagem2',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem2 VARCHAR(255) DEFAULT NULL");
     if (!in_array('imagem3',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem3 VARCHAR(255) DEFAULT NULL");
     if (!in_array('imagem4',$cols))     $pdo->exec("ALTER TABLE products ADD COLUMN imagem4 VARCHAR(255) DEFAULT NULL");
+
+    // Colunas de oferta (flash sale)
+    if (!in_array('em_oferta',       $cols)) $pdo->exec("ALTER TABLE products ADD COLUMN em_oferta       TINYINT(1)    NOT NULL DEFAULT 0");
+    if (!in_array('preco_oferta',    $cols)) $pdo->exec("ALTER TABLE products ADD COLUMN preco_oferta    DECIMAL(10,2) NULL DEFAULT NULL");
+    if (!in_array('preco_original',  $cols)) $pdo->exec("ALTER TABLE products ADD COLUMN preco_original  DECIMAL(10,2) NULL DEFAULT NULL");
+    if (!in_array('oferta_estoque',  $cols)) $pdo->exec("ALTER TABLE products ADD COLUMN oferta_estoque  INT           NULL DEFAULT NULL");
+    if (!in_array('oferta_validade', $cols)) $pdo->exec("ALTER TABLE products ADD COLUMN oferta_validade DATETIME      NULL DEFAULT NULL");
+    if (!in_array('oferta_parcelas', $cols)) $pdo->exec("ALTER TABLE products ADD COLUMN oferta_parcelas TINYINT       NULL DEFAULT 2");
 } catch(Throwable $e) {}
 
 /* ─── helpers de variantes ─────────────────────────────────────── */
@@ -116,6 +124,7 @@ $requestedPP  = (int)($_GET['per_page'] ?? 30);
 $perPage      = in_array($requestedPP, [30, 60, 100]) ? $requestedPP : 30;
 
 $filterAt     = $_GET['ativo'] ?? '';
+$ofertaTab    = $_GET['tab'] ?? 'produtos';
 
 $flashSuccess = get_flash('success');
 $flashError   = get_flash('error');
@@ -127,6 +136,47 @@ $backQs = http_build_query([
     'per_page'  => $perPage,
     'ativo'     => $filterAt
 ]);
+
+/* AÇÕES DE OFERTA via POST */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['acao_oferta'])) {
+    $ao = $_POST['acao_oferta'];
+
+    if ($ao === 'ativar') {
+        $id  = (int)$_POST['product_id'];
+        $po  = (float)str_replace(',', '.', $_POST['preco_oferta']   ?? '0');
+        $por = (float)str_replace(',', '.', $_POST['preco_original'] ?? '0');
+        $est = (int)($_POST['oferta_estoque']  ?? 0);
+        $val = trim($_POST['oferta_validade']  ?? '') ?: null;
+        $par = (int)($_POST['oferta_parcelas'] ?? 2);
+
+        if ($po > 0) {
+            $pdo->prepare("UPDATE products SET em_oferta=1,preco_oferta=?,preco_original=?,oferta_estoque=?,oferta_validade=?,oferta_parcelas=? WHERE id=? AND company_id=?")
+                ->execute([$po, $por ?: null, $est ?: null, $val, $par, $id, $companyId]);
+            flash('success', 'Produto adicionado à oferta!');
+        } else {
+            flash('error', 'Informe o preço promocional.');
+        }
+    }
+
+    if ($ao === 'remover') {
+        $pdo->prepare("UPDATE products SET em_oferta=0 WHERE id=? AND company_id=?")
+            ->execute([(int)$_POST['product_id'], $companyId]);
+        flash('success', 'Produto removido da oferta.');
+    }
+
+    if ($ao === 'upd_estoque') {
+        $pdo->prepare("UPDATE products SET oferta_estoque=? WHERE id=? AND company_id=?")
+            ->execute([(int)$_POST['novo_estoque'], (int)$_POST['product_id'], $companyId]);
+        flash('success', 'Estoque atualizado.');
+    }
+
+    if ($ao === 'limpar_tudo') {
+        $pdo->prepare("UPDATE products SET em_oferta=0 WHERE company_id=?")->execute([$companyId]);
+        flash('success', 'Todos removidos da oferta.');
+    }
+
+    redirect('products.php?tab=ofertas&' . $backQs);
+}
 
 $appUploadLimitBytes       = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 $phpUploadLimitBytes       = ini_size_to_bytes((string)ini_get('upload_max_filesize'));
@@ -314,6 +364,14 @@ $offset = ($page-1)*$perPage;
 $listStmt = $pdo->prepare("SELECT * FROM products WHERE $whereStr ORDER BY created_at DESC LIMIT $perPage OFFSET $offset");
 $listStmt->execute($params);
 $products = $listStmt->fetchAll();
+
+/* Dados para a aba de ofertas */
+$ofStmt = $pdo->prepare("SELECT * FROM products WHERE company_id=? AND ativo=1 ORDER BY em_oferta DESC, nome ASC");
+$ofStmt->execute([$companyId]);
+$allProducts     = $ofStmt->fetchAll();
+$totalEmOferta   = (int)array_sum(array_column($allProducts, 'em_oferta'));
+$totalEstOferta  = (int)array_sum(array_column($allProducts, 'oferta_estoque'));
+$defaultValidade = date('Y-m-d\TH:i', strtotime('next saturday 23:59'));
 
 /* ─── RENDER ────────────────────────────────────────────────────── */
 $flashSuccess = get_flash('success') ?? $flashSuccess;
@@ -635,6 +693,61 @@ include __DIR__ . '/views/partials/header.php';
 
 /* Desktop: esconde o FAB mobile */
 .mobile-fab { display: none; }
+
+/* Tabs */
+.pr-tabs { display:flex; gap:0; border-bottom:2px solid #e2e8f0; padding:0 1.25rem; background:#fff; }
+.pr-tab  { padding:.6rem 1rem; font-size:.8rem; font-weight:700; color:#94a3b8; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:.35rem; transition:color .15s; }
+.pr-tab:hover { color:#6366f1; }
+.pr-tab.active { color:#6366f1; border-bottom-color:#6366f1; }
+.pr-tab .tcnt { background:#ede9fe; color:#6366f1; font-size:.65rem; font-weight:800; padding:.1rem .45rem; border-radius:20px; }
+.pr-tab.gold .tcnt  { background:#fef9c3; color:#a16207; }
+.pr-tab.gold.active { color:#d97706; border-bottom-color:#d97706; }
+
+/* Aba Ofertas */
+.of-wrap  { flex:1; overflow-y:auto; padding-bottom:2rem; }
+.of-kpis  { display:flex; gap:.75rem; padding:1rem 1.25rem .5rem; flex-wrap:wrap; }
+.of-kpi   { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:.75rem 1.1rem; min-width:130px; flex:1; }
+.of-kpi .val { font-size:1.6rem; font-weight:800; line-height:1; }
+.of-kpi .lbl { font-size:.62rem; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; margin-top:.2rem; }
+.of-bar   { display:flex; align-items:center; justify-content:space-between; padding:.5rem 1.25rem; flex-wrap:wrap; gap:.5rem; }
+.of-view  { display:inline-flex; align-items:center; gap:.35rem; font-size:.75rem; font-weight:700; color:#16a34a; border:1px solid #86efac; background:#f0fdf4; padding:.4rem .9rem; border-radius:8px; text-decoration:none; }
+.of-view:hover { background:#dcfce7; }
+.of-clr   { font-size:.72rem; font-weight:700; color:#ef4444; border:1px solid #fca5a5; background:#fff; padding:.4rem .9rem; border-radius:8px; cursor:pointer; }
+.of-clr:hover { background:#fef2f2; }
+
+.of-table { width:calc(100% - 2.5rem); margin:0 1.25rem; border-collapse:collapse; font-size:.82rem; background:#fff; border-radius:12px; border:1px solid #e2e8f0; overflow:hidden; }
+.of-table thead th { padding:.65rem .85rem; text-align:left; font-size:.63rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; background:#fafafa; border-bottom:1px solid #e2e8f0; white-space:nowrap; }
+.of-table tbody tr { border-bottom:1px solid #f8fafc; transition:background .1s; }
+.of-table tbody tr:last-child { border-bottom:none; }
+.of-table tbody tr:hover { background:#fafcff; }
+.of-table td { padding:.65rem .85rem; vertical-align:middle; }
+.of-on  { background:#dcfce7; color:#15803d; border:1px solid #86efac; padding:2px 9px; border-radius:20px; font-size:.65rem; font-weight:800; white-space:nowrap; }
+.of-off { background:#f1f5f9; color:#94a3b8; border:1px solid #e2e8f0; padding:2px 9px; border-radius:20px; font-size:.65rem; font-weight:700; white-space:nowrap; }
+.of-pp  { font-weight:700; color:#6366f1; white-space:nowrap; }
+.of-po  { font-size:.7rem; color:#94a3b8; text-decoration:line-through; white-space:nowrap; }
+
+.of-row  { display:flex; gap:.35rem; align-items:center; flex-wrap:wrap; }
+.of-inp  { background:#f8fafc; border:1.5px solid #e2e8f0; color:#0f172a; padding:5px 8px; border-radius:7px; font-size:.78rem; }
+.of-inp:focus { outline:none; border-color:#6366f1; }
+.of-w90  { width:90px; }
+.of-w60  { width:60px; }
+.of-w55  { width:55px; }
+.of-w140 { width:140px; }
+.of-btn  { padding:5px 12px; border-radius:7px; font-size:.75rem; font-weight:700; cursor:pointer; border:none; white-space:nowrap; }
+.of-add  { background:#6366f1; color:#fff; }
+.of-add:hover { background:#4f46e5; }
+.of-rem  { background:#fff; color:#ef4444; border:1px solid #fca5a5; }
+.of-rem:hover { background:#fef2f2; }
+.of-upd  { background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; }
+.of-upd:hover { background:#bae6fd; }
+
+@media (max-width:768px) {
+  .of-table { margin:0 .5rem; width:calc(100% - 1rem); font-size:.74rem; }
+  .of-kpis  { padding:.75rem .9rem .4rem; }
+  .of-bar   { padding:.4rem .9rem; }
+  .of-inp.of-w90  { width:74px; }
+  .of-inp.of-w140 { width:116px; }
+}
 </style>
 
 <?php if ($flashSuccess): ?>
@@ -674,6 +787,16 @@ include __DIR__ . '/views/partials/header.php';
       </div>
     </div>
 
+    <!-- TABS Produtos / Ofertas -->
+    <div class="pr-tabs">
+      <a href="?tab=produtos&<?= $backQs ?>" class="pr-tab <?= $ofertaTab==='produtos'?'active':'' ?>">
+        📦 Produtos <span class="tcnt"><?= (int)$stats['total'] ?></span>
+      </a>
+      <a href="?tab=ofertas&<?= $backQs ?>" class="pr-tab gold <?= $ofertaTab==='ofertas'?'active':'' ?>">
+        ⚡ Ofertas <span class="tcnt"><?= $totalEmOferta ?></span>
+      </a>
+    </div>
+
     <!-- Filters -->
     <form method="GET" id="filter-form">
       <div class="pr-filters">
@@ -708,6 +831,159 @@ include __DIR__ . '/views/partials/header.php';
         <input type="hidden" name="page" value="1">
       </div>
     </form>
+
+    <?php if ($ofertaTab === 'ofertas'): ?>
+    <!-- ABA OFERTAS -->
+    <div class="of-wrap">
+
+      <div class="of-kpis">
+        <div class="of-kpi">
+          <div class="val" style="color:#6366f1;"><?= $totalEmOferta ?></div>
+          <div class="lbl">Em oferta</div>
+        </div>
+        <div class="of-kpi">
+          <div class="val" style="color:#22c55e;"><?= $totalEstOferta ?: '—' ?></div>
+          <div class="lbl">Pares disponíveis</div>
+        </div>
+        <div class="of-kpi">
+          <div class="val"><?= count($allProducts) ?></div>
+          <div class="lbl">Produtos ativos</div>
+        </div>
+      </div>
+
+      <div class="of-bar">
+        <span style="font-size:.75rem;color:#94a3b8;">Ative com 1 clique — preencha preço promocional e clique ⚡ Ativar</span>
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+          <a href="<?= BASE_URL ?>/ofertas.php?empresa=<?= urlencode($_SESSION['company_slug'] ?? '') ?>"
+             target="_blank" rel="noopener" class="of-view">
+            👁 Ver página pública ↗
+          </a>
+          <form method="POST" onsubmit="return confirm('Remover TODOS da oferta?')">
+            <input type="hidden" name="acao_oferta" value="limpar_tudo">
+            <button type="submit" class="of-clr">🧹 Remover todos</button>
+          </form>
+        </div>
+      </div>
+
+      <table class="of-table">
+        <thead>
+          <tr>
+            <th style="width:44px;"></th>
+            <th>Produto</th>
+            <th>Status</th>
+            <th>Preço Loja</th>
+            <th>Preço Oferta / Original</th>
+            <th>Estoque Oferta</th>
+            <th>Validade</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php if (empty($allProducts)): ?>
+          <tr><td colspan="8" style="text-align:center;padding:2rem;color:#94a3b8;">Nenhum produto ativo cadastrado.</td></tr>
+        <?php endif; ?>
+
+        <?php foreach ($allProducts as $p):
+          $pPreco   = (float)($p['preco'] ?? 0);
+          $desconto = 0;
+          if (!empty($p['preco_original']) && (float)$p['preco_original'] > 0 && !empty($p['preco_oferta'])) {
+              $desconto = round((1 - (float)$p['preco_oferta'] / (float)$p['preco_original']) * 100);
+          }
+        ?>
+        <tr>
+          <td>
+            <?php if (!empty($p['imagem'])): ?>
+              <img src="<?= sanitize(image_url($p['imagem'])) ?>"
+                   style="width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid #e2e8f0;" alt="">
+            <?php else: ?>
+              <div style="width:40px;height:40px;border-radius:8px;background:#f1f5f9;border:1px dashed #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:.9rem;">📷</div>
+            <?php endif; ?>
+          </td>
+
+          <td>
+            <div style="font-weight:600;color:#0f172a;font-size:.82rem;"><?= sanitize($p['nome']) ?></div>
+            <?php if (!empty($p['categoria'])): ?>
+              <div style="font-size:.68rem;color:#94a3b8;"><?= sanitize($p['categoria']) ?></div>
+            <?php endif; ?>
+          </td>
+
+          <td>
+            <?php if ($p['em_oferta']): ?>
+              <span class="of-on">● EM OFERTA</span>
+              <?php if ($desconto > 0): ?>
+                <div style="font-size:.64rem;color:#d97706;margin-top:.15rem;">-<?= $desconto ?>% desc.</div>
+              <?php endif; ?>
+            <?php else: ?>
+              <span class="of-off">○ Fora</span>
+            <?php endif; ?>
+          </td>
+
+          <td style="font-size:.82rem;color:#475569;white-space:nowrap;"><?= format_currency($pPreco) ?></td>
+
+          <td>
+            <?php if ($p['em_oferta'] && $p['preco_oferta']): ?>
+              <div class="of-pp"><?= format_currency($p['preco_oferta']) ?></div>
+              <?php if ($p['preco_original']): ?>
+                <div class="of-po"><?= format_currency($p['preco_original']) ?></div>
+              <?php endif; ?>
+            <?php else: ?>
+              <span style="color:#cbd5e1;font-size:.76rem;">—</span>
+            <?php endif; ?>
+          </td>
+
+          <td>
+            <?php if ($p['em_oferta']): ?>
+              <form method="POST" class="of-row">
+                <input type="hidden" name="acao_oferta" value="upd_estoque">
+                <input type="hidden" name="product_id" value="<?= $p['id'] ?>">
+                <input type="number" name="novo_estoque" class="of-inp of-w60"
+                       value="<?= (int)($p['oferta_estoque'] ?? 0) ?>" min="0">
+                <button type="submit" class="of-btn of-upd">✓</button>
+              </form>
+            <?php else: ?>
+              <span style="color:#cbd5e1;">—</span>
+            <?php endif; ?>
+          </td>
+
+          <td style="font-size:.72rem;color:#94a3b8;white-space:nowrap;">
+            <?= !empty($p['oferta_validade']) ? date('d/m H:i', strtotime($p['oferta_validade'])) : '—' ?>
+          </td>
+
+          <td>
+            <?php if ($p['em_oferta']): ?>
+              <form method="POST">
+                <input type="hidden" name="acao_oferta" value="remover">
+                <input type="hidden" name="product_id" value="<?= $p['id'] ?>">
+                <button type="submit" class="of-btn of-rem">✕ Remover</button>
+              </form>
+            <?php else: ?>
+              <form method="POST" class="of-row">
+                <input type="hidden" name="acao_oferta" value="ativar">
+                <input type="hidden" name="product_id" value="<?= $p['id'] ?>">
+                <input type="number" name="preco_oferta" class="of-inp of-w90"
+                       step="0.01" placeholder="R$ promo" required>
+                <input type="number" name="preco_original" class="of-inp of-w90"
+                       step="0.01" placeholder="R$ original"
+                       value="<?= $pPreco > 0 ? $pPreco : '' ?>">
+                <input type="number" name="oferta_estoque" class="of-inp of-w60"
+                       placeholder="Estoque" min="0">
+                <select name="oferta_parcelas" class="of-inp of-w55">
+                  <option value="1">1x</option>
+                  <option value="2" selected>2x</option>
+                  <option value="3">3x</option>
+                </select>
+                <input type="datetime-local" name="oferta_validade" class="of-inp of-w140"
+                       value="<?= $defaultValidade ?>">
+                <button type="submit" class="of-btn of-add">⚡ Ativar</button>
+              </form>
+            <?php endif; ?>
+          </td>
+        </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php else: /* tab = produtos — tabela normal abaixo */ ?>
 
     <!-- ══ DESKTOP TABLE ══ -->
     <div class="pr-table-wrap">
@@ -903,6 +1179,7 @@ include __DIR__ . '/views/partials/header.php';
       </div>
     </div>
     <?php endif; ?>
+    <?php endif; /* fim if ofertas */ ?>
   </div>
 
   <!-- ══════════════ RIGHT — FORM PANEL ══════════════ -->
