@@ -14,10 +14,13 @@ $ALL_MENU = [
     ['clientes',             'Clientes',             $base . '/clients.php',             false],
     ['funil',                'Funil / Oportunidades',$base . '/opportunities.php',       false],
     ['atendimento',          'Atendimento',          $base . '/atendimento.php',         false],
-    ['produtos',             'Produtos',    $base . '/products.php',            false],
+    ['produtos',             'Produtos',             $base . '/products.php',            false],
+    ['ofertas',              'Ofertas',              $base . '/ofertas_admin.php',       false],
     ['cadastro_inteligente', 'Cadastro Inteligente', $base . '/products_imports.php',    false],
     ['pedidos',              'Pedidos',              $base . '/orders.php',              false],
     ['promocoes',            'Promoções',            $base . '/promotions.php',          false],
+    ['reativacao',           'Reativação',           $base . '/reativacao.php',          false],
+    ['meta_ads',             'Meta Ads',             $base . '/meta_ads.php',            false],
     ['kpis',                 'KPIs',                 $base . '/kpis.php',                false],
     ['analytics',            'Analytics',            $base . '/analytics.php',           false],
     ['canais',               'Canais',               $base . '/integrations.php',        false],
@@ -26,10 +29,8 @@ $ALL_MENU = [
     ['agenda_barbearia',     'Agenda Barbearia',     $base . '/calendar_barbearia.php',  false],
     ['servicos_barbearia',   'Serviços Barbearia',   $base . '/services_admin.php',      false],
     ['equipe',               'Equipe',               $base . '/staff.php',               false],
-    ['reativacao',           'Reativação',           $base . '/reativacao.php',          false],
-    ['meta_ads',             'Meta Ads',             $base . '/meta_ads.php',            false],
-    ['tutoriais',            'Tutoriais',            $base . '/tutorials.php',   false],
-    ['configuracoes',        'Configurações',        $base . '/settings.php',            false], // ← SEMPRE visível para quem tem acesso admin
+    ['tutoriais',            'Tutoriais',            $base . '/tutorials.php',           false],
+    ['configuracoes',        'Configurações',        $base . '/settings.php',            false],
 ];
 
 /* ── Carrega módulos ativos (sessão → banco) ─────────────────── */
