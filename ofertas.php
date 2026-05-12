@@ -44,10 +44,20 @@ try {
 } catch (\Exception $e) { /* tabela pode não existir ainda */ }
 
 $flashTitle        = $flashConfig['flash_titulo']         ?? 'Liquidação Inédita de Estoque';
-$flashSubtitle     = $flashConfig['flash_subtitulo']      ?? 'Tênis 100% Originais · Até 60% OFF · Entrega Disponível';
+$flashSubtitle     = $flashConfig['flash_subtitulo']      ?? 'Peças 100% Originais · Até 60% OFF · Entrega Disponível';
 $flashValidade     = $flashConfig['flash_validade']       ?? date('Y-m-d', strtotime('next saturday')) . ' 23:59:59';
 $flashEstoqueTotal = (int)($flashConfig['flash_estoque_total'] ?? 200);
 $flashAtivo        = ($flashConfig['flash_ativo']         ?? '1') === '1';
+// "pares" | "unidades" | "peças" | "itens" — editável via company_settings
+$flashUnidade      = $flashConfig['flash_unidade']        ?? 'unidades';
+// Chips fixos opcionais: JSON array de {nome, de, por}
+// Ex: [{"nome":"Camiseta Básica","de":"R$89","por":"R$39,90"}, ...]
+// Se vazio, usa os 4 primeiros produtos em oferta dinamicamente
+$flashChipsFixos   = [];
+if (!empty($flashConfig['flash_chips'])) {
+    $decoded = json_decode($flashConfig['flash_chips'], true);
+    if (is_array($decoded)) $flashChipsFixos = array_slice($decoded, 0, 4);
+}
 
 // ── WhatsApp ───────────────────────────────────────────────────
 $whats = preg_replace('/\D+/', '', (string)($company['whatsapp_principal'] ?? ''));
@@ -222,24 +232,45 @@ if (isset($_GET['add'])) {
                     <?= sanitize($flashSubtitle) ?>
                 </p>
 
-                <!-- Price chips -->
+                <!-- Price chips — dinâmicos (4 primeiros produtos em oferta)
+                     OU fixos se flash_chips estiver configurado no company_settings -->
+                <?php
+                // Monta a lista de chips
+                if (!empty($flashChipsFixos)) {
+                    // Modo fixo: configurado manualmente via company_settings
+                    $heroChips = $flashChipsFixos;
+                } else {
+                    // Modo dinâmico: pega os 4 primeiros produtos em oferta
+                    // Prioriza os que têm destaque=1, depois ordena por preco_oferta ASC
+                    $heroChips = [];
+                    $sorted = $ofertas;
+                    usort($sorted, fn($a,$b) => ((int)$b['destaque'] <=> (int)$a['destaque']) ?: ((float)$a['preco_oferta'] <=> (float)$b['preco_oferta']));
+                    foreach (array_slice($sorted, 0, 4) as $chip) {
+                        $heroChips[] = [
+                            'nome' => $chip['nome'],
+                            'de'   => !empty($chip['preco_original']) ? 'R$' . number_format((float)$chip['preco_original'], 2, ',', '.') : '',
+                            'por'  => 'R$' . number_format((float)$chip['preco_oferta'], 2, ',', '.'),
+                        ];
+                    }
+                }
+                ?>
+                <?php if (!empty($heroChips)): ?>
                 <div class="flex flex-wrap justify-center gap-3 pt-2">
-                    <?php
-                    $chips = [
-                        ['Adidas Casual',   'R$450',   'R$199,90'],
-                        ['Adidas Academia', 'R$400',   'R$225,00'],
-                        ['Nike',            'R$600+',  'R$299,00'],
-                        ['Nike Air Max',    'R$1.000', 'R$399,00'],
-                    ];
-                    foreach ($chips as [$brand, $de, $por]):
-                    ?>
+                    <?php foreach ($heroChips as $chip): ?>
                     <div class="bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center min-w-[110px]">
-                        <p class="text-xs font-bold tracking-widest text-slate-400 uppercase mb-1"><?= $brand ?></p>
-                        <p class="text-xs de"><?= $de ?></p>
-                        <p class="text-2xl font-black text-amber-400 leading-tight"><?= $por ?></p>
+                        <p class="text-xs font-bold tracking-widest text-slate-400 uppercase mb-1">
+                            <?= sanitize($chip['nome'] ?? '') ?>
+                        </p>
+                        <?php if (!empty($chip['de'])): ?>
+                        <p class="text-xs de"><?= sanitize($chip['de']) ?></p>
+                        <?php endif; ?>
+                        <p class="text-2xl font-black text-amber-400 leading-tight">
+                            <?= sanitize($chip['por'] ?? '') ?>
+                        </p>
                     </div>
                     <?php endforeach; ?>
                 </div>
+                <?php endif; ?>
 
                 <?php if ($whats): ?>
                 <a href="#produtos"
@@ -270,7 +301,7 @@ if (isset($_GET['add'])) {
             <div class="bg-white/5 border border-white/10 rounded-2xl p-5 flex flex-col justify-center space-y-3">
                 <div class="flex items-center justify-between">
                     <p class="text-xs font-bold tracking-widest text-slate-400 uppercase">📦 Estoque disponível</p>
-                    <p class="text-sm font-bold text-red-400"><?= $estoqueRestante ?> pares</p>
+                    <p class="text-sm font-bold text-red-400"><?= $estoqueRestante ?> <?= sanitize($flashUnidade) ?></p>
                 </div>
                 <div class="h-2.5 bg-white/5 rounded-full border border-white/10 overflow-hidden">
                     <div class="stock-fill <?= $pctEstoque < 30 ? 'bg-red-500' : 'bg-emerald-500' ?>"
