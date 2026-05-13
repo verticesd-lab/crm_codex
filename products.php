@@ -178,6 +178,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['acao_oferta'])) {
     redirect('products.php?tab=ofertas&' . $backQs);
 }
 
+/* ACOES DE CATEGORIA via POST */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['acao_categoria'])) {
+    $acaoCategoria = $_POST['acao_categoria'];
+
+    if ($acaoCategoria === 'renomear') {
+        $categoriaAtual = (string)($_POST['categoria_atual'] ?? '');
+        $categoriaNova  = trim($_POST['categoria_nova'] ?? '');
+
+        if (trim($categoriaAtual) === '' || $categoriaNova === '') {
+            flash('error', 'Informe a categoria atual e o novo nome.');
+        } elseif ($categoriaAtual === $categoriaNova) {
+            flash('error', 'O novo nome precisa ser diferente da categoria atual.');
+        } else {
+            $updCat = $pdo->prepare('
+                UPDATE products
+                SET categoria = ?, updated_at = NOW()
+                WHERE company_id = ? AND BINARY categoria = ?
+            ');
+            $updCat->execute([$categoriaNova, $companyId, $categoriaAtual]);
+            $updatedRows = (int)$updCat->rowCount();
+
+            if ($updatedRows > 0) {
+                flash('success', 'Categoria atualizada em ' . $updatedRows . ' produto(s).');
+            } else {
+                flash('error', 'Nenhum produto encontrado para essa categoria.');
+            }
+        }
+    }
+
+    redirect('products.php?tab=categorias');
+}
+
 $appUploadLimitBytes       = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 $phpUploadLimitBytes       = ini_size_to_bytes((string)ini_get('upload_max_filesize'));
 $phpPostLimitBytes         = ini_size_to_bytes((string)ini_get('post_max_size'));
@@ -340,6 +372,19 @@ if (($action === 'edit' || $action === 'create') && isset($_GET['id'])) {
 $cats = $pdo->prepare('SELECT DISTINCT categoria FROM products WHERE company_id=? AND categoria IS NOT NULL AND categoria<>"" ORDER BY categoria');
 $cats->execute([$companyId]);
 $categories = $cats->fetchAll(PDO::FETCH_COLUMN);
+
+$catStatsStmt = $pdo->prepare('
+    SELECT
+        categoria,
+        COUNT(*) AS total,
+        SUM(CASE WHEN ativo = 1 THEN 1 ELSE 0 END) AS ativos
+    FROM products
+    WHERE company_id = ? AND categoria IS NOT NULL AND categoria <> ""
+    GROUP BY BINARY categoria, categoria
+    ORDER BY categoria
+');
+$catStatsStmt->execute([$companyId]);
+$categoryStats = $catStatsStmt->fetchAll();
 
 /* ─── STATS ─────────────────────────────────────────────────────── */
 $statsRow = $pdo->prepare('SELECT COUNT(*) total, SUM(ativo) ativos, SUM(destaque) destaques, SUM(CASE WHEN ativo=0 THEN 1 ELSE 0 END) inativos FROM products WHERE company_id=?');
@@ -702,6 +747,8 @@ include __DIR__ . '/views/partials/header.php';
 .pr-tab .tcnt { background:#ede9fe; color:#6366f1; font-size:.65rem; font-weight:800; padding:.1rem .45rem; border-radius:20px; }
 .pr-tab.gold .tcnt  { background:#fef9c3; color:#a16207; }
 .pr-tab.gold.active { color:#d97706; border-bottom-color:#d97706; }
+.pr-tab.teal .tcnt  { background:#ccfbf1; color:#0f766e; }
+.pr-tab.teal.active { color:#0f766e; border-bottom-color:#0f766e; }
 
 /* Aba Ofertas */
 .of-wrap  { flex:1; overflow-y:auto; padding-bottom:2rem; }
@@ -741,12 +788,37 @@ include __DIR__ . '/views/partials/header.php';
 .of-upd  { background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; }
 .of-upd:hover { background:#bae6fd; }
 
+/* Aba Categorias */
+.cat-wrap { flex:1; overflow-y:auto; padding:1rem 1.25rem 2rem; }
+.cat-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; margin-bottom:.9rem; flex-wrap:wrap; }
+.cat-head h2 { font-size:1rem; font-weight:800; color:#0f172a; margin:0 0 .2rem; }
+.cat-head p { font-size:.78rem; color:#64748b; margin:0; }
+.cat-note { background:#ecfeff; border:1px solid #a5f3fc; color:#155e75; border-radius:10px; padding:.65rem .85rem; font-size:.76rem; font-weight:600; }
+.cat-table { width:100%; border-collapse:collapse; font-size:.82rem; background:#fff; border-radius:12px; overflow:hidden; border:1px solid #e2e8f0; }
+.cat-table thead th { padding:.7rem .85rem; text-align:left; font-size:.64rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; background:#f8fafc; border-bottom:1px solid #e2e8f0; white-space:nowrap; }
+.cat-table tbody tr { border-bottom:1px solid #f1f5f9; }
+.cat-table tbody tr:last-child { border-bottom:none; }
+.cat-table tbody tr:hover { background:#f8fafc; }
+.cat-table td { padding:.7rem .85rem; vertical-align:middle; }
+.cat-name { display:inline-flex; align-items:center; max-width:260px; padding:.22rem .55rem; border-radius:999px; background:#ede9fe; color:#6d28d9; font-size:.76rem; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cat-count { font-size:.76rem; color:#475569; font-weight:700; white-space:nowrap; }
+.cat-count span { color:#94a3b8; font-weight:600; }
+.cat-form { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
+.cat-input { min-width:220px; flex:1; padding:.46rem .65rem; border:1.5px solid #e2e8f0; border-radius:8px; font-size:.8rem; outline:none; background:#f8fafc; color:#0f172a; }
+.cat-input:focus { border-color:#0f766e; background:#fff; }
+.cat-btn { padding:.48rem .85rem; border:none; border-radius:8px; background:#0f766e; color:#fff; font-size:.76rem; font-weight:800; cursor:pointer; white-space:nowrap; }
+.cat-btn:hover { background:#115e59; }
+.cat-empty { background:#fff; border:1px dashed #cbd5e1; border-radius:12px; padding:2rem; text-align:center; color:#94a3b8; font-size:.85rem; }
+
 @media (max-width:768px) {
   .of-table { margin:0 .5rem; width:calc(100% - 1rem); font-size:.74rem; }
   .of-kpis  { padding:.75rem .9rem .4rem; }
   .of-bar   { padding:.4rem .9rem; }
   .of-inp.of-w90  { width:74px; }
   .of-inp.of-w140 { width:116px; }
+  .cat-wrap { padding:.75rem .9rem 1.5rem; }
+  .cat-table { display:block; overflow-x:auto; }
+  .cat-input { min-width:180px; }
 }
 </style>
 
@@ -795,11 +867,15 @@ include __DIR__ . '/views/partials/header.php';
       <a href="?tab=ofertas&<?= $backQs ?>" class="pr-tab gold <?= $ofertaTab==='ofertas'?'active':'' ?>">
         ⚡ Ofertas <span class="tcnt"><?= $totalEmOferta ?></span>
       </a>
+      <a href="?tab=categorias&<?= $backQs ?>" class="pr-tab teal <?= $ofertaTab==='categorias'?'active':'' ?>">
+        Categorias <span class="tcnt"><?= count($categoryStats) ?></span>
+      </a>
     </div>
 
     <!-- Filters -->
     <form method="GET" id="filter-form">
       <div class="pr-filters">
+        <input type="hidden" name="tab" value="<?= sanitize($ofertaTab) ?>">
         <div class="pr-search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
           <input type="text" name="q" value="<?= htmlspecialchars($q) ?>" placeholder="Buscar produto…" onchange="this.form.submit()">
@@ -813,7 +889,10 @@ include __DIR__ . '/views/partials/header.php';
         </select>
 
         <?php
-        $atUrl = fn($v) => '?'.http_build_query(array_filter(['q'=>$q,'categoria'=>$cat,'per_page'=>$perPage,'ativo'=>$v]));
+        $atUrl = fn($v) => '?'.http_build_query(array_filter(
+            ['tab'=>$ofertaTab,'q'=>$q,'categoria'=>$cat,'per_page'=>$perPage,'ativo'=>$v],
+            static fn($item) => $item !== '' && $item !== null
+        ));
         ?>
         <a href="<?= $atUrl('') ?>" class="filter-chip <?= $filterAt==='' ?'active':'' ?>">Todos</a>
         <a href="<?= $atUrl('1') ?>" class="filter-chip green <?= $filterAt==='1'?'active':'' ?>">
@@ -982,6 +1061,56 @@ include __DIR__ . '/views/partials/header.php';
         <?php endforeach; ?>
         </tbody>
       </table>
+    </div>
+    <?php elseif ($ofertaTab === 'categorias'): ?>
+    <!-- ABA CATEGORIAS -->
+    <div class="cat-wrap">
+      <div class="cat-head">
+        <div>
+          <h2>Organizar categorias</h2>
+          <p>Renomeie uma categoria para atualizar todos os produtos vinculados a ela.</p>
+        </div>
+        <div class="cat-note">Se o novo nome ja existir, os produtos serao agrupados nele.</div>
+      </div>
+
+      <?php if (empty($categoryStats)): ?>
+        <div class="cat-empty">Nenhuma categoria cadastrada ainda.</div>
+      <?php else: ?>
+      <table class="cat-table">
+        <thead>
+          <tr>
+            <th>Categoria atual</th>
+            <th>Produtos</th>
+            <th>Novo nome</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($categoryStats as $catRow):
+          $catName = (string)$catRow['categoria'];
+          $catTotal = (int)$catRow['total'];
+          $catActive = (int)$catRow['ativos'];
+        ?>
+          <tr>
+            <td><span class="cat-name"><?= sanitize($catName) ?></span></td>
+            <td>
+              <div class="cat-count">
+                <?= $catTotal ?> produto(s)
+                <span><?= $catActive ?> ativo(s)</span>
+              </div>
+            </td>
+            <td>
+              <form method="POST" class="cat-form" onsubmit="return confirm('Atualizar esta categoria em todos os produtos vinculados?')">
+                <input type="hidden" name="acao_categoria" value="renomear">
+                <input type="hidden" name="categoria_atual" value="<?= sanitize($catName) ?>">
+                <input type="text" name="categoria_nova" class="cat-input" value="<?= sanitize($catName) ?>" placeholder="Ex: Kits" required>
+                <button type="submit" class="cat-btn">Renomear</button>
+              </form>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+      <?php endif; ?>
     </div>
     <?php else: /* tab = produtos — tabela normal abaixo */ ?>
 
@@ -1170,7 +1299,10 @@ include __DIR__ . '/views/partials/header.php';
       <span class="pag-info"><?= $offset+1 ?>–<?= min($offset+$perPage,$totalRows) ?> de <?= $totalRows ?> produtos</span>
       <div class="pag-btns">
         <?php
-        $pgUrl = fn($p) => '?'.http_build_query(array_filter(['q'=>$q,'categoria'=>$cat,'per_page'=>$perPage,'ativo'=>$filterAt,'page'=>$p]));
+        $pgUrl = fn($p) => '?'.http_build_query(array_filter(
+            ['tab'=>$ofertaTab,'q'=>$q,'categoria'=>$cat,'per_page'=>$perPage,'ativo'=>$filterAt,'page'=>$p],
+            static fn($item) => $item !== '' && $item !== null
+        ));
         for($pg=1;$pg<=$totalPages;$pg++):
           if($totalPages > 7 && abs($pg-$page)>2 && $pg!==1 && $pg!==$totalPages){ if($pg===2||$pg===$totalPages-1) echo '<span style="padding:0 .25rem;color:#94a3b8;">…</span>'; continue; }
         ?>
