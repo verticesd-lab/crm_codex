@@ -152,6 +152,8 @@ if (isset($_GET['add'])) {
             border-color: #f59e0b;
             color: #0f172a;
         }
+
+        .open-product-modal { cursor: zoom-in; }
     </style>
 </head>
 <body class="bg-slate-950 text-white min-h-screen font-sans">
@@ -374,6 +376,28 @@ if (isset($_GET['add'])) {
                     $valParcela = number_format((float)$p['preco_oferta'] / max(1,$parcelas), 2, ',', '.');
                     $catEsc     = htmlspecialchars($p['categoria'] ?? '', ENT_QUOTES);
                     $waMsg      = urlencode('Olá! Tenho interesse no ' . $p['nome'] . ' por ' . format_currency($p['preco_oferta']) . ' da ' . $flashTitle . '. Ainda disponível?');
+                    $productImage = !empty($p['imagem']) ? image_url($p['imagem']) : '';
+                    $cartUrl = BASE_URL . '/loja.php?' . http_build_query(['empresa'=>$slug,'add'=>(int)$p['id']]);
+                    $stockText = '';
+                    if ($estq !== null) {
+                        $stockText = $estq <= 5 ? "Ultimas $estq unidades!" : ($estq <= 15 ? "Restam $estq unidades" : "$estq disponiveis");
+                    }
+                    $productModalData = [
+                        'name' => (string)($p['nome'] ?? ''),
+                        'category' => (string)($p['categoria'] ?? ''),
+                        'description' => trim((string)($p['descricao'] ?? '')),
+                        'image' => $productImage,
+                        'originalPrice' => !empty($p['preco_original']) ? format_currency($p['preco_original']) : '',
+                        'offerPrice' => format_currency($p['preco_oferta']),
+                        'installments' => 'Em ate ' . $parcelas . 'x de R$' . $valParcela . ' sem juros',
+                        'stock' => $stockText,
+                        'whatsappUrl' => $whats ? 'https://wa.me/' . $whats . '?text=' . $waMsg : '',
+                        'cartUrl' => $cartUrl,
+                    ];
+                    $productModalJson = json_encode(
+                        $productModalData,
+                        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE
+                    );
                 ?>
                 <div class="offer-card group bg-white/5 border border-white/10 rounded-xl overflow-hidden transition transform hover:-translate-y-1"
                      data-cat="<?= $catEsc ?>">
@@ -381,17 +405,23 @@ if (isset($_GET['add'])) {
                     <!-- Imagem + badge de desconto -->
                     <div class="relative">
                         <?php if (!empty($p['imagem'])): ?>
-                            <div class="h-48 w-full bg-white/5 flex items-center justify-center overflow-hidden">
+                            <button type="button"
+                                    class="open-product-modal relative h-48 w-full bg-white/5 flex items-center justify-center overflow-hidden focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-slate-950 hover:bg-white/10"
+                                    aria-label="Ampliar imagem de <?= sanitize($p['nome']) ?>"
+                                    data-product="<?= sanitize($productModalJson ?: '{}') ?>">
                                 <img src="<?= sanitize(image_url($p['imagem'])) ?>"
                                      alt="<?= sanitize($p['nome']) ?>"
                                      class="h-full w-full object-contain p-3 group-hover:scale-105 transition duration-300">
-                            </div>
+                            </button>
                         <?php else: ?>
-                            <div class="h-48 w-full bg-white/10 flex items-center justify-center text-5xl">👟</div>
+                            <button type="button"
+                                    class="open-product-modal h-48 w-full bg-white/10 flex items-center justify-center text-5xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-slate-950"
+                                    aria-label="Ver detalhes de <?= sanitize($p['nome']) ?>"
+                                    data-product="<?= sanitize($productModalJson ?: '{}') ?>">👟</button>
                         <?php endif; ?>
 
                         <?php if ($desconto > 0): ?>
-                        <div class="absolute top-3 left-3 bg-red-500 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow">
+                        <div class="pointer-events-none absolute top-3 left-3 bg-red-500 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow">
                             -<?= $desconto ?>%
                         </div>
                         <?php endif; ?>
@@ -436,7 +466,7 @@ if (isset($_GET['add'])) {
                                 Quero este!
                             </a>
                             <?php endif; ?>
-                            <a href="<?= BASE_URL ?>/loja.php?<?= http_build_query(['empresa'=>$slug,'add'=>(int)$p['id']]) ?>"
+                            <a href="<?= sanitize($cartUrl) ?>"
                                class="inline-flex items-center justify-center w-full border border-brand-600 text-brand-500 hover:bg-brand-600 hover:text-white font-semibold text-sm py-2 rounded-lg transition">
                                 + Adicionar ao carrinho
                             </a>
@@ -459,6 +489,73 @@ if (isset($_GET['add'])) {
         </div>
 
     </div><!-- /container -->
+
+    <div id="product-modal"
+         class="hidden fixed inset-0 z-[80] items-center justify-center p-4"
+         role="dialog"
+         aria-modal="true"
+         aria-hidden="true"
+         aria-labelledby="modal-product-name">
+        <button type="button"
+                class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm"
+                data-close-product-modal
+                aria-label="Fechar visualizacao"></button>
+
+        <div class="relative z-10 w-full max-w-5xl max-h-[92vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 shadow-2xl">
+            <button type="button"
+                    class="absolute right-3 top-3 z-20 h-10 w-10 rounded-full border border-white/10 bg-slate-950/80 text-2xl leading-none text-white hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    data-close-product-modal
+                    aria-label="Fechar">
+                &times;
+            </button>
+
+            <div class="grid md:grid-cols-[minmax(0,1.2fr)_minmax(280px,.8fr)]">
+                <div class="bg-slate-950/70 p-4 md:p-6">
+                    <div class="flex min-h-[320px] items-center justify-center rounded-xl border border-white/10 bg-white/5 md:h-[620px]">
+                        <img id="modal-product-image"
+                             src=""
+                             alt=""
+                             class="max-h-[70vh] w-full object-contain p-2 md:max-h-[560px]">
+                        <div id="modal-product-image-fallback"
+                             class="hidden text-center text-slate-400">
+                            <div class="text-5xl">Sem imagem</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-4 p-5 md:p-6">
+                    <p id="modal-product-category" class="text-xs font-bold tracking-widest text-amber-400 uppercase"></p>
+                    <h3 id="modal-product-name" class="pr-10 text-2xl font-black leading-tight"></h3>
+                    <p id="modal-product-description" class="text-sm leading-relaxed text-slate-300"></p>
+
+                    <div class="space-y-1 border-y border-white/10 py-4">
+                        <div class="flex flex-wrap items-baseline gap-3">
+                            <span id="modal-product-original-price" class="de text-base"></span>
+                            <span id="modal-product-offer-price" class="text-3xl font-black text-amber-400"></span>
+                        </div>
+                        <p id="modal-product-installments" class="text-sm text-slate-400"></p>
+                    </div>
+
+                    <p id="modal-product-stock" class="text-sm font-bold text-emerald-400"></p>
+
+                    <div class="flex flex-col gap-2 pt-2">
+                        <a id="modal-product-whatsapp"
+                           href="#"
+                           target="_blank"
+                           rel="noopener"
+                           class="hidden inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-emerald-400">
+                            Quero este!
+                        </a>
+                        <a id="modal-product-cart"
+                           href="#"
+                           class="inline-flex items-center justify-center rounded-lg border border-brand-600 px-4 py-3 text-sm font-semibold text-brand-500 transition hover:bg-brand-600 hover:text-white">
+                            + Adicionar ao carrinho
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- ── FLOATING WHATSAPP ─────────────────────────────────── -->
     <?php if ($whats): ?>
@@ -499,6 +596,100 @@ if (isset($_GET['add'])) {
             card.style.display = (cat === 'todos' || card.dataset.cat === cat) ? '' : 'none';
         });
     }
+
+    const productModal = document.getElementById('product-modal');
+    const modalImage = document.getElementById('modal-product-image');
+    const modalImageFallback = document.getElementById('modal-product-image-fallback');
+    const modalName = document.getElementById('modal-product-name');
+    const modalCategory = document.getElementById('modal-product-category');
+    const modalDescription = document.getElementById('modal-product-description');
+    const modalOriginalPrice = document.getElementById('modal-product-original-price');
+    const modalOfferPrice = document.getElementById('modal-product-offer-price');
+    const modalInstallments = document.getElementById('modal-product-installments');
+    const modalStock = document.getElementById('modal-product-stock');
+    const modalWhatsapp = document.getElementById('modal-product-whatsapp');
+    const modalCart = document.getElementById('modal-product-cart');
+    let productModalLastFocus = null;
+
+    function openProductModal(product) {
+        if (!productModal) return;
+
+        productModalLastFocus = document.activeElement;
+
+        modalName.textContent = product.name || 'Produto';
+        modalCategory.textContent = product.category || '';
+        modalDescription.textContent = product.description || 'Sem descricao cadastrada.';
+        modalOriginalPrice.textContent = product.originalPrice || '';
+        modalOriginalPrice.classList.toggle('hidden', !product.originalPrice);
+        modalOfferPrice.textContent = product.offerPrice || '';
+        modalInstallments.textContent = product.installments || '';
+        modalStock.textContent = product.stock || '';
+        modalStock.classList.toggle('hidden', !product.stock);
+
+        if (product.image) {
+            modalImage.src = product.image;
+            modalImage.alt = product.name || 'Produto';
+            modalImage.classList.remove('hidden');
+            modalImageFallback.classList.add('hidden');
+        } else {
+            modalImage.removeAttribute('src');
+            modalImage.alt = '';
+            modalImage.classList.add('hidden');
+            modalImageFallback.classList.remove('hidden');
+        }
+
+        if (product.whatsappUrl) {
+            modalWhatsapp.href = product.whatsappUrl;
+            modalWhatsapp.classList.remove('hidden');
+        } else {
+            modalWhatsapp.href = '#';
+            modalWhatsapp.classList.add('hidden');
+        }
+
+        modalCart.href = product.cartUrl || '#';
+        modalCart.classList.toggle('hidden', !product.cartUrl);
+
+        productModal.classList.remove('hidden');
+        productModal.classList.add('flex');
+        productModal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('overflow-hidden');
+
+        const closeButton = productModal.querySelector('[data-close-product-modal]');
+        if (closeButton) closeButton.focus();
+    }
+
+    function closeProductModal() {
+        if (!productModal || productModal.classList.contains('hidden')) return;
+
+        productModal.classList.add('hidden');
+        productModal.classList.remove('flex');
+        productModal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('overflow-hidden');
+
+        if (productModalLastFocus && typeof productModalLastFocus.focus === 'function') {
+            productModalLastFocus.focus();
+        }
+    }
+
+    document.querySelectorAll('.open-product-modal').forEach(button => {
+        button.addEventListener('click', () => {
+            try {
+                openProductModal(JSON.parse(button.dataset.product || '{}'));
+            } catch (error) {
+                openProductModal({});
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-close-product-modal]').forEach(button => {
+        button.addEventListener('click', closeProductModal);
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            closeProductModal();
+        }
+    });
     </script>
 
 </body>
