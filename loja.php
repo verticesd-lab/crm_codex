@@ -131,6 +131,7 @@ if (isset($_GET['add'])) {
 // WhatsApp fixo
 $whats = preg_replace('/\D+/', '', (string)($company['whatsapp_principal'] ?? ''));
 $msg   = 'Olá, vim da loja online!';
+$offersUrl = BASE_URL . '/ofertas.php?empresa=' . urlencode($slug);
 
 /**
  * Helper: renderiza os chips de tamanho a partir da string "P,M,G,GG"
@@ -284,6 +285,10 @@ function render_sizes(string $sizesStr): string {
                             <a class="px-5 py-2 rounded-full bg-brand-600 hover:bg-brand-700 font-semibold shadow-lg shadow-brand-600/30" href="#featured">
                                 Ver destaques
                             </a>
+                            <a class="px-5 py-2 rounded-full bg-amber-400 text-slate-950 hover:bg-amber-300 font-semibold shadow-lg shadow-amber-500/20"
+                               href="<?= $offersUrl ?>">
+                                Ofertas
+                            </a>
                             <a class="px-5 py-2 rounded-full border border-white/20 hover:border-white/40"
                                href="<?= BASE_URL ?>/promo.php?empresa=<?= urlencode($slug) ?>">
                                 Promoções
@@ -351,6 +356,10 @@ function render_sizes(string $sizesStr): string {
             <aside class="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3 h-fit lg:sticky lg:top-4">
                 <p class="text-sm text-slate-200/80 font-semibold">Categorias</p>
                 <div class="flex flex-col gap-2">
+                    <a href="<?= $offersUrl ?>"
+                       class="px-3 py-2 rounded-lg border border-amber-300/60 bg-amber-400 text-slate-950 font-semibold shadow-lg shadow-amber-500/15 hover:bg-amber-300">
+                        Ofertas
+                    </a>
                     <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
                        class="px-3 py-2 rounded-lg border border-white/10 <?= $categoria === '' ? 'bg-brand-600 text-white' : 'hover:border-white/30' ?>">
                         Todas
