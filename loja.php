@@ -234,6 +234,45 @@ function render_sizes(string $sizesStr): string {
             background: rgba(255,255,255,0.03);
             border: 1px solid rgba(255,255,255,0.07);
         }
+
+        .product-card {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .product-card-link {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .product-card-body {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            gap: 0.25rem;
+            padding: 1rem;
+        }
+
+        .product-card-title {
+            min-height: 3.5rem;
+        }
+
+        .product-card-description {
+            min-height: 2.5rem;
+        }
+
+        .product-card-price {
+            margin-top: auto;
+            padding-top: 0.5rem;
+        }
+
+        .product-card-cta {
+            border-radius: 0 0 0.75rem 0.75rem;
+            min-height: 44px;
+        }
     </style>
 </head>
 <body class="bg-slate-950 text-white min-h-screen">
@@ -421,8 +460,8 @@ function render_sizes(string $sizesStr): string {
 
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <?php foreach ($featured ?: array_slice($products, 0, 3) as $product): ?>
-                            <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
-                                <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
+                            <div class="product-card group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
+                                <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="product-card-link">
                                     <?php if (!empty($product['imagem'])): ?>
                                         <div class="h-44 w-full bg-white/5 flex items-center justify-center">
                                             <img src="<?= sanitize(image_url($product['imagem'])) ?>"
@@ -433,12 +472,12 @@ function render_sizes(string $sizesStr): string {
                                         <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
                                     <?php endif; ?>
 
-                                    <div class="p-4 space-y-1">
+                                    <div class="product-card-body">
                                         <p class="text-xs uppercase tracking-wide text-emerald-200/80">
                                             <?= sanitize($product['categoria']) ?>
                                         </p>
-                                        <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
-                                        <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
+                                        <h3 class="product-card-title text-lg font-semibold line-clamp-2"><?= sanitize($product['nome']) ?></h3>
+                                        <p class="product-card-description text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
 
                                         <?php if (!empty($product['sizes'])): ?>
                                         <div class="sizes-block">
@@ -447,7 +486,7 @@ function render_sizes(string $sizesStr): string {
                                         </div>
                                         <?php endif; ?>
 
-                                        <div class="flex items-center justify-between pt-1">
+                                        <div class="product-card-price flex items-center justify-between">
                                             <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
                                             <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Destaque</span>
                                         </div>
@@ -462,7 +501,7 @@ function render_sizes(string $sizesStr): string {
                                     'per_page'  => $perPage,
                                     'add'       => (int)$product['id']
                                 ]) ?>"
-                                   class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
+                                   class="product-card-cta inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
                                 </a>
                             </div>
@@ -485,8 +524,8 @@ function render_sizes(string $sizesStr): string {
 
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <?php foreach ($products as $product): ?>
-                            <div class="group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
-                                <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="block">
+                            <div class="product-card group bg-white/5 border border-white/10 rounded-xl shadow-lg hover:-translate-y-1 transition transform overflow-hidden">
+                                <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="product-card-link">
                                     <?php if (!empty($product['imagem'])): ?>
                                         <div class="h-44 w-full bg-white/5 flex items-center justify-center">
                                             <img src="<?= sanitize(image_url($product['imagem'])) ?>"
@@ -497,12 +536,12 @@ function render_sizes(string $sizesStr): string {
                                         <div class="h-44 w-full bg-white/10 flex items-center justify-center text-slate-200/70">Sem imagem</div>
                                     <?php endif; ?>
 
-                                    <div class="p-4 space-y-1">
+                                    <div class="product-card-body">
                                         <p class="text-xs uppercase tracking-wide text-emerald-200/80">
                                             <?= sanitize($product['categoria']) ?>
                                         </p>
-                                        <h3 class="text-lg font-semibold"><?= sanitize($product['nome']) ?></h3>
-                                        <p class="text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
+                                        <h3 class="product-card-title text-lg font-semibold line-clamp-2"><?= sanitize($product['nome']) ?></h3>
+                                        <p class="product-card-description text-sm text-slate-200/80 line-clamp-2"><?= sanitize($product['descricao']) ?></p>
 
                                         <?php if (!empty($product['sizes'])): ?>
                                         <div class="sizes-block">
@@ -511,7 +550,7 @@ function render_sizes(string $sizesStr): string {
                                         </div>
                                         <?php endif; ?>
 
-                                        <div class="flex items-center justify-between pt-1">
+                                        <div class="product-card-price flex items-center justify-between">
                                             <p class="text-xl font-bold text-emerald-300"><?= format_currency($product['preco']) ?></p>
                                             <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-100">Disponível</span>
                                         </div>
@@ -526,7 +565,7 @@ function render_sizes(string $sizesStr): string {
                                     'per_page'  => $perPage,
                                     'add'       => (int)$product['id']
                                 ]) ?>"
-                                   class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 font-semibold">
+                                   class="product-card-cta inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-2 hover:bg-brand-700 font-semibold">
                                     Adicionar ao carrinho
                                 </a>
                             </div>
