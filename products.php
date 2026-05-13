@@ -57,6 +57,28 @@ function sync_variants($pdo, int $pid, string $sizesCsv): void {
     }
 }
 
+function enforce_featured_limit(PDO $pdo, int $companyId, int $limit = 3): int {
+    $stmt = $pdo->prepare('
+        SELECT id
+        FROM products
+        WHERE company_id = ? AND ativo = 1 AND destaque = 1
+        ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+    ');
+    $stmt->execute([$companyId]);
+    $featuredIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+    if (count($featuredIds) <= $limit) {
+        return 0;
+    }
+
+    $removeIds = array_slice($featuredIds, $limit);
+    $ph = implode(',', array_fill(0, count($removeIds), '?'));
+    $upd = $pdo->prepare("UPDATE products SET destaque = 0 WHERE company_id = ? AND id IN ($ph)");
+    $upd->execute(array_merge([$companyId], $removeIds));
+
+    return (int)$upd->rowCount();
+}
+
 function parse_price(string $v): float {
     $v = str_replace(['R$',' '], '', $v);
     if (substr_count($v,',') && substr_count($v,'.')) { $v = str_replace('.','',$v); $v = str_replace(',','.',$v); }
@@ -241,12 +263,18 @@ if ($action === 'delete' && isset($_GET['id'])) {
 /* ─── TOGGLE ATIVO ──────────────────────────────── */
 if ($action === 'toggle_ativo' && isset($_GET['id'])) {
     $id  = (int)$_GET['id'];
-    $cur = $pdo->prepare('SELECT ativo FROM products WHERE id=? AND company_id=?');
+    $cur = $pdo->prepare('SELECT ativo, destaque FROM products WHERE id=? AND company_id=?');
     $cur->execute([$id,$companyId]);
-    $cur = $cur->fetchColumn();
+    $productState = $cur->fetch();
+    $currentActive = (int)($productState['ativo'] ?? 0);
+    $currentFeatured = (int)($productState['destaque'] ?? 0);
+    $newActive = $currentActive ? 0 : 1;
     $pdo->prepare('UPDATE products SET ativo=?,updated_at=NOW() WHERE id=? AND company_id=?')
-        ->execute([$cur ? 0 : 1, $id, $companyId]);
-    flash('success', $cur ? 'Produto desativado.' : 'Produto ativado.');
+        ->execute([$newActive, $id, $companyId]);
+    if ($newActive && $currentFeatured) {
+        enforce_featured_limit($pdo, $companyId);
+    }
+    flash('success', $currentActive ? 'Produto desativado.' : 'Produto ativado.');
     redirect('products.php'.($backQs?'?'.$backQs:''));
 }
 
@@ -258,6 +286,9 @@ if ($action === 'toggle_destaque' && isset($_GET['id'])) {
     $cur = $cur->fetchColumn();
     $pdo->prepare('UPDATE products SET destaque=?,updated_at=NOW() WHERE id=? AND company_id=?')
         ->execute([$cur ? 0 : 1, $id, $companyId]);
+    if (!$cur) {
+        enforce_featured_limit($pdo, $companyId);
+    }
     redirect('products.php'.($backQs?'?'.$backQs:''));
 }
 
@@ -349,12 +380,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare('UPDATE products SET nome=?,descricao=?,preco=?,preco_custo=?,categoria=?,referencia=?,cor=?,estoque=?,desconto=?,sizes=?,imagem=?,imagem2=?,imagem3=?,imagem4=?,ativo=?,destaque=?,updated_at=NOW() WHERE id=? AND company_id=?')
             ->execute([$nome,$descricao,$preco,$precoCusto,$catPost,$ref,$cor,$estoque,$desconto,$sizes,$imgPath,$imgPath2,$imgPath3,$imgPath4,$ativo,$destaque,$id,$companyId]);
         sync_variants($pdo,$id,$sizes);
+        if ($ativo && $destaque) {
+            enforce_featured_limit($pdo, $companyId);
+        }
         flash('success','Produto atualizado.');
     } else {
         $pdo->prepare('INSERT INTO products (company_id,nome,descricao,preco,preco_custo,categoria,referencia,cor,estoque,desconto,sizes,imagem,imagem2,imagem3,imagem4,ativo,destaque,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),NOW())')
             ->execute([$companyId,$nome,$descricao,$preco,$precoCusto,$catPost,$ref,$cor,$estoque,$desconto,$sizes,$imgPath,$imgPath2,$imgPath3,$imgPath4,$ativo,$destaque]);
         $newId = (int)$pdo->lastInsertId();
         sync_variants($pdo,$newId,$sizes);
+        if ($ativo && $destaque) {
+            enforce_featured_limit($pdo, $companyId);
+        }
         flash('success','Produto cadastrado com sucesso.');
     }
     redirect('products.php'.($retQ?'?'.$retQ:''));
@@ -385,6 +422,8 @@ $catStatsStmt = $pdo->prepare('
 ');
 $catStatsStmt->execute([$companyId]);
 $categoryStats = $catStatsStmt->fetchAll();
+
+enforce_featured_limit($pdo, $companyId);
 
 /* ─── STATS ─────────────────────────────────────────────────────── */
 $statsRow = $pdo->prepare('SELECT COUNT(*) total, SUM(ativo) ativos, SUM(destaque) destaques, SUM(CASE WHEN ativo=0 THEN 1 ELSE 0 END) inativos FROM products WHERE company_id=?');

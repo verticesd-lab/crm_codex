@@ -90,8 +90,8 @@ $products = $productsStmt->fetchAll();
 $featuredStmt = $pdo->prepare('
     SELECT * FROM products
     WHERE company_id = ? AND ativo = 1 AND destaque = 1
-    ORDER BY updated_at DESC
-    LIMIT 5
+    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+    LIMIT 3
 ');
 $featuredStmt->execute([$companyId]);
 $featured = $featuredStmt->fetchAll();
