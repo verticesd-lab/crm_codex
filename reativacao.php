@@ -896,6 +896,36 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
       <div class="rv-cfg-row" style="border:none"><span class="rv-cfg-lbl">Horário permitido</span><span class="rv-cfg-val">09:00 – 20:00</span></div>
     </div>
     <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem">Observação (opcional)</p>
+    <!-- Banner/Imagem opcional -->
+    <div style="margin-bottom:1rem;">
+      <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
+        🖼️ Banner / Imagem (opcional)
+      </p>
+      <div id="banner-upload-zone"
+        style="border:2px dashed #e2e8f0;border-radius:10px;padding:1.25rem;text-align:center;cursor:pointer;transition:all .2s;background:#f8fafc;"
+        onclick="document.getElementById('banner-file-input').click()"
+        ondragover="event.preventDefault();this.style.borderColor='#6366f1';this.style.background='#f5f3ff';"
+        ondragleave="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';"
+        ondrop="handleBannerDrop(event)">
+        <input type="file" id="banner-file-input" accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0])">
+        <div id="banner-upload-placeholder">
+          <div style="font-size:1.5rem;margin-bottom:.4rem;">🖼️</div>
+          <p style="font-size:.8rem;color:#64748b;font-weight:600;">Clique ou arraste o banner aqui</p>
+          <p style="font-size:.72rem;color:#94a3b8;margin-top:.2rem;">JPG, PNG, WEBP · máx. 5MB · será enviado junto com o texto</p>
+        </div>
+        <div id="banner-preview-wrap" style="display:none;">
+          <img id="banner-preview-img" style="max-height:140px;max-width:100%;border-radius:8px;object-fit:contain;">
+          <div style="margin-top:.5rem;display:flex;align-items:center;justify-content:center;gap:.5rem;">
+            <span id="banner-preview-name" style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
+            <button onclick="event.stopPropagation();removeBanner()"
+              style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
+              ✕ Remover
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="banner-upload-status" style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
+    </div>
     <textarea class="rv-obs" id="modal-obs" rows="2" placeholder="Ex: Campanha março, clientes barbearia..."></textarea>
     <div style="display:flex;gap:.6rem;justify-content:flex-end">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
@@ -1139,6 +1169,7 @@ async function confirmLote(){
   const vars = VARIATIONS.map(v=>v.trim()).filter(Boolean);
 
   try {
+    const mediaUrl = await uploadBannerIfNeeded();
     const r = await fetch(`${API}?action=create_lote`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1148,6 +1179,7 @@ async function confirmLote(){
         observacoes: obs,
         contexto:    ctx,
         variations:  vars, // array de 0-3 mensagens
+        media_url:   mediaUrl,
       })
     });
     const d = await r.json();
@@ -2344,7 +2376,17 @@ async function pbConfirmLote() {
     }));
 
   try {
-    const r = await fetch(`${API}?action=create_lote_pos_barbearia`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({envios,observacoes:obs,variacao_idx:varidx})});
+    const mediaUrl = await uploadBannerIfNeeded();
+    const r = await fetch(`${API}?action=create_lote_pos_barbearia`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        envios,
+        observacoes: obs,
+        variacao_idx: varidx,
+        media_url:   mediaUrl,
+      })
+    });
     const d = await r.json();
     pbCloseModal();
     if (d.ok) { ST.activeLoteId=d.lote_id; alert(`✅ Lote criado com ${d.total} clientes!\n\nVá para Histórico para iniciar o envio.`); switchTab('lotes'); }
@@ -2596,6 +2638,86 @@ async function promoConfirmLote() {
 
   btn.disabled = false; btn.textContent = 'Criar lote';
 }
+
+/* ══════════════════════════════════
+   BANNER / MÍDIA
+══════════════════════════════════ */
+let BANNER_URL  = null;
+let BANNER_FILE = null;
+
+function handleBannerDrop(e) {
+  e.preventDefault();
+  document.getElementById('banner-upload-zone').style.borderColor = '#e2e8f0';
+  document.getElementById('banner-upload-zone').style.background  = '#f8fafc';
+  const file = e.dataTransfer.files[0];
+  if (file) handleBannerFile(file);
+}
+
+function handleBannerFile(file) {
+  if (!file) return;
+  const allowed = ['image/jpeg','image/png','image/webp','image/gif'];
+  if (!allowed.includes(file.type)) {
+    alert('Formato não suportado. Use JPG, PNG, WEBP ou GIF.'); return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    alert('Arquivo muito grande. Máximo 5MB.'); return;
+  }
+
+  BANNER_FILE = file;
+
+  // Preview local
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('banner-preview-img').src = e.target.result;
+    document.getElementById('banner-preview-name').textContent = '✅ ' + file.name;
+    document.getElementById('banner-upload-placeholder').style.display = 'none';
+    document.getElementById('banner-preview-wrap').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+
+  showBannerStatus('⏳ Aguardando criação do lote para fazer upload...', '#6366f1');
+}
+
+function removeBanner() {
+  BANNER_URL  = null;
+  BANNER_FILE = null;
+  document.getElementById('banner-file-input').value = '';
+  document.getElementById('banner-preview-wrap').style.display       = 'none';
+  document.getElementById('banner-upload-placeholder').style.display = 'block';
+  document.getElementById('banner-upload-status').style.display      = 'none';
+}
+
+function showBannerStatus(msg, color) {
+  const el = document.getElementById('banner-upload-status');
+  el.textContent  = msg;
+  el.style.color  = color || '#64748b';
+  el.style.display = 'block';
+}
+
+async function uploadBannerIfNeeded() {
+  if (!BANNER_FILE) return null;
+  showBannerStatus('⏳ Enviando banner...', '#6366f1');
+
+  const fd = new FormData();
+  fd.append('media', BANNER_FILE);
+
+  try {
+    const r = await fetch(`${API}?action=upload_media`, { method:'POST', body:fd });
+    const d = await r.json();
+    if (d.ok) {
+      BANNER_URL = d.url;
+      showBannerStatus('✅ Banner enviado: ' + d.filename, '#16a34a');
+      return d.url;
+    } else {
+      showBannerStatus('❌ Erro no upload: ' + (d.error||'Falha'), '#dc2626');
+      return null;
+    }
+  } catch(e) {
+    showBannerStatus('❌ Erro de comunicação no upload.', '#dc2626');
+    return null;
+  }
+}
+
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 pbEnsureDateRange();

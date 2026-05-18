@@ -494,7 +494,7 @@ if (isset($_GET['add'])) {
          class="hidden fixed inset-0 z-[80] items-center justify-center p-4"
          role="dialog"
          aria-modal="true"
-         aria-hidden="true"
+         aria-hidden="true"s
          aria-labelledby="modal-product-name">
         <button type="button"
                 class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm"

@@ -212,63 +212,50 @@ function response_indicates_whatsapp_missing($data): bool {
         || str_contains($lower, 'number not found');
 }
 
-function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $companyId = null): array {
+function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $companyId = null, ?string $mediaUrl = null, ?string $mediaType = null): array {
     $cfg = get_evolution_config($pdo, $companyId);
     if (!$cfg['base'] || !$cfg['key'] || !$cfg['instance']) {
         return ['ok' => false, 'error' => 'Evolution API não configurada.'];
     }
 
-    $candidates = whatsapp_number_candidates($number);
-    if (empty($candidates)) {
-        return ['ok' => false, 'error' => 'Número de WhatsApp inválido.'];
-    }
+    $digits = preg_replace('/\D/', '', $number);
+    if (!str_starts_with($digits, '55')) $digits = '55' . $digits;
 
-    $url = "{$cfg['base']}/message/sendText/{$cfg['instance']}";
-    $lastError = '';
-
-    foreach ($candidates as $idx => $digits) {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST           => true,
-            CURLOPT_HTTPHEADER     => [
-                'Content-Type: application/json',
-                'apikey: ' . $cfg['key'],
-            ],
-            CURLOPT_POSTFIELDS      => json_encode([
-                'number' => $digits,
-                'text'   => $text,
-            ]),
-            CURLOPT_TIMEOUT         => 20,
-            CURLOPT_FOLLOWLOCATION  => true,   // segue redirects (307/301)
-            CURLOPT_MAXREDIRS       => 3,
-            CURLOPT_SSL_VERIFYPEER  => false,  // evita erro de cert em alguns hosts
+    // Se tem mídia, envia como imagem com caption
+    if ($mediaUrl && str_starts_with($mediaType ?? '', 'image/')) {
+        $url = "{$cfg['base']}/message/sendMedia/{$cfg['instance']}";
+        $payload = json_encode([
+            'number'   => $digits,
+            'mediatype'=> 'image',
+            'mimetype' => $mediaType ?: 'image/jpeg',
+            'caption'  => $text,
+            'media'    => $mediaUrl,
+            'fileName' => 'banner.jpg',
         ]);
-
-        $resp     = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlErr  = curl_error($ch);
-        curl_close($ch);
-
-        if ($curlErr) return ['ok' => false, 'error' => 'cURL: ' . $curlErr];
-
-        $decoded = json_decode((string)$resp, true);
-        $missing = response_indicates_whatsapp_missing(is_array($decoded) ? $decoded : (string)$resp);
-        if ($missing) {
-            $lastError = "WhatsApp não encontrado para {$digits}.";
-            if ($idx < count($candidates) - 1) continue;
-            return ['ok' => false, 'error' => $lastError];
-        }
-
-        if ($httpCode >= 200 && $httpCode < 300) {
-            return ['ok' => true, 'response' => $resp, 'number_used' => $digits];
-        }
-
-        $lastError = "HTTP {$httpCode}: " . $resp;
-        break;
+    } else {
+        $url = "{$cfg['base']}/message/sendText/{$cfg['instance']}";
+        $payload = json_encode(['number' => $digits, 'text' => $text]);
     }
 
-    return ['ok' => false, 'error' => $lastError ?: 'Falha ao enviar WhatsApp.'];
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'apikey: ' . $cfg['key']],
+        CURLOPT_POSTFIELDS     => $payload,
+        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS      => 3,
+        CURLOPT_SSL_VERIFYPEER => false,
+    ]);
+    $resp     = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr)                            return ['ok' => false, 'error' => 'cURL: ' . $curlErr];
+    if ($httpCode >= 200 && $httpCode < 300) return ['ok' => true,  'response' => $resp];
+    return ['ok' => false, 'error' => "HTTP {$httpCode}: " . $resp];
 }
 
 /* ═══════════════════════════════════════════════════
@@ -291,6 +278,19 @@ try {
     if (!in_array('validade', $rmCols)) {
         $pdo->exec("ALTER TABLE reativacao_mensagens ADD COLUMN validade VARCHAR(255) NULL AFTER mensagem");
     }
+} catch (Throwable $e) {}
+
+// Suporte a mídia nas mensagens pós-barbearia e reativação
+try {
+    $rmCols = $pdo->query('SHOW COLUMNS FROM reativacao_mensagens')->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('media_url',  $rmCols)) $pdo->exec("ALTER TABLE reativacao_mensagens ADD COLUMN media_url  VARCHAR(500) NULL AFTER validade");
+    if (!in_array('media_type', $rmCols)) $pdo->exec("ALTER TABLE reativacao_mensagens ADD COLUMN media_type VARCHAR(20)  NULL AFTER media_url");
+} catch (Throwable $e) {}
+
+// Suporte a mídia nos envios individuais
+try {
+    $reCols = $pdo->query('SHOW COLUMNS FROM reativacao_envios')->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('media_url', $reCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN media_url VARCHAR(500) NULL AFTER mensagem");
 } catch (Throwable $e) {}
 
 /* ═══════════════════════════════════════════════════
@@ -834,9 +834,10 @@ if ($action === 'get_pos_barbearia') {
 // ── POST: criar lote pós-barbearia ───────────────────────────
 if ($action === 'create_lote_pos_barbearia') {
     $body    = json_decode(file_get_contents('php://input'), true) ?? [];
-    $envios  = $body['envios']      ?? [];
-    $obs     = $body['observacoes'] ?? 'Pós-barbearia';
-    $varidx  = (int)($body['variacao_idx'] ?? 0);
+    $envios   = $body['envios']      ?? [];
+    $obs      = $body['observacoes'] ?? 'Pós-barbearia';
+    $varidx   = (int)($body['variacao_idx'] ?? 0);
+    $mediaUrl = $body['media_url'] ?? null;
 
     if (empty($envios)) {
         echo json_encode(['ok' => false, 'error' => 'Nenhum cliente selecionado.']);
@@ -862,8 +863,8 @@ if ($action === 'create_lote_pos_barbearia') {
 
         // Insere envios individuais
         $stmt = $pdo->prepare("INSERT INTO reativacao_envios
-            (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status)
-            VALUES (?, ?, ?, ?, ?, 'barbearia', ?, 1, 'pendente')");
+            (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status, media_url)
+            VALUES (?, ?, ?, ?, ?, 'barbearia', ?, 1, 'pendente', ?)");
 
         foreach ($envios as $e) {
             $stmt->execute([
@@ -873,6 +874,7 @@ if ($action === 'create_lote_pos_barbearia') {
                 $e['whatsapp'],
                 $e['nome'],
                 $e['mensagem'],
+                $mediaUrl,
             ]);
         }
 
@@ -919,6 +921,7 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $tentativa = (int)($body['tentativa'] ?? 1);
     $observ    = trim($body['observacoes'] ?? '');
     $contexto  = trim($body['contexto']   ?? 'misto');
+    $mediaUrl  = $body['media_url'] ?? null;
 
     if (empty($clientIds)) {
         echo json_encode(['ok' => false, 'error' => 'Nenhum cliente selecionado.']);
@@ -990,9 +993,9 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pdo->prepare("
                 INSERT INTO reativacao_envios
-                    (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente')
-            ")->execute([$loteId, $cl['id'], $companyId, $cl['whatsapp'], $cl['nome'], $ctx, $msg, $tentativa]);
+                    (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status, media_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?)
+            ")->execute([$loteId, $cl['id'], $companyId, $cl['whatsapp'], $cl['nome'], $ctx, $msg, $tentativa, $mediaUrl]);
         }
 
         $pdo->commit();
@@ -1110,7 +1113,14 @@ if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("UPDATE reativacao_lotes SET status='em_andamento', iniciado_em=COALESCE(iniciado_em,NOW()) WHERE id=?")->execute([$loteId]);
 
         // Tenta enviar
-        $result = send_whatsapp($envio['whatsapp'], $envio['mensagem'], $pdo, $companyId);
+        $result = send_whatsapp(
+            $envio['whatsapp'],
+            $envio['mensagem'],
+            $pdo,
+            $companyId,
+            $envio['media_url']  ?? null,
+            'image/jpeg'
+        );
 
         if ($result['ok']) {
             // Sucesso
@@ -1777,6 +1787,49 @@ if ($action === 'create_lote_promo') {
     } catch (Throwable $e) {
         echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
     }
+    exit;
+}
+
+/* ═══════════════════════════════════════════════════
+   UPLOAD DE BANNER / IMAGEM PARA MENSAGENS
+═══════════════════════════════════════════════════ */
+if ($action === 'upload_media' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $file = $_FILES['media'] ?? null;
+
+    if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
+        echo json_encode(['ok' => false, 'error' => 'Arquivo inválido ou não enviado.']);
+        exit;
+    }
+
+    $allowed = ['image/jpeg','image/png','image/webp','image/gif'];
+    $finfo   = new finfo(FILEINFO_MIME_TYPE);
+    $mime    = $finfo->file($file['tmp_name']);
+
+    if (!in_array($mime, $allowed)) {
+        echo json_encode(['ok' => false, 'error' => 'Formato não suportado. Use JPG, PNG, WEBP ou GIF.']);
+        exit;
+    }
+
+    $maxSize = 5 * 1024 * 1024; // 5MB
+    if ($file['size'] > $maxSize) {
+        echo json_encode(['ok' => false, 'error' => 'Arquivo muito grande. Máximo 5MB.']);
+        exit;
+    }
+
+    $ext      = ['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp','image/gif'=>'gif'][$mime];
+    $filename = 'reativ_banner_' . $companyId . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+    $dir      = __DIR__ . '/uploads/reativacao/';
+
+    if (!is_dir($dir)) mkdir($dir, 0755, true);
+
+    $dest = $dir . $filename;
+    if (!move_uploaded_file($file['tmp_name'], $dest)) {
+        echo json_encode(['ok' => false, 'error' => 'Falha ao salvar o arquivo.']);
+        exit;
+    }
+
+    $url = BASE_URL . '/uploads/reativacao/' . $filename;
+    echo json_encode(['ok' => true, 'url' => $url, 'mime' => $mime, 'filename' => $filename]);
     exit;
 }
 
