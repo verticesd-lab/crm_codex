@@ -47,6 +47,7 @@ $ALL_MODULES = [
     ['equipe',               'Equipe',               'Gestão de funcionários e permissões.',                      'staff.php',              '👤', 'config',    false],
     ['configuracoes',        'Configurações',        'Configurações da empresa e do sistema.',                    'settings.php',           '⚙️', 'config',    true ],
     ['ofertas',              'Ofertas',              'Flash sale com urgência, countdown e WhatsApp.',            'ofertas_admin.php',      '⚡', 'marketing', false],
+    ['clube',                'Clube For Men',        'Cashback, selos da barbearia e vouchers automáticos.',       'club_cashier.php',       '🏆', 'marketing', false],
 ];
 
 /* ── Módulos ativos — SEMPRE um array válido ── */
