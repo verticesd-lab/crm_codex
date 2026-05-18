@@ -17,6 +17,9 @@ try {
     if (!in_array('origem', $cols, true)) {
         $pdo->exec("ALTER TABLE orders ADD COLUMN origem VARCHAR(50) DEFAULT 'pdv'");
     }
+    if (!in_array('club_cashback_gerado', $cols, true)) {
+        $pdo->exec("ALTER TABLE orders ADD COLUMN club_cashback_gerado DECIMAL(10,2) DEFAULT NULL");
+    }
 } catch (Throwable $e) {
 }
 
@@ -151,6 +154,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             log_action($pdo,(int)$companyId,(int)$userId,'pdv_venda','Pedido #'.$orderId.' R$'.$total.' '.$pagamento);
+            // ══ CLUBE FOR MEN — Cashback automático ══
+            if ($clientId) {
+                try {
+                    $clubRules = $pdo->prepare("SELECT * FROM club_rules WHERE company_id=? AND ativo=1 LIMIT 1");
+                    $clubRules->execute([$companyId]);
+                    $clubRules = $clubRules->fetch();
+
+                    if ($clubRules && $total >= (float)$clubRules['cashback_minimo']) {
+                        $cashback = round($total * $clubRules['cashback_pct'] / 100, 2);
+                        $expira   = date('Y-m-d', strtotime('+' . $clubRules['cashback_validade'] . ' days'));
+
+                        // Garante carteira
+                        $w = $pdo->prepare("SELECT id FROM club_wallets WHERE company_id=? AND client_id=? LIMIT 1");
+                        $w->execute([$companyId, $clientId]);
+                        $walletId = $w->fetchColumn();
+                        if (!$walletId) {
+                            $pdo->prepare("INSERT INTO club_wallets (company_id,client_id) VALUES (?,?)")
+                                ->execute([$companyId, $clientId]);
+                            $walletId = (int)$pdo->lastInsertId();
+                        }
+
+                        // Credita saldo
+                        $pdo->prepare("UPDATE club_wallets SET saldo=saldo+?, total_ganho=total_ganho+?, updated_at=NOW() WHERE id=?")
+                            ->execute([$cashback, $cashback, $walletId]);
+
+                        // Registra transação
+                        $pdo->prepare("INSERT INTO club_transactions (company_id,client_id,wallet_id,tipo,valor,descricao,referencia_id,referencia_tipo,expira_em) VALUES (?,?,?,'credito',?,?,?,'order',?)")
+                            ->execute([$companyId, $clientId, $walletId, $cashback,
+                                'Cashback PDV — Pedido #' . $orderId, $orderId, $expira]);
+
+                        // Atualiza order
+                        $pdo->prepare("UPDATE orders SET club_cashback_gerado=? WHERE id=?")
+                            ->execute([$cashback, $orderId]);
+
+                        // WhatsApp imediato
+                        $cliRow = $pdo->prepare("SELECT nome, whatsapp FROM clients WHERE id=? LIMIT 1");
+                        $cliRow->execute([$clientId]);
+                        $cliRow = $cliRow->fetch();
+                        $whats  = preg_replace('/\D+/', '', $cliRow['whatsapp'] ?? '');
+                        $nome   = explode(' ', trim($cliRow['nome'] ?? ''))[0];
+                        $clube  = $clubRules['nome_clube'] ?? 'Clube For Men';
+                        $saldoAtual = (float)$pdo->query("SELECT saldo FROM club_wallets WHERE id=$walletId")->fetchColumn();
+
+                        if (strlen($whats) >= 8) {
+                            $msg  = "🔥 *{$clube}*\n\n";
+                            $msg .= "Oi {$nome}! Você ganhou *R$" . number_format($cashback, 2, ',', '.') . "* de cashback na sua compra de hoje.\n\n";
+                            $msg .= "💰 Saldo total: *R$" . number_format($saldoAtual, 2, ',', '.') . "*\n";
+                            $msg .= "⏰ Válido por {$clubRules['cashback_validade']} dias.\n\n";
+                            $msg .= "Use na próxima compra! 👊";
+                            send_whatsapp_message($whats, $msg);
+
+                            $pdo->prepare("INSERT INTO club_automation_logs (company_id,client_id,tipo,whatsapp,mensagem,enviado) VALUES (?,?,'pos_compra',?,?,1)")
+                                ->execute([$companyId, $clientId, $whats, $msg]);
+                        }
+
+                        $clubCashback = $cashback;
+                    }
+                } catch (\Throwable $clubErr) {
+                    error_log('Clube cashback error: ' . $clubErr->getMessage());
+                }
+            }
+            // ══ FIM CLUBE ══
             $flashSuccess = 'Venda #'.$orderId.' registrada — '.strtoupper($pagamento).' — R$ '.number_format($total,2,',','.');
         }
     }
@@ -1094,6 +1159,13 @@ include __DIR__ . '/views/partials/header.php';
     const orderId  = document.getElementById('last-order-id').value;
     toastMsg.textContent = '✅ Venda registrada com sucesso!';
     toastSub.textContent = flashMsg;
+    const cbVal = '<?= isset($clubCashback) ? number_format($clubCashback, 2, ",", ".") : "" ?>';
+    if (cbVal) {
+        const cbEl = document.createElement('p');
+        cbEl.style.cssText = 'color:#22c55e;font-size:.72rem;margin-top:.2rem;font-weight:700;';
+        cbEl.textContent = '⚡ Cashback de R$' + cbVal + ' gerado no Clube!';
+        document.getElementById('pos-toast').appendChild(cbEl);
+    }
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 4500);
     // Limpa o carrinho após venda
