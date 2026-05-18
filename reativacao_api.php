@@ -1729,6 +1729,7 @@ if ($action === 'create_lote_promo') {
     $envios    = $body['envios']      ?? [];
     $obs       = $body['observacoes'] ?? 'Promoção';
     $msgTitulo = $body['msg_titulo']  ?? 'Promoção';
+    $mediaUrl  = $body['media_url']   ?? null;
 
     if (empty($envios)) {
         echo json_encode(['ok' => false, 'error' => 'Nenhum cliente selecionado.']);
@@ -1760,14 +1761,14 @@ if ($action === 'create_lote_promo') {
         // Insere envios
         $stmtE = $pdo->prepare("
             INSERT INTO reativacao_envios
-                (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status)
-            VALUES (?, ?, ?, ?, ?, 'promocao', ?, 1, 'pendente')
+                (lote_id, client_id, company_id, whatsapp, nome, contexto, mensagem, tentativa, status, media_url)
+            VALUES (?, ?, ?, ?, ?, 'promocao', ?, 1, 'pendente', ?)
         ");
         foreach ($envios as $e) {
             $nomeEnvio = $e['nome'] ?? '';
             $firstName = explode(' ', trim($nomeEnvio))[0] ?: 'Cliente';
             $mensagem  = preg_replace('/\{nome\}/i', $firstName, $e['mensagem'] ?? '');
-            $stmtE->execute([$loteId, (int)$e['client_id'], $companyId, $e['whatsapp'], $nomeEnvio, $mensagem]);
+            $stmtE->execute([$loteId, (int)$e['client_id'], $companyId, $e['whatsapp'], $nomeEnvio, $mensagem, $mediaUrl]);
         }
 
         // Registra cooldown DIÁRIO — bloqueia o número pelo resto do dia

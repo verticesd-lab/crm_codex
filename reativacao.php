@@ -826,6 +826,36 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
       <div class="rv-cfg-row" style="border:none;"><span class="rv-cfg-lbl">Horário</span><span class="rv-cfg-val">09:00 – 20:00</span></div>
     </div>
     <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem;">Observação (opcional)</p>
+    <!-- Banner/Imagem opcional -->
+    <div style="margin-bottom:1rem;" data-banner-root>
+      <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
+        🖼️ Banner / Imagem (opcional)
+      </p>
+      <div id="promo-banner-upload-zone" data-banner-zone
+        style="border:2px dashed #e2e8f0;border-radius:10px;padding:1.25rem;text-align:center;cursor:pointer;transition:all .2s;background:#f8fafc;"
+        onclick="openBannerFile(this)"
+        ondragover="event.preventDefault();this.style.borderColor='#6366f1';this.style.background='#f5f3ff';"
+        ondragleave="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';"
+        ondrop="handleBannerDrop(event)">
+        <input type="file" id="promo-banner-file-input" data-banner-file accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0], this)">
+        <div id="promo-banner-upload-placeholder" data-banner-placeholder>
+          <div style="font-size:1.5rem;margin-bottom:.4rem;">🖼️</div>
+          <p style="font-size:.8rem;color:#64748b;font-weight:600;">Clique ou arraste o banner aqui</p>
+          <p style="font-size:.72rem;color:#94a3b8;margin-top:.2rem;">JPG, PNG, WEBP · máx. 5MB · será enviado junto com o texto</p>
+        </div>
+        <div id="promo-banner-preview-wrap" data-banner-preview-wrap style="display:none;">
+          <img id="promo-banner-preview-img" data-banner-preview-img style="max-height:140px;max-width:100%;border-radius:8px;object-fit:contain;">
+          <div style="margin-top:.5rem;display:flex;align-items:center;justify-content:center;gap:.5rem;">
+            <span id="promo-banner-preview-name" data-banner-preview-name style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
+            <button onclick="event.stopPropagation();removeBanner(this)"
+              style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
+              ✕ Remover
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="promo-banner-upload-status" data-banner-status style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
+    </div>
     <textarea class="rv-obs" id="promo-modal-obs" rows="2" placeholder="Ex: Promoção semana fecha mês, abril/2026..."></textarea>
     <div style="display:flex;gap:.6rem;justify-content:flex-end;">
       <button class="btn btn-ghost" onclick="promoCloseModal()">Cancelar</button>
@@ -2054,6 +2084,7 @@ function promoOpenModal() {
   document.getElementById('promo-cfg-total').textContent = PROMO.selected.size + ' contatos';
   document.getElementById('promo-modal-preview').textContent = promoBuildMessage(first);
   document.getElementById('promo-modal-summary').textContent = `Lote de promoção com ${PROMO.selected.size} contato(s) — "${msg.titulo}"`;
+  resetBannerState(document.querySelector('#promo-modal [data-banner-root]'));
   document.getElementById('promo-modal').classList.add('open');
 }
 
@@ -2079,13 +2110,15 @@ async function promoConfirmLote() {
       mensagem: promoBuildMessage(c)
     }));
 
+  const mediaUrl = await uploadBannerIfNeeded();
   const d = await fetch(`${API}?action=create_lote_promo`, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       envios,
       observacoes: obs || msg.titulo,
-      msg_titulo: msg.titulo
+      msg_titulo: msg.titulo,
+      media_url: mediaUrl
     })
   }).then(r=>r.json()).catch(()=>({ok:false,error:'Erro de comunicação'}));
 
@@ -2626,6 +2659,7 @@ function promoOpenModal() {
   document.getElementById('promo-cfg-total').textContent     = PROMO.selected.size + ' contatos';
   document.getElementById('promo-modal-preview').textContent  = preview;
   document.getElementById('promo-modal-summary').textContent  = `Promoção "${titulo}" para ${PROMO.selected.size} contato(s).${validade ? ' · ⏰ ' + validade : ''}`;
+  resetBannerState(document.querySelector('#promo-modal [data-banner-root]'));
   document.getElementById('promo-modal').classList.add('open');
 }
 
@@ -2653,9 +2687,10 @@ async function promoConfirmLote() {
     }));
 
   try {
+    const mediaUrl = await uploadBannerIfNeeded();
     const r = await fetch(`${API}?action=create_lote_promo`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ envios, observacoes: obs || titulo, msg_titulo: titulo }),
+      body: JSON.stringify({ envios, observacoes: obs || titulo, msg_titulo: titulo, media_url: mediaUrl }),
     });
     const d = await r.json();
     promoCloseModal();
