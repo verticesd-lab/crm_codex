@@ -635,6 +635,36 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
       <div class="rv-cfg-row" style="border:none"><span class="rv-cfg-lbl">Horário permitido</span><span class="rv-cfg-val">09:00 – 20:00</span></div>
     </div>
     <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem">Observação (opcional)</p>
+    <!-- Banner/Imagem opcional -->
+    <div style="margin-bottom:1rem;" data-banner-root>
+      <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
+        🖼️ Banner / Imagem (opcional)
+      </p>
+      <div id="pb-banner-upload-zone" data-banner-zone
+        style="border:2px dashed #e2e8f0;border-radius:10px;padding:1.25rem;text-align:center;cursor:pointer;transition:all .2s;background:#f8fafc;"
+        onclick="openBannerFile(this)"
+        ondragover="event.preventDefault();this.style.borderColor='#6366f1';this.style.background='#f5f3ff';"
+        ondragleave="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';"
+        ondrop="handleBannerDrop(event)">
+        <input type="file" id="pb-banner-file-input" data-banner-file accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0], this)">
+        <div id="pb-banner-upload-placeholder" data-banner-placeholder>
+          <div style="font-size:1.5rem;margin-bottom:.4rem;">🖼️</div>
+          <p style="font-size:.8rem;color:#64748b;font-weight:600;">Clique ou arraste o banner aqui</p>
+          <p style="font-size:.72rem;color:#94a3b8;margin-top:.2rem;">JPG, PNG, WEBP · máx. 5MB · será enviado junto com o texto</p>
+        </div>
+        <div id="pb-banner-preview-wrap" data-banner-preview-wrap style="display:none;">
+          <img id="pb-banner-preview-img" data-banner-preview-img style="max-height:140px;max-width:100%;border-radius:8px;object-fit:contain;">
+          <div style="margin-top:.5rem;display:flex;align-items:center;justify-content:center;gap:.5rem;">
+            <span id="pb-banner-preview-name" data-banner-preview-name style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
+            <button onclick="event.stopPropagation();removeBanner(this)"
+              style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
+              ✕ Remover
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="pb-banner-upload-status" data-banner-status style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
+    </div>
     <textarea class="rv-obs" id="pb-modal-obs" rows="2" placeholder="Ex: Campanha abril, promoção coleção inverno..."></textarea>
     <div style="display:flex;gap:.6rem;justify-content:flex-end">
       <button class="btn btn-ghost" onclick="pbCloseModal()">Cancelar</button>
@@ -897,34 +927,34 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     </div>
     <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem">Observação (opcional)</p>
     <!-- Banner/Imagem opcional -->
-    <div style="margin-bottom:1rem;">
+    <div style="margin-bottom:1rem;" data-banner-root>
       <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
         🖼️ Banner / Imagem (opcional)
       </p>
-      <div id="banner-upload-zone"
+      <div id="banner-upload-zone" data-banner-zone
         style="border:2px dashed #e2e8f0;border-radius:10px;padding:1.25rem;text-align:center;cursor:pointer;transition:all .2s;background:#f8fafc;"
-        onclick="document.getElementById('banner-file-input').click()"
+        onclick="openBannerFile(this)"
         ondragover="event.preventDefault();this.style.borderColor='#6366f1';this.style.background='#f5f3ff';"
         ondragleave="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';"
         ondrop="handleBannerDrop(event)">
-        <input type="file" id="banner-file-input" accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0])">
-        <div id="banner-upload-placeholder">
+        <input type="file" id="banner-file-input" data-banner-file accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0], this)">
+        <div id="banner-upload-placeholder" data-banner-placeholder>
           <div style="font-size:1.5rem;margin-bottom:.4rem;">🖼️</div>
           <p style="font-size:.8rem;color:#64748b;font-weight:600;">Clique ou arraste o banner aqui</p>
           <p style="font-size:.72rem;color:#94a3b8;margin-top:.2rem;">JPG, PNG, WEBP · máx. 5MB · será enviado junto com o texto</p>
         </div>
-        <div id="banner-preview-wrap" style="display:none;">
-          <img id="banner-preview-img" style="max-height:140px;max-width:100%;border-radius:8px;object-fit:contain;">
+        <div id="banner-preview-wrap" data-banner-preview-wrap style="display:none;">
+          <img id="banner-preview-img" data-banner-preview-img style="max-height:140px;max-width:100%;border-radius:8px;object-fit:contain;">
           <div style="margin-top:.5rem;display:flex;align-items:center;justify-content:center;gap:.5rem;">
-            <span id="banner-preview-name" style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
-            <button onclick="event.stopPropagation();removeBanner()"
+            <span id="banner-preview-name" data-banner-preview-name style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
+            <button onclick="event.stopPropagation();removeBanner(this)"
               style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
               ✕ Remover
             </button>
           </div>
         </div>
       </div>
-      <div id="banner-upload-status" style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
+      <div id="banner-upload-status" data-banner-status style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
     </div>
     <textarea class="rv-obs" id="modal-obs" rows="2" placeholder="Ex: Campanha março, clientes barbearia..."></textarea>
     <div style="display:flex;gap:.6rem;justify-content:flex-end">
@@ -1156,6 +1186,7 @@ function openModal(){
   }
 
   document.getElementById('modal-summary').textContent = `${total} contatos · ${n > 0 ? n+' variações de mensagem' : 'mensagem padrão'} · ${tent}ª tentativa`;
+  resetBannerState(document.querySelector('#rv-modal [data-banner-root]'));
   document.getElementById('rv-modal').classList.add('open');
 }
 function closeModal(){document.getElementById('rv-modal').classList.remove('open');}
@@ -2352,6 +2383,7 @@ function pbOpenModal() {
   document.getElementById('pb-cfg-total').textContent     = PB.selected.size+' clientes';
   document.getElementById('pb-modal-preview').textContent  = preview;
   document.getElementById('pb-modal-summary').textContent  = `Lote pós-barbearia com ${PB.selected.size} cliente(s) — "${msg.titulo}"${msg.validade?' · ⏰ '+msg.validade:''}`;
+  resetBannerState(document.querySelector('#pb-modal [data-banner-root]'));
   document.getElementById('pb-modal').classList.add('open');
 }
 
@@ -2644,16 +2676,61 @@ async function promoConfirmLote() {
 ══════════════════════════════════ */
 let BANNER_URL  = null;
 let BANNER_FILE = null;
+let BANNER_ROOT = null;
+
+function getBannerRoot(el) {
+  const root = el?.closest?.('[data-banner-root]');
+  if (root) {
+    BANNER_ROOT = root;
+    return root;
+  }
+
+  const active = document.querySelector('.rv-modal-ov.open [data-banner-root]');
+  if (active) {
+    BANNER_ROOT = active;
+    return active;
+  }
+
+  return BANNER_ROOT || document.querySelector('[data-banner-root]');
+}
+
+function bannerEl(selector, rootOrEl) {
+  const root = getBannerRoot(rootOrEl);
+  return root ? root.querySelector(selector) : null;
+}
+
+function resetBannerState(rootOrEl) {
+  const root = getBannerRoot(rootOrEl);
+  BANNER_URL  = null;
+  BANNER_FILE = null;
+  BANNER_ROOT = root;
+
+  if (!root) return;
+  const input = bannerEl('[data-banner-file]', root);
+  if (input) input.value = '';
+  const preview = bannerEl('[data-banner-preview-wrap]', root);
+  const placeholder = bannerEl('[data-banner-placeholder]', root);
+  const status = bannerEl('[data-banner-status]', root);
+  if (preview) preview.style.display = 'none';
+  if (placeholder) placeholder.style.display = 'block';
+  if (status) status.style.display = 'none';
+}
+
+function openBannerFile(el) {
+  bannerEl('[data-banner-file]', el)?.click();
+}
 
 function handleBannerDrop(e) {
   e.preventDefault();
-  document.getElementById('banner-upload-zone').style.borderColor = '#e2e8f0';
-  document.getElementById('banner-upload-zone').style.background  = '#f8fafc';
+  const zone = e.currentTarget;
+  getBannerRoot(zone);
+  zone.style.borderColor = '#e2e8f0';
+  zone.style.background  = '#f8fafc';
   const file = e.dataTransfer.files[0];
-  if (file) handleBannerFile(file);
+  if (file) handleBannerFile(file, zone);
 }
 
-function handleBannerFile(file) {
+function handleBannerFile(file, el) {
   if (!file) return;
   const allowed = ['image/jpeg','image/png','image/webp','image/gif'];
   if (!allowed.includes(file.type)) {
@@ -2664,31 +2741,35 @@ function handleBannerFile(file) {
   }
 
   BANNER_FILE = file;
+  const root = getBannerRoot(el);
 
   // Preview local
   const reader = new FileReader();
   reader.onload = e => {
-    document.getElementById('banner-preview-img').src = e.target.result;
-    document.getElementById('banner-preview-name').textContent = '✅ ' + file.name;
-    document.getElementById('banner-upload-placeholder').style.display = 'none';
-    document.getElementById('banner-preview-wrap').style.display = 'block';
+    bannerEl('[data-banner-preview-img]', root).src = e.target.result;
+    bannerEl('[data-banner-preview-name]', root).textContent = '✅ ' + file.name;
+    bannerEl('[data-banner-placeholder]', root).style.display = 'none';
+    bannerEl('[data-banner-preview-wrap]', root).style.display = 'block';
   };
   reader.readAsDataURL(file);
 
-  showBannerStatus('⏳ Aguardando criação do lote para fazer upload...', '#6366f1');
+  showBannerStatus('⏳ Aguardando criação do lote para fazer upload...', '#6366f1', root);
 }
 
-function removeBanner() {
+function removeBanner(el) {
   BANNER_URL  = null;
   BANNER_FILE = null;
-  document.getElementById('banner-file-input').value = '';
-  document.getElementById('banner-preview-wrap').style.display       = 'none';
-  document.getElementById('banner-upload-placeholder').style.display = 'block';
-  document.getElementById('banner-upload-status').style.display      = 'none';
+  const root = getBannerRoot(el);
+  const input = bannerEl('[data-banner-file]', root);
+  if (input) input.value = '';
+  bannerEl('[data-banner-preview-wrap]', root).style.display = 'none';
+  bannerEl('[data-banner-placeholder]', root).style.display  = 'block';
+  bannerEl('[data-banner-status]', root).style.display       = 'none';
 }
 
-function showBannerStatus(msg, color) {
-  const el = document.getElementById('banner-upload-status');
+function showBannerStatus(msg, color, rootOrEl) {
+  const el = bannerEl('[data-banner-status]', rootOrEl);
+  if (!el) return;
   el.textContent  = msg;
   el.style.color  = color || '#64748b';
   el.style.display = 'block';
@@ -2696,7 +2777,7 @@ function showBannerStatus(msg, color) {
 
 async function uploadBannerIfNeeded() {
   if (!BANNER_FILE) return null;
-  showBannerStatus('⏳ Enviando banner...', '#6366f1');
+  showBannerStatus('⏳ Enviando banner...', '#6366f1', BANNER_ROOT);
 
   const fd = new FormData();
   fd.append('media', BANNER_FILE);
@@ -2706,14 +2787,14 @@ async function uploadBannerIfNeeded() {
     const d = await r.json();
     if (d.ok) {
       BANNER_URL = d.url;
-      showBannerStatus('✅ Banner enviado: ' + d.filename, '#16a34a');
+      showBannerStatus('✅ Banner enviado: ' + d.filename, '#16a34a', BANNER_ROOT);
       return d.url;
     } else {
-      showBannerStatus('❌ Erro no upload: ' + (d.error||'Falha'), '#dc2626');
+      showBannerStatus('❌ Erro no upload: ' + (d.error||'Falha'), '#dc2626', BANNER_ROOT);
       return null;
     }
   } catch(e) {
-    showBannerStatus('❌ Erro de comunicação no upload.', '#dc2626');
+    showBannerStatus('❌ Erro de comunicação no upload.', '#dc2626', BANNER_ROOT);
     return null;
   }
 }
