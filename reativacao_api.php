@@ -212,6 +212,85 @@ function response_indicates_whatsapp_missing($data): bool {
         || str_contains($lower, 'number not found');
 }
 
+function app_public_base_url(): string {
+    $base = defined('BASE_URL') ? rtrim((string)BASE_URL, '/') : '';
+    if ($base !== '') return $base;
+
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host === '') return '';
+
+    $forwardedProto = strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || $forwardedProto === 'https'
+        || (int)($_SERVER['SERVER_PORT'] ?? 0) === 443;
+
+    return ($isHttps ? 'https' : 'http') . '://' . $host;
+}
+
+function public_upload_url(string $relativePath): string {
+    return rtrim(app_public_base_url(), '/') . '/' . ltrim($relativePath, '/');
+}
+
+function media_local_path_from_url(string $mediaUrl): ?string {
+    $path = parse_url($mediaUrl, PHP_URL_PATH);
+    if (!$path && str_starts_with($mediaUrl, '/uploads/')) $path = $mediaUrl;
+    if (!$path || !str_starts_with($path, '/uploads/')) return null;
+
+    $uploadsRoot = realpath(__DIR__ . '/uploads');
+    if (!$uploadsRoot) return null;
+
+    $local = __DIR__ . str_replace('/', DIRECTORY_SEPARATOR, rawurldecode($path));
+    $real  = realpath($local);
+
+    if (!$real || !is_file($real) || !str_starts_with($real, $uploadsRoot)) return null;
+    return $real;
+}
+
+function media_mime_from_filename(string $filename, ?string $fallback = null): string {
+    $ext = strtolower(pathinfo(parse_url($filename, PHP_URL_PATH) ?: $filename, PATHINFO_EXTENSION));
+    return match ($ext) {
+        'png'  => 'image/png',
+        'webp' => 'image/webp',
+        'gif'  => 'image/gif',
+        default => $fallback ?: 'image/jpeg',
+    };
+}
+
+function build_evolution_media_payload(string $mediaUrl, ?string $mediaType = null): ?array {
+    $mediaUrl = trim($mediaUrl);
+    if ($mediaUrl === '') return null;
+
+    $localPath = media_local_path_from_url($mediaUrl);
+    if ($localPath && is_readable($localPath)) {
+        $mime = $mediaType ?: media_mime_from_filename($localPath);
+        try {
+            $detected = (new finfo(FILEINFO_MIME_TYPE))->file($localPath);
+            if (is_string($detected) && str_starts_with($detected, 'image/')) $mime = $detected;
+        } catch (Throwable $e) {}
+
+        $contents = file_get_contents($localPath);
+        if ($contents === false) return null;
+
+        return [
+            'media'    => base64_encode($contents),
+            'mimetype' => $mime,
+            'fileName' => basename($localPath),
+        ];
+    }
+
+    if (str_starts_with($mediaUrl, '/')) {
+        $mediaUrl = public_upload_url($mediaUrl);
+    }
+
+    if (!filter_var($mediaUrl, FILTER_VALIDATE_URL)) return null;
+
+    return [
+        'media'    => $mediaUrl,
+        'mimetype' => $mediaType ?: media_mime_from_filename($mediaUrl),
+        'fileName' => basename((string)(parse_url($mediaUrl, PHP_URL_PATH) ?: 'banner.jpg')),
+    ];
+}
+
 function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $companyId = null, ?string $mediaUrl = null, ?string $mediaType = null): array {
     $cfg = get_evolution_config($pdo, $companyId);
     if (!$cfg['base'] || !$cfg['key'] || !$cfg['instance']) {
@@ -221,16 +300,18 @@ function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $com
     $digits = preg_replace('/\D/', '', $number);
     if (!str_starts_with($digits, '55')) $digits = '55' . $digits;
 
+    $mediaPayload = $mediaUrl ? build_evolution_media_payload($mediaUrl, $mediaType) : null;
+
     // Se tem mídia, envia como imagem com caption
-    if ($mediaUrl && str_starts_with($mediaType ?? '', 'image/')) {
+    if ($mediaPayload) {
         $url = "{$cfg['base']}/message/sendMedia/{$cfg['instance']}";
         $payload = json_encode([
             'number'   => $digits,
             'mediatype'=> 'image',
-            'mimetype' => $mediaType ?: 'image/jpeg',
+            'mimetype' => $mediaPayload['mimetype'],
             'caption'  => $text,
-            'media'    => $mediaUrl,
-            'fileName' => 'banner.jpg',
+            'media'    => $mediaPayload['media'],
+            'fileName' => $mediaPayload['fileName'],
         ]);
     } else {
         $url = "{$cfg['base']}/message/sendText/{$cfg['instance']}";
@@ -1829,7 +1910,7 @@ if ($action === 'upload_media' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $url = BASE_URL . '/uploads/reativacao/' . $filename;
+    $url = public_upload_url('/uploads/reativacao/' . $filename);
     echo json_encode(['ok' => true, 'url' => $url, 'mime' => $mime, 'filename' => $filename]);
     exit;
 }
