@@ -346,6 +346,37 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     <div id="variation-dist-info" style="display:none;padding:.5rem 1.25rem 1rem;font-size:.78rem;color:#6366f1;font-weight:600;"></div>
   </div>
 
+  <!-- Banner/Imagem opcional -->
+  <div style="margin-bottom:1.25rem;" data-banner-root data-banner-scope="reativacao">
+    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
+      🖼️ Banner / Imagem do lote (opcional)
+    </p>
+    <div id="reativacao-inline-banner-upload-zone" data-banner-zone
+      style="border:2px dashed #e2e8f0;border-radius:10px;padding:1.25rem;text-align:center;cursor:pointer;transition:all .2s;background:#f8fafc;"
+      onclick="openBannerFile(this)"
+      ondragover="event.preventDefault();this.style.borderColor='#6366f1';this.style.background='#f5f3ff';"
+      ondragleave="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';"
+      ondrop="handleBannerDrop(event)">
+      <input type="file" id="reativacao-inline-banner-file-input" data-banner-file accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0], this)">
+      <div id="reativacao-inline-banner-upload-placeholder" data-banner-placeholder>
+        <div style="font-size:1.5rem;margin-bottom:.4rem;">🖼️</div>
+        <p style="font-size:.8rem;color:#64748b;font-weight:600;">Clique ou arraste o banner aqui</p>
+        <p style="font-size:.72rem;color:#94a3b8;margin-top:.2rem;">JPG, PNG, WEBP · máx. 5MB · será enviado junto com o texto</p>
+      </div>
+      <div id="reativacao-inline-banner-preview-wrap" data-banner-preview-wrap style="display:none;">
+        <img id="reativacao-inline-banner-preview-img" data-banner-preview-img style="max-height:140px;max-width:100%;border-radius:8px;object-fit:contain;">
+        <div style="margin-top:.5rem;display:flex;align-items:center;justify-content:center;gap:.5rem;">
+          <span id="reativacao-inline-banner-preview-name" data-banner-preview-name style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
+          <button onclick="event.stopPropagation();removeBanner(this)"
+            style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
+            ✕ Remover
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="reativacao-inline-banner-upload-status" data-banner-status style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
+  </div>
+
   <!-- Barra de seleção -->
   <div id="rv-sel-bar" class="rv-sel-bar" style="display:none">
     <span><strong id="rv-sel-count">0</strong> contatos selecionados</span>
@@ -568,6 +599,37 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     </div>
   </div>
 
+  <!-- Banner/Imagem opcional -->
+  <div style="margin-bottom:1.25rem;" data-banner-root data-banner-scope="barbearia">
+    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
+      🖼️ Banner / Imagem do lote (opcional)
+    </p>
+    <div id="pb-inline-banner-upload-zone" data-banner-zone
+      style="border:2px dashed #e2e8f0;border-radius:10px;padding:1.25rem;text-align:center;cursor:pointer;transition:all .2s;background:#f8fafc;"
+      onclick="openBannerFile(this)"
+      ondragover="event.preventDefault();this.style.borderColor='#6366f1';this.style.background='#f5f3ff';"
+      ondragleave="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';"
+      ondrop="handleBannerDrop(event)">
+      <input type="file" id="pb-inline-banner-file-input" data-banner-file accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0], this)">
+      <div id="pb-inline-banner-upload-placeholder" data-banner-placeholder>
+        <div style="font-size:1.5rem;margin-bottom:.4rem;">🖼️</div>
+        <p style="font-size:.8rem;color:#64748b;font-weight:600;">Clique ou arraste o banner aqui</p>
+        <p style="font-size:.72rem;color:#94a3b8;margin-top:.2rem;">JPG, PNG, WEBP · máx. 5MB · será enviado junto com o texto</p>
+      </div>
+      <div id="pb-inline-banner-preview-wrap" data-banner-preview-wrap style="display:none;">
+        <img id="pb-inline-banner-preview-img" data-banner-preview-img style="max-height:140px;max-width:100%;border-radius:8px;object-fit:contain;">
+        <div style="margin-top:.5rem;display:flex;align-items:center;justify-content:center;gap:.5rem;">
+          <span id="pb-inline-banner-preview-name" data-banner-preview-name style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
+          <button onclick="event.stopPropagation();removeBanner(this)"
+            style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
+            ✕ Remover
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="pb-inline-banner-upload-status" data-banner-status style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
+  </div>
+
   <!-- Barra de seleção -->
   <div id="pb-sel-bar" class="rv-sel-bar" style="display:none">
     <span><strong id="pb-sel-count">0</strong> clientes selecionados</span>
@@ -636,7 +698,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     </div>
     <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem">Observação (opcional)</p>
     <!-- Banner/Imagem opcional -->
-    <div style="margin-bottom:1rem;" data-banner-root>
+    <div style="margin-bottom:1rem;" data-banner-root data-banner-scope="barbearia">
       <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
         🖼️ Banner / Imagem (opcional)
       </p>
@@ -787,6 +849,36 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
               placeholder="Ex: Válido seg. e ter. · Até 30/04 · Esta semana">
             <p style="font-size:.67rem;color:#a16207;margin-top:.2rem;">Será adicionada ao final da mensagem automaticamente.</p>
           </div>
+          <!-- Banner/Imagem opcional -->
+          <div style="margin-bottom:.85rem;" data-banner-root data-banner-scope="promocao">
+            <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
+              🖼️ Banner / Imagem (opcional)
+            </p>
+            <div id="promo-inline-banner-upload-zone" data-banner-zone
+              style="border:2px dashed #e2e8f0;border-radius:10px;padding:1rem;text-align:center;cursor:pointer;transition:all .2s;background:#f8fafc;"
+              onclick="openBannerFile(this)"
+              ondragover="event.preventDefault();this.style.borderColor='#6366f1';this.style.background='#f5f3ff';"
+              ondragleave="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';"
+              ondrop="handleBannerDrop(event)">
+              <input type="file" id="promo-inline-banner-file-input" data-banner-file accept="image/*" style="display:none" onchange="handleBannerFile(this.files[0], this)">
+              <div id="promo-inline-banner-upload-placeholder" data-banner-placeholder>
+                <div style="font-size:1.35rem;margin-bottom:.3rem;">🖼️</div>
+                <p style="font-size:.78rem;color:#64748b;font-weight:600;">Clique ou arraste o banner aqui</p>
+                <p style="font-size:.7rem;color:#94a3b8;margin-top:.2rem;">JPG, PNG, WEBP · máx. 5MB</p>
+              </div>
+              <div id="promo-inline-banner-preview-wrap" data-banner-preview-wrap style="display:none;">
+                <img id="promo-inline-banner-preview-img" data-banner-preview-img style="max-height:120px;max-width:100%;border-radius:8px;object-fit:contain;">
+                <div style="margin-top:.5rem;display:flex;align-items:center;justify-content:center;gap:.5rem;">
+                  <span id="promo-inline-banner-preview-name" data-banner-preview-name style="font-size:.75rem;color:#16a34a;font-weight:600;"></span>
+                  <button onclick="event.stopPropagation();removeBanner(this)"
+                    style="font-size:.7rem;color:#dc2626;border:1px solid #fecaca;background:#fef2f2;border-radius:5px;padding:.15rem .5rem;cursor:pointer;">
+                    ✕ Remover
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div id="promo-inline-banner-upload-status" data-banner-status style="display:none;margin-top:.4rem;font-size:.75rem;"></div>
+          </div>
           <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
             <button class="btn btn-primary btn-sm" onclick="promoSaveMsg()">💾 Salvar mensagem</button>
             <button class="btn btn-ghost btn-sm" onclick="promoNewMsg()">＋ Nova</button>
@@ -827,7 +919,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     </div>
     <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem;">Observação (opcional)</p>
     <!-- Banner/Imagem opcional -->
-    <div style="margin-bottom:1rem;" data-banner-root>
+    <div style="margin-bottom:1rem;" data-banner-root data-banner-scope="promocao">
       <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
         🖼️ Banner / Imagem (opcional)
       </p>
@@ -957,7 +1049,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
     </div>
     <p style="font-size:.78rem;color:#64748b;margin-bottom:.3rem">Observação (opcional)</p>
     <!-- Banner/Imagem opcional -->
-    <div style="margin-bottom:1rem;" data-banner-root>
+    <div style="margin-bottom:1rem;" data-banner-root data-banner-scope="reativacao">
       <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:.5rem;">
         🖼️ Banner / Imagem (opcional)
       </p>
@@ -1216,7 +1308,7 @@ function openModal(){
   }
 
   document.getElementById('modal-summary').textContent = `${total} contatos · ${n > 0 ? n+' variações de mensagem' : 'mensagem padrão'} · ${tent}ª tentativa`;
-  resetBannerState(document.querySelector('#rv-modal [data-banner-root]'));
+  renderBannerState('reativacao');
   document.getElementById('rv-modal').classList.add('open');
 }
 function closeModal(){document.getElementById('rv-modal').classList.remove('open');}
@@ -1230,7 +1322,7 @@ async function confirmLote(){
   const vars = VARIATIONS.map(v=>v.trim()).filter(Boolean);
 
   try {
-    const mediaUrl = await uploadBannerIfNeeded();
+    const mediaUrl = await uploadBannerIfNeeded('reativacao');
     const r = await fetch(`${API}?action=create_lote`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -2084,7 +2176,7 @@ function promoOpenModal() {
   document.getElementById('promo-cfg-total').textContent = PROMO.selected.size + ' contatos';
   document.getElementById('promo-modal-preview').textContent = promoBuildMessage(first);
   document.getElementById('promo-modal-summary').textContent = `Lote de promoção com ${PROMO.selected.size} contato(s) — "${msg.titulo}"`;
-  resetBannerState(document.querySelector('#promo-modal [data-banner-root]'));
+  renderBannerState('promocao');
   document.getElementById('promo-modal').classList.add('open');
 }
 
@@ -2110,7 +2202,7 @@ async function promoConfirmLote() {
       mensagem: promoBuildMessage(c)
     }));
 
-  const mediaUrl = await uploadBannerIfNeeded();
+  const mediaUrl = await uploadBannerIfNeeded('promocao');
   const d = await fetch(`${API}?action=create_lote_promo`, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -2416,7 +2508,7 @@ function pbOpenModal() {
   document.getElementById('pb-cfg-total').textContent     = PB.selected.size+' clientes';
   document.getElementById('pb-modal-preview').textContent  = preview;
   document.getElementById('pb-modal-summary').textContent  = `Lote pós-barbearia com ${PB.selected.size} cliente(s) — "${msg.titulo}"${msg.validade?' · ⏰ '+msg.validade:''}`;
-  resetBannerState(document.querySelector('#pb-modal [data-banner-root]'));
+  renderBannerState('barbearia');
   document.getElementById('pb-modal').classList.add('open');
 }
 
@@ -2441,7 +2533,7 @@ async function pbConfirmLote() {
     }));
 
   try {
-    const mediaUrl = await uploadBannerIfNeeded();
+    const mediaUrl = await uploadBannerIfNeeded('barbearia');
     const r = await fetch(`${API}?action=create_lote_pos_barbearia`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -2659,7 +2751,7 @@ function promoOpenModal() {
   document.getElementById('promo-cfg-total').textContent     = PROMO.selected.size + ' contatos';
   document.getElementById('promo-modal-preview').textContent  = preview;
   document.getElementById('promo-modal-summary').textContent  = `Promoção "${titulo}" para ${PROMO.selected.size} contato(s).${validade ? ' · ⏰ ' + validade : ''}`;
-  resetBannerState(document.querySelector('#promo-modal [data-banner-root]'));
+  renderBannerState('promocao');
   document.getElementById('promo-modal').classList.add('open');
 }
 
@@ -2687,7 +2779,7 @@ async function promoConfirmLote() {
     }));
 
   try {
-    const mediaUrl = await uploadBannerIfNeeded();
+    const mediaUrl = await uploadBannerIfNeeded('promocao');
     const r = await fetch(`${API}?action=create_lote_promo`, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ envios, observacoes: obs || titulo, msg_titulo: titulo, media_url: mediaUrl }),
@@ -2712,16 +2804,42 @@ async function promoConfirmLote() {
 let BANNER_URL  = null;
 let BANNER_FILE = null;
 let BANNER_ROOT = null;
+const BANNER_STATE = {};
 
-function getBannerRoot(el) {
+function bannerScopeFromRoot(root) {
+  return root?.dataset?.bannerScope || 'default';
+}
+
+function bannerState(scope) {
+  const key = scope || 'default';
+  if (!BANNER_STATE[key]) {
+    BANNER_STATE[key] = { file:null, url:null, preview:null, name:'', status:'', color:'#64748b', root:null };
+  }
+  return BANNER_STATE[key];
+}
+
+function getBannerRoot(el, scope) {
   const root = el?.closest?.('[data-banner-root]');
   if (root) {
+    const state = bannerState(bannerScopeFromRoot(root));
+    state.root = root;
     BANNER_ROOT = root;
     return root;
   }
 
+  if (scope) {
+    const scopedActive = document.querySelector(`.rv-modal-ov.open [data-banner-root][data-banner-scope="${scope}"]`);
+    const scopedAny = scopedActive || document.querySelector(`[data-banner-root][data-banner-scope="${scope}"]`);
+    if (scopedAny) {
+      bannerState(scope).root = scopedAny;
+      BANNER_ROOT = scopedAny;
+      return scopedAny;
+    }
+  }
+
   const active = document.querySelector('.rv-modal-ov.open [data-banner-root]');
   if (active) {
+    bannerState(bannerScopeFromRoot(active)).root = active;
     BANNER_ROOT = active;
     return active;
   }
@@ -2734,21 +2852,51 @@ function bannerEl(selector, rootOrEl) {
   return root ? root.querySelector(selector) : null;
 }
 
-function resetBannerState(rootOrEl) {
-  const root = getBannerRoot(rootOrEl);
-  BANNER_URL  = null;
-  BANNER_FILE = null;
-  BANNER_ROOT = root;
+function bannerRoots(scope) {
+  return [...document.querySelectorAll(`[data-banner-root][data-banner-scope="${scope || 'default'}"]`)];
+}
 
-  if (!root) return;
-  const input = bannerEl('[data-banner-file]', root);
-  if (input) input.value = '';
-  const preview = bannerEl('[data-banner-preview-wrap]', root);
-  const placeholder = bannerEl('[data-banner-placeholder]', root);
-  const status = bannerEl('[data-banner-status]', root);
-  if (preview) preview.style.display = 'none';
-  if (placeholder) placeholder.style.display = 'block';
-  if (status) status.style.display = 'none';
+function renderBannerState(scope) {
+  const state = bannerState(scope);
+  bannerRoots(scope).forEach(root => {
+    const input = root.querySelector('[data-banner-file]');
+    const preview = root.querySelector('[data-banner-preview-wrap]');
+    const placeholder = root.querySelector('[data-banner-placeholder]');
+    const status = root.querySelector('[data-banner-status]');
+    const img = root.querySelector('[data-banner-preview-img]');
+    const name = root.querySelector('[data-banner-preview-name]');
+
+    if (state.file && state.preview) {
+      if (img) img.src = state.preview;
+      if (name) name.textContent = '✅ ' + state.name;
+      if (placeholder) placeholder.style.display = 'none';
+      if (preview) preview.style.display = 'block';
+    } else {
+      if (input) input.value = '';
+      if (preview) preview.style.display = 'none';
+      if (placeholder) placeholder.style.display = 'block';
+    }
+
+    if (status && state.status) {
+      status.textContent = state.status;
+      status.style.color = state.color || '#64748b';
+      status.style.display = 'block';
+    } else if (status) {
+      status.style.display = 'none';
+    }
+  });
+}
+
+function resetBannerState(rootOrScope) {
+  const scope = typeof rootOrScope === 'string'
+    ? rootOrScope
+    : bannerScopeFromRoot(getBannerRoot(rootOrScope));
+  BANNER_STATE[scope] = { file:null, url:null, preview:null, name:'', status:'', color:'#64748b', root:null };
+  if (!Object.values(BANNER_STATE).some(state => state.file)) {
+    BANNER_URL = null;
+    BANNER_FILE = null;
+  }
+  renderBannerState(scope);
 }
 
 function openBannerFile(el) {
@@ -2775,61 +2923,66 @@ function handleBannerFile(file, el) {
     alert('Arquivo muito grande. Máximo 5MB.'); return;
   }
 
-  BANNER_FILE = file;
   const root = getBannerRoot(el);
+  const scope = bannerScopeFromRoot(root);
+  const state = bannerState(scope);
+  state.file = file;
+  state.url = null;
+  state.name = file.name;
+  state.root = root;
 
-  // Preview local
+  BANNER_FILE = file;
+  BANNER_ROOT = root;
+
   const reader = new FileReader();
   reader.onload = e => {
-    bannerEl('[data-banner-preview-img]', root).src = e.target.result;
-    bannerEl('[data-banner-preview-name]', root).textContent = '✅ ' + file.name;
-    bannerEl('[data-banner-placeholder]', root).style.display = 'none';
-    bannerEl('[data-banner-preview-wrap]', root).style.display = 'block';
+    state.preview = e.target.result;
+    state.status = '⏳ Aguardando criação do lote para fazer upload...';
+    state.color = '#6366f1';
+    renderBannerState(scope);
   };
   reader.readAsDataURL(file);
-
-  showBannerStatus('⏳ Aguardando criação do lote para fazer upload...', '#6366f1', root);
 }
 
 function removeBanner(el) {
-  BANNER_URL  = null;
-  BANNER_FILE = null;
   const root = getBannerRoot(el);
-  const input = bannerEl('[data-banner-file]', root);
-  if (input) input.value = '';
-  bannerEl('[data-banner-preview-wrap]', root).style.display = 'none';
-  bannerEl('[data-banner-placeholder]', root).style.display  = 'block';
-  bannerEl('[data-banner-status]', root).style.display       = 'none';
+  resetBannerState(bannerScopeFromRoot(root));
 }
 
-function showBannerStatus(msg, color, rootOrEl) {
-  const el = bannerEl('[data-banner-status]', rootOrEl);
-  if (!el) return;
-  el.textContent  = msg;
-  el.style.color  = color || '#64748b';
-  el.style.display = 'block';
+function showBannerStatus(msg, color, rootOrScope) {
+  const scope = typeof rootOrScope === 'string'
+    ? rootOrScope
+    : bannerScopeFromRoot(getBannerRoot(rootOrScope));
+  const state = bannerState(scope);
+  state.status = msg;
+  state.color = color || '#64748b';
+  renderBannerState(scope);
 }
 
-async function uploadBannerIfNeeded() {
-  if (!BANNER_FILE) return null;
-  showBannerStatus('⏳ Enviando banner...', '#6366f1', BANNER_ROOT);
+async function uploadBannerIfNeeded(scope) {
+  const state = bannerState(scope || bannerScopeFromRoot(getBannerRoot(null)));
+  if (!state.file) return null;
+  BANNER_FILE = state.file;
+  BANNER_URL = state.url;
+  showBannerStatus('⏳ Enviando banner...', '#6366f1', scope);
 
   const fd = new FormData();
-  fd.append('media', BANNER_FILE);
+  fd.append('media', state.file);
 
   try {
     const r = await fetch(`${API}?action=upload_media`, { method:'POST', body:fd });
     const d = await r.json();
     if (d.ok) {
+      state.url = d.url;
       BANNER_URL = d.url;
-      showBannerStatus('✅ Banner enviado: ' + d.filename, '#16a34a', BANNER_ROOT);
+      showBannerStatus('✅ Banner enviado: ' + d.filename, '#16a34a', scope);
       return d.url;
     } else {
-      showBannerStatus('❌ Erro no upload: ' + (d.error||'Falha'), '#dc2626', BANNER_ROOT);
+      showBannerStatus('❌ Erro no upload: ' + (d.error||'Falha'), '#dc2626', scope);
       return null;
     }
   } catch(e) {
-    showBannerStatus('❌ Erro de comunicação no upload.', '#dc2626', BANNER_ROOT);
+    showBannerStatus('❌ Erro de comunicação no upload.', '#dc2626', scope);
     return null;
   }
 }
