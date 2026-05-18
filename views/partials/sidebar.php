@@ -16,6 +16,7 @@ $ALL_MENU = [
     ['atendimento',          'Atendimento',          $base . '/atendimento.php',         false],
     ['produtos',             'Produtos',             $base . '/products.php',            false],
     ['ofertas',              'Ofertas',              $base . '/ofertas_admin.php',       false],
+    ['clube',                'Clube For Men',        $base . '/club_cashier.php',        false],
     ['cadastro_inteligente', 'Cadastro Inteligente', $base . '/products_imports.php',    false],
     ['pedidos',              'Pedidos',              $base . '/orders.php',              false],
     ['promocoes',            'Promoções',            $base . '/promotions.php',          false],
