@@ -587,7 +587,7 @@ if ($action === 'get_stats') {
 ═══════════════════════════════════════════════════ */
 if ($action === 'get_eligible') {
     $diasSemVisita = (int)($_GET['dias'] ?? 60);
-    $limite        = max(1, min((int)($_GET['limite'] ?? 50), 80));
+    $limite        = max(1, min((int)($_GET['limite'] ?? 50), 100));
     $contexto      = $_GET['contexto'] ?? 'todos';
     $tentativa     = (int)($_GET['tentativa'] ?? 1);
 

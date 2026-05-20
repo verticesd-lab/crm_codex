@@ -321,6 +321,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
         <option value="30">30 contatos</option>
         <option value="50" selected>50 contatos</option>
         <option value="80">80 contatos</option>
+        <option value="100">100 contatos</option>
       </select>
     </div>
     <div class="rv-fg" style="justify-content:flex-end;padding-top:18px">
@@ -770,6 +771,8 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
             <option value="20">20 contatos</option>
             <option value="30" selected>30 contatos</option>
             <option value="50">50 contatos</option>
+            <option value="80">80 contatos</option>
+            <option value="100">100 contatos</option>
           </select>
         </div>
         <div class="rv-fg">
@@ -780,6 +783,10 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
             <option value="2">3º lote</option>
             <option value="3">4º lote</option>
             <option value="4">5º lote</option>
+            <option value="5">6º lote</option>
+            <option value="6">7º lote</option>
+            <option value="7">8º lote</option>
+            <option value="8">9º lote</option>
           </select>
         </div>
         <div class="rv-fg" style="padding-top:18px;">
