@@ -50,6 +50,24 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 } catch (Throwable $e) {}
 
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS cadastro_qualidade (
+        id            INT AUTO_INCREMENT PRIMARY KEY,
+        company_id    INT NOT NULL,
+        client_id     INT NOT NULL,
+        whatsapp      VARCHAR(30) NOT NULL,
+        ultimo_erro   TEXT NULL,
+        total_erros   TINYINT DEFAULT 1,
+        status        VARCHAR(30) DEFAULT 'standby_7',
+        standby_ate   DATETIME NULL,
+        criado_em     DATETIME DEFAULT NOW(),
+        atualizado_em DATETIME DEFAULT NOW(),
+        UNIQUE KEY uq_company_client (company_id, client_id),
+        INDEX idx_status (status),
+        INDEX idx_standby (standby_ate)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Throwable $e) {}
+
 /* ── KPIs para o dashboard ── */
 $policy = reactivation_policy();
 $stats = ['total'=>0,'elegiveis'=>0,'responderam'=>0,'aguardando'=>0,'standby'=>0,'sem_resposta'=>0,'lote_ativo'=>null,'pode_enviar'=>true,'pode_enviar_em'=>null,'cooldown_reason'=>null,'daily_lotes_used'=>0,'daily_contacts_used'=>0,'remaining_lotes'=>$policy['max_lotes_per_day'],'remaining_contacts'=>$policy['max_contacts_per_day']];
@@ -87,7 +105,7 @@ if ($m = get_flash('success')) echo '<div class="mb-4 p-3 rounded bg-emerald-50 
 if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text-red-700 border border-red-200">'.sanitize($m).'</div>';
 ?>
 <style>
-.rv-tabs{display:flex;gap:.25rem;border-bottom:2px solid #e2e8f0;margin-bottom:1.5rem}
+.rv-tabs{display:flex;gap:.25rem;border-bottom:2px solid #e2e8f0;margin-bottom:1.5rem;flex-wrap:wrap}
 .rv-tab{padding:.65rem 1.25rem;font-size:.85rem;font-weight:600;color:#64748b;text-decoration:none;border:none;background:none;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;transition:all .15s;border-radius:6px 6px 0 0;white-space:nowrap}
 .rv-tab:hover{color:#6366f1;background:#f5f3ff}
 .rv-tab.active{color:#6366f1;border-bottom-color:#6366f1;background:#f5f3ff}
@@ -153,6 +171,10 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
 .seg-btns{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem}
 .seg-btn{padding:.4rem .9rem;border-radius:20px;font-size:.75rem;font-weight:600;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;transition:all .15s}
 .seg-btn:hover{color:#6366f1}.seg-btn.active{background:#f5f3ff;border-color:#6366f1;color:#6366f1}
+.qual-tab { padding:.55rem 1rem; font-size:.78rem; font-weight:600; color:#64748b; cursor:pointer; white-space:nowrap; border:none; background:none; border-bottom:3px solid transparent; margin-bottom:-2px; transition:all .15s; }
+.qual-tab:hover { color:#6366f1; }
+.qual-tab.active { color:#6366f1; border-bottom-color:#6366f1; font-weight:700; }
+.tab-badge { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-size:.6rem; font-weight:800; padding:.1rem .4rem; border-radius:10px; margin-left:.3rem; min-width:18px; }
 .btn{display:inline-flex;align-items:center;gap:.4rem;padding:.6rem 1.1rem;border-radius:9px;font-size:.82rem;font-weight:600;cursor:pointer;border:none;font-family:inherit;text-decoration:none;transition:all .15s;white-space:nowrap}
 .btn-primary{background:#6366f1;color:#fff}.btn-primary:hover{background:#4f46e5}.btn-primary:disabled{opacity:.4;cursor:not-allowed}
 .btn-green{background:#f0fdf4;color:#16a34a;border:1.5px solid #bbf7d0}.btn-green:hover{background:#dcfce7}
@@ -222,6 +244,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   <button class="rv-tab" data-tab="segmentos">🗂️ Segmentos</button>
   <button class="rv-tab" data-tab="pos_barbearia">✂️ Pós-Barbearia</button>
   <button class="rv-tab" data-tab="promocoes">📣 Promoções</button>
+  <button class="rv-tab" data-tab="qualidade">⚠️ Qualidade Cadastral <span id="badge-qualidade" style="display:none;background:#ef4444;color:#fff;font-size:.6rem;font-weight:800;padding:.1rem .4rem;border-radius:10px;margin-left:.3rem;"></span></button>
   <button class="rv-tab" data-tab="mensagens">📝 Mensagens</button>
 </div>
 
@@ -963,6 +986,98 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
   </div>
 </div>
 
+<!-- ═══ QUALIDADE CADASTRAL ═══ -->
+<div id="tab-qualidade" class="rv-panel">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem;">
+    <div>
+      <h2 style="font-size:1rem;font-weight:700;color:#0f172a;">⚠️ Qualidade Cadastral</h2>
+      <p style="font-size:.78rem;color:#64748b;margin-top:.15rem;">Contatos com erro de envio — classificados automaticamente no fluxo de correção.</p>
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="loadQualidade()">↻ Atualizar</button>
+  </div>
+
+  <!-- Fluxo visual -->
+  <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;padding:1rem 1.25rem;background:#fff;border:1px solid #e2e8f0;border-radius:12px;">
+    <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;">
+      <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;flex-shrink:0;"></span>
+      <strong>Erro no envio</strong>
+    </div>
+    <span style="color:#94a3b8;font-size:.85rem;">→</span>
+    <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;">
+      <span style="width:10px;height:10px;border-radius:50%;background:#f59e0b;flex-shrink:0;"></span>
+      <strong>Stand-by 7 dias</strong>
+      <span style="font-size:.7rem;color:#94a3b8;">(fora da lista)</span>
+    </div>
+    <span style="color:#94a3b8;font-size:.85rem;">→</span>
+    <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;">
+      <span style="width:10px;height:10px;border-radius:50%;background:#6366f1;flex-shrink:0;"></span>
+      <strong>Volta à lista</strong>
+    </div>
+    <span style="color:#94a3b8;font-size:.85rem;">→</span>
+    <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;">
+      <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;flex-shrink:0;"></span>
+      <strong>Erro novamente</strong>
+    </div>
+    <span style="color:#94a3b8;font-size:.85rem;">→</span>
+    <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;">
+      <span style="width:10px;height:10px;border-radius:50%;background:#dc2626;flex-shrink:0;"></span>
+      <strong>🚨 Urgência 30 dias</strong>
+      <span style="font-size:.7rem;color:#94a3b8;">(atualizar na loja)</span>
+    </div>
+  </div>
+
+  <!-- Abas internas -->
+  <div style="display:flex;gap:.35rem;margin-bottom:1.25rem;border-bottom:2px solid #e2e8f0;padding-bottom:0;">
+    <button class="qual-tab active" data-qtab="standby_7" onclick="switchQualTab('standby_7',this)">⏳ Stand-by 7 dias <span id="cnt-standby_7" class="tab-badge" style="background:#f59e0b;"></span></button>
+    <button class="qual-tab" data-qtab="urgencia_30" onclick="switchQualTab('urgencia_30',this)">🚨 Urgência 30 dias <span id="cnt-urgencia_30" class="tab-badge" style="background:#dc2626;"></span></button>
+    <button class="qual-tab" data-qtab="liberado_standby" onclick="switchQualTab('liberado_standby',this)">✅ Liberados (stand-by) <span id="cnt-liberado_standby" class="tab-badge" style="background:#16a34a;"></span></button>
+    <button class="qual-tab" data-qtab="liberado_urgencia" onclick="switchQualTab('liberado_urgencia',this)">✅ Liberados (urgência) <span id="cnt-liberado_urgencia" class="tab-badge" style="background:#6366f1;"></span></button>
+  </div>
+
+  <!-- Info contextual -->
+  <div id="qual-ctx-info" style="margin-bottom:1rem;padding:.75rem 1rem;border-radius:9px;font-size:.8rem;display:none;"></div>
+
+  <!-- Tabela -->
+  <div class="rv-table-wrap" id="qual-table-wrap">
+    <div class="rv-empty">Carregando...</div>
+  </div>
+
+</div>
+
+<!-- Modal resolver cadastro -->
+<div class="rv-modal-ov" id="qual-modal" onclick="if(event.target===this)qualCloseModal()">
+  <div class="rv-modal">
+    <h2>✏️ Corrigir Cadastro</h2>
+    <div id="qual-modal-info" style="font-size:.82rem;color:#64748b;margin-bottom:1rem;"></div>
+
+    <div style="margin-bottom:.85rem;">
+      <label style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:block;margin-bottom:.3rem;">Novo número WhatsApp</label>
+      <input id="qual-novo-wa" type="text" placeholder="5565999999999 (deixe vazio se já está correto)"
+        style="width:100%;padding:.55rem .85rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.84rem;font-family:inherit;outline:none;background:#f8fafc;box-sizing:border-box;">
+      <p style="font-size:.68rem;color:#94a3b8;margin-top:.25rem;">Somente números, DDI+DDD+número. Ex: 5565999990000</p>
+    </div>
+
+    <div style="margin-bottom:1.25rem;">
+      <label style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:block;margin-bottom:.3rem;">Observação (opcional)</label>
+      <textarea id="qual-obs" rows="2" placeholder="Ex: Cliente informou novo número na loja em 15/05/26..."
+        style="width:100%;padding:.55rem .85rem;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.84rem;font-family:inherit;resize:none;outline:none;background:#f8fafc;box-sizing:border-box;"></textarea>
+    </div>
+
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:.75rem 1rem;margin-bottom:1.25rem;font-size:.78rem;color:#166534;">
+      ✅ Ao confirmar, o cliente volta para a lista geral de reativação com status <strong>Elegível</strong>.
+    </div>
+
+    <div style="display:flex;gap:.6rem;justify-content:space-between;flex-wrap:wrap;">
+      <button class="btn btn-danger btn-sm" onclick="qualDescartar()" id="qual-btn-descartar">🗑 Descartar permanentemente</button>
+      <div style="display:flex;gap:.6rem;">
+        <button class="btn btn-ghost" onclick="qualCloseModal()">Cancelar</button>
+        <button class="btn btn-primary" id="qual-btn-salvar" onclick="qualSalvar()">✅ Corrigir e liberar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ MENSAGENS ═══ -->
 <div id="tab-mensagens" class="rv-panel">
 
@@ -1095,7 +1210,7 @@ if ($m = get_flash('error'))   echo '<div class="mb-4 p-3 rounded bg-red-50 text
 
 <script>
 const API='reativacao_api.php';
-let ST={eligible:[],selected:new Set(),activeLoteId:<?= $stats['lote_ativo']?(int)$stats['lote_ativo']['id']:'null' ?>,sending:false,timer:null,seg:'respondeu_1',segSel:new Set()};
+let ST={eligible:[],selected:new Set(),activeLoteId:<?= $stats['lote_ativo']?(int)$stats['lote_ativo']['id']:'null' ?>,sending:false,timer:null,seg:'respondeu_1',segSel:new Set(),cqStatus:'standby_7'};
 
 document.querySelectorAll('.rv-tab').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
 function switchTab(tab){
@@ -2993,6 +3108,175 @@ async function uploadBannerIfNeeded(scope) {
     return null;
   }
 }
+
+/* ══════════════════════════════════
+   QUALIDADE CADASTRAL
+══════════════════════════════════ */
+let QUAL_TAB = 'standby_7';
+let QUAL_MODAL_ID = null;
+
+// Carrega ao abrir a aba
+async function loadQualidade() {
+  await switchQualTab(QUAL_TAB);
+}
+
+async function switchQualTab(status, btn) {
+  QUAL_TAB = status;
+  document.querySelectorAll('.qual-tab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  else {
+    const target = document.querySelector(`[data-qtab="${status}"]`);
+    if (target) target.classList.add('active');
+  }
+
+  const wrap = document.getElementById('qual-table-wrap');
+  const info = document.getElementById('qual-ctx-info');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="rv-empty">Carregando...</div>';
+
+  const d = await fetch(`${API}?action=get_cadastro_qualidade&status=${encodeURIComponent(status)}`)
+    .then(r => r.json()).catch(() => ({ ok:false }));
+
+  if (!d.ok) { wrap.innerHTML = '<div class="rv-empty">❌ Erro ao carregar.</div>'; return; }
+
+  // Atualiza badges
+  const counts = d.counts || {};
+  Object.entries(counts).forEach(([s, n]) => {
+    const el = document.getElementById(`cnt-${s}`);
+    if (el) { el.textContent = n; el.style.display = n > 0 ? 'inline-flex' : 'none'; }
+  });
+
+  // Badge global na aba
+  const urgTotal = (counts['urgencia_30'] || 0) + (counts['standby_7'] || 0);
+  const badge = document.getElementById('badge-qualidade');
+  if (badge) { badge.textContent = urgTotal; badge.style.display = urgTotal > 0 ? 'inline-flex' : 'none'; }
+
+  // Info contextual por aba
+  const ctxMap = {
+    standby_7: { bg:'#fffbeb', border:'#fde68a', color:'#92400e', text:'⏳ Estes contatos ficam fora da lista por 7 dias após o erro. Ao retornar, se persistir o erro, vão para Urgência 30 dias.' },
+    urgencia_30: { bg:'#fef2f2', border:'#fecaca', color:'#991b1b', text:'🚨 AÇÃO NECESSÁRIA: Oriente os funcionários a atualizarem esses dados quando o cliente aparecer na loja, pelo WhatsApp ou Instagram. Após 30 dias retornam à lista geral.' },
+    liberado_standby: { bg:'#f0fdf4', border:'#bbf7d0', color:'#166534', text:'✅ Liberados do stand-by de 7 dias. Já podem receber mensagens novamente. Corrija o cadastro se possível.' },
+    liberado_urgencia: { bg:'#eff6ff', border:'#bfdbfe', color:'#1d4ed8', text:'✅ Liberados da urgência de 30 dias. Voltaram à lista geral. Priorize a atualização cadastral destes clientes.' },
+  };
+  const ctx = ctxMap[status];
+  if (ctx && info) {
+    info.style.cssText = `margin-bottom:1rem;padding:.75rem 1rem;border-radius:9px;font-size:.8rem;display:block;background:${ctx.bg};border:1px solid ${ctx.border};color:${ctx.color};`;
+    info.textContent = ctx.text;
+  }
+
+  if (!d.rows?.length) {
+    wrap.innerHTML = '<div class="rv-empty">✨ Nenhum contato nesta categoria.</div>'; return;
+  }
+
+  const diasLabel = status.includes('standby') ? 'Standby até' : status.includes('urgencia') ? 'Urgência até' : 'Liberado em';
+
+  wrap.innerHTML = `
+    <div style="padding:.6rem 1rem;background:#f8fafc;border-bottom:1px solid #f1f5f9;font-size:.75rem;color:#64748b;font-weight:600;">
+      ${d.total} contato(s) nesta categoria
+    </div>
+    <table class="rv-table">
+      <thead><tr>
+        <th>Cliente</th><th>WhatsApp cadastrado</th><th>Erros</th><th>${diasLabel}</th><th>Último erro</th><th style="width:110px;text-align:center;">Ações</th>
+      </tr></thead>
+      <tbody>
+      ${d.rows.map(r => {
+        const prazo = r.standby_ate ? fmtLocalDateTime(r.standby_ate) : '—';
+        const erroShort = (r.ultimo_erro || '').replace(/HTTP \d+:/, '').replace(/\{.*\}/g, '').slice(0, 60);
+        const wa = (r.wa_atual || r.whatsapp || '').replace(/(\d{2})(\d{2})(\d{4,5})(\d{4})/, '$1 ($2) $3-$4');
+        const modalCall = `qualOpenModal(${[
+          parseInt(r.client_id || 0, 10),
+          r.nome || '',
+          r.wa_atual || r.whatsapp || '',
+          r.ultimo_erro || ''
+        ].map(v => JSON.stringify(v)).join(',')})`;
+        return `<tr>
+          <td>
+            <div style="font-weight:700;color:#0f172a;">${esc(r.nome || '—')}</div>
+            <div style="font-size:.7rem;color:#94a3b8;margin-top:.1rem;">${r.instagram_username ? '@' + esc(r.instagram_username) : ''}</div>
+          </td>
+          <td style="font-family:monospace;font-size:.78rem;color:#475569;">${esc(wa)}</td>
+          <td style="text-align:center;">
+            <span style="font-size:.9rem;font-weight:800;color:${r.total_erros >= 2 ? '#dc2626' : '#f59e0b'};">${r.total_erros}</span>
+          </td>
+          <td style="font-size:.75rem;color:#475569;">${prazo}</td>
+          <td style="font-size:.72rem;color:#94a3b8;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(r.ultimo_erro || '')}">
+            ${esc(erroShort)}${erroShort.length >= 60 ? '…' : ''}
+          </td>
+          <td style="text-align:center;">
+            <button onclick="${esc(modalCall)}"
+              style="padding:.35rem .75rem;border-radius:7px;border:1.5px solid #6366f1;background:#f5f3ff;color:#6366f1;font-size:.72rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+              ✏️ Corrigir
+            </button>
+          </td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function qualOpenModal(clientId, nome, wa, erro) {
+  QUAL_MODAL_ID = clientId;
+  document.getElementById('qual-modal-info').innerHTML = `
+    <strong>${esc(nome)}</strong><br>
+    <span style="font-family:monospace;font-size:.8rem;color:#475569;">${esc(wa)}</span><br>
+    <span style="font-size:.72rem;color:#dc2626;margin-top:.25rem;display:block;">Erro: ${esc((erro || '').slice(0, 120))}</span>
+  `;
+  document.getElementById('qual-novo-wa').value = '';
+  document.getElementById('qual-obs').value = '';
+  document.getElementById('qual-modal').classList.add('open');
+}
+
+function qualCloseModal() {
+  document.getElementById('qual-modal').classList.remove('open');
+  QUAL_MODAL_ID = null;
+}
+
+async function qualSalvar() {
+  if (!QUAL_MODAL_ID) return;
+  const btn = document.getElementById('qual-btn-salvar');
+  const novoWa = document.getElementById('qual-novo-wa').value.trim();
+  const obs = document.getElementById('qual-obs').value.trim();
+  btn.disabled = true; btn.textContent = '⏳ Salvando...';
+
+  const d = await fetch(`${API}?action=resolver_cadastro`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ client_id: QUAL_MODAL_ID, novo_whatsapp: novoWa, observacao: obs })
+  }).then(r => r.json()).catch(() => ({ ok:false }));
+
+  btn.disabled = false; btn.textContent = '✅ Corrigir e liberar';
+
+  if (d.ok) {
+    qualCloseModal();
+    alert(`✅ Cadastro corrigido! Cliente voltou à lista de elegíveis.${novoWa ? ' Novo WA: ' + novoWa : ''}`);
+    loadQualidade();
+  } else {
+    alert('Erro: ' + (d.error || 'Falha'));
+  }
+}
+
+async function qualDescartar() {
+  if (!QUAL_MODAL_ID) return;
+  if (!confirm('Descartar permanentemente? O cliente vai para Standby e não receberá mais mensagens.')) return;
+
+  const d = await fetch(`${API}?action=descartar_cadastro`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ client_id: QUAL_MODAL_ID })
+  }).then(r => r.json()).catch(() => ({ ok:false }));
+
+  if (d.ok) {
+    qualCloseModal();
+    alert('Cliente descartado e movido para Standby.');
+    loadQualidade();
+  } else {
+    alert('Erro: ' + (d.error || 'Falha'));
+  }
+}
+
+// Carrega badge ao abrir aba
+document.querySelectorAll('.rv-tab').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.tab === 'qualidade') loadQualidade();
+}));
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});

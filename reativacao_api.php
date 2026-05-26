@@ -339,6 +339,144 @@ function send_whatsapp(string $number, string $text, ?PDO $pdo = null, ?int $com
     return ['ok' => false, 'error' => "HTTP {$httpCode}: " . $resp];
 }
 
+function ensure_cadastro_qualidade_table(PDO $pdo): void {
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS cadastro_qualidade (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            company_id    INT NOT NULL,
+            client_id     INT NOT NULL,
+            whatsapp      VARCHAR(30) NOT NULL,
+            ultimo_erro   TEXT NULL,
+            total_erros   TINYINT DEFAULT 1,
+            status        VARCHAR(30) DEFAULT 'standby_7',
+            standby_ate   DATETIME NULL,
+            criado_em     DATETIME DEFAULT NOW(),
+            atualizado_em DATETIME DEFAULT NOW(),
+            UNIQUE KEY uq_company_client (company_id, client_id),
+            INDEX idx_status (status),
+            INDEX idx_standby (standby_ate)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Throwable $e) {}
+}
+
+function normalize_cadastro_whatsapp(string $whatsapp): string {
+    $digits = preg_replace('/\D/', '', $whatsapp);
+    if ($digits !== '' && strlen($digits) <= 11 && !str_starts_with($digits, '55')) {
+        $digits = '55' . $digits;
+    }
+    return $digits;
+}
+
+function record_cadastro_qualidade_error(PDO $pdo, int $companyId, int $clientId, string $whatsapp, string $error): void {
+    if ($clientId <= 0 || trim($whatsapp) === '') return;
+
+    $error = trim($error);
+    if (function_exists('mb_substr')) {
+        $error = mb_substr($error, 0, 2000);
+    } else {
+        $error = substr($error, 0, 2000);
+    }
+
+    $cur = $pdo->prepare("SELECT status, total_erros FROM cadastro_qualidade WHERE company_id=? AND client_id=? LIMIT 1");
+    $cur->execute([$companyId, $clientId]);
+    $existing = $cur->fetch(PDO::FETCH_ASSOC);
+    $wa = normalize_cadastro_whatsapp($whatsapp);
+
+    if (!$existing) {
+        $stmt = $pdo->prepare("
+            INSERT INTO cadastro_qualidade
+                (company_id, client_id, whatsapp, ultimo_erro, total_erros, status, standby_ate, criado_em, atualizado_em)
+            VALUES
+                (?, ?, ?, ?, 1, 'standby_7', DATE_ADD(NOW(), INTERVAL 7 DAY), NOW(), NOW())
+        ");
+        $stmt->execute([$companyId, $clientId, $wa, $error]);
+    } else {
+        $totalErros = min(((int)($existing['total_erros'] ?? 0)) + 1, 127);
+        $novoStatus = (($existing['status'] ?? '') === 'standby_7' || $totalErros >= 2) ? 'urgencia_30' : 'standby_7';
+        $interval = $novoStatus === 'urgencia_30' ? 30 : 7;
+        $stmt = $pdo->prepare("
+            UPDATE cadastro_qualidade
+               SET whatsapp=?,
+                   ultimo_erro=?,
+                   total_erros=?,
+                   status=?,
+                   standby_ate=DATE_ADD(NOW(), INTERVAL {$interval} DAY),
+                   atualizado_em=NOW()
+             WHERE company_id=? AND client_id=?
+        ");
+        $stmt->execute([$wa, $error, $totalErros, $novoStatus, $companyId, $clientId]);
+    }
+
+    $pdo->prepare("UPDATE clients SET reativ_status='numero_invalido' WHERE id=? AND company_id=?")
+        ->execute([$clientId, $companyId]);
+}
+
+function cadastro_qualidade_stats(PDO $pdo, int $companyId): array {
+    ensure_cadastro_qualidade_table($pdo);
+    $stmt = $pdo->prepare("
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status = 'standby_7' AND (standby_ate IS NULL OR standby_ate > NOW()) THEN 1 ELSE 0 END) AS standby,
+            SUM(CASE WHEN status = 'urgencia_30' AND (standby_ate IS NULL OR standby_ate > NOW()) THEN 1 ELSE 0 END) AS urgencia,
+            SUM(CASE WHEN status IN ('standby_7','urgencia_30') AND standby_ate IS NOT NULL AND standby_ate <= NOW() THEN 1 ELSE 0 END) AS pendente,
+            SUM(CASE WHEN status IN ('liberado','liberado_standby','liberado_urgencia') THEN 1 ELSE 0 END) AS liberado,
+            SUM(CASE WHEN status = 'descartado' THEN 1 ELSE 0 END) AS descartado
+        FROM cadastro_qualidade
+        WHERE company_id = ?
+    ");
+    $stmt->execute([$companyId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    return [
+        'total'      => (int)($row['total'] ?? 0),
+        'standby'    => (int)($row['standby'] ?? 0),
+        'urgencia'   => (int)($row['urgencia'] ?? 0),
+        'pendente'   => (int)($row['pendente'] ?? 0),
+        'liberado'   => (int)($row['liberado'] ?? 0),
+        'descartado' => (int)($row['descartado'] ?? 0),
+    ];
+}
+
+function cadastro_qualidade_active_filter(string $clientAlias = 'c'): string {
+    return "NOT EXISTS (
+        SELECT 1
+        FROM cadastro_qualidade cq_block
+        WHERE cq_block.company_id = {$clientAlias}.company_id
+          AND cq_block.client_id = {$clientAlias}.id
+          AND cq_block.status IN ('standby_7','urgencia_30')
+          AND (cq_block.standby_ate IS NULL OR cq_block.standby_ate > NOW())
+    )";
+}
+
+function release_expired_cadastro_qualidade(PDO $pdo, int $companyId): void {
+    ensure_cadastro_qualidade_table($pdo);
+
+    $release = $pdo->prepare("
+        UPDATE cadastro_qualidade
+           SET status = CASE
+               WHEN status = 'standby_7'   AND standby_ate < NOW() THEN 'liberado_standby'
+               WHEN status = 'urgencia_30' AND standby_ate < NOW() THEN 'liberado_urgencia'
+               ELSE status
+           END,
+           atualizado_em = NOW()
+         WHERE company_id=?
+           AND standby_ate < NOW()
+           AND status IN ('standby_7','urgencia_30')
+    ");
+    $release->execute([$companyId]);
+
+    $releaseClients = $pdo->prepare("
+        UPDATE clients c
+        JOIN cadastro_qualidade cq ON cq.client_id = c.id AND cq.company_id = c.company_id
+           SET c.reativ_status='elegivel',
+               c.reativ_tentativas=0,
+               c.updated_at=NOW()
+         WHERE c.company_id=?
+           AND cq.status IN ('liberado_standby','liberado_urgencia')
+           AND c.reativ_status='numero_invalido'
+    ");
+    $releaseClients->execute([$companyId]);
+}
+
 /* ═══════════════════════════════════════════════════
    AUTO-MIGRATE: garante colunas em tempo de execução
 ═══════════════════════════════════════════════════ */
@@ -352,6 +490,9 @@ try {
         if (!in_array('erro_msg',     $eCols)) $pdo->exec("ALTER TABLE reativacao_envios ADD COLUMN erro_msg     TEXT NULL");
     }
 } catch (Throwable $_mig) {}
+
+// Tabela de controle de qualidade de cadastro
+ensure_cadastro_qualidade_table($pdo);
 
 // Adiciona coluna validade em reativacao_mensagens
 try {
@@ -422,6 +563,11 @@ try {
 
 if ($action === 'setup_tables') {
     $errors = [];
+
+    // Tabela de controle de qualidade de cadastro
+    try {
+        ensure_cadastro_qualidade_table($pdo);
+    } catch(Throwable $e) { $errors[] = 'cadastro_qualidade: ' . $e->getMessage(); }
 
     // Colunas na tabela clients
     $clientCols = ['reativ_status','reativ_ultimo_envio','reativ_tentativas'];
@@ -592,8 +738,18 @@ if ($action === 'get_eligible') {
     $tentativa     = (int)($_GET['tentativa'] ?? 1);
 
     try {
+        release_expired_cadastro_qualidade($pdo, $companyId);
+
         $where  = "c.company_id = ? AND c.whatsapp IS NOT NULL AND c.whatsapp != ''";
         $params = [$companyId];
+
+        $where .= " AND c.id NOT IN (
+            SELECT client_id FROM cadastro_qualidade
+            WHERE company_id = ?
+              AND status IN ('standby_7','urgencia_30')
+              AND standby_ate > NOW()
+        )";
+        $params[] = $companyId;
 
         if ($tentativa === 1) {
             $where .= " AND (c.reativ_status IS NULL OR c.reativ_status = '' OR c.reativ_status = 'elegivel')";
@@ -658,6 +814,12 @@ if ($action === 'get_eligible') {
             SELECT COUNT(*) FROM clients c
             WHERE c.company_id = ?
               AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
+              AND c.id NOT IN (
+                  SELECT client_id FROM cadastro_qualidade
+                  WHERE company_id = ?
+                    AND status IN ('standby_7','urgencia_30')
+                    AND standby_ate > NOW()
+              )
               AND (c.reativ_status IS NULL OR c.reativ_status = '' OR c.reativ_status = 'elegivel')
               AND c.id NOT IN (
                   SELECT DISTINCT re.client_id
@@ -668,7 +830,7 @@ if ($action === 'get_eligible') {
                     AND rl.status != 'cancelado'
               )
         ");
-        $countAvail->execute([$companyId, $companyId]);
+        $countAvail->execute([$companyId, $companyId, $companyId]);
         $totalDisponivel = (int)$countAvail->fetchColumn();
 
         echo json_encode([
@@ -868,6 +1030,7 @@ if ($action === 'get_pos_barbearia') {
         // ── 2. Remove clientes em cooldown (receberam msg < 7 dias) ──
         $allIds      = array_filter(array_map('intval', array_column($clients, 'id')));
         $cooldownIds = [];
+        $qualidadeIds = [];
 
         if (!empty($allIds)) {
             $ph = implode(',', array_fill(0, count($allIds), '?'));
@@ -879,6 +1042,16 @@ if ($action === 'get_pos_barbearia') {
             ");
             $cStmt->execute(array_merge([$companyId], array_values($allIds)));
             $cooldownIds = array_flip($cStmt->fetchAll(PDO::FETCH_COLUMN));
+
+            $qStmt = $pdo->prepare("
+                SELECT client_id FROM cadastro_qualidade
+                WHERE company_id = ?
+                  AND client_id IN ($ph)
+                  AND status = 'standby_7'
+                  AND (standby_ate IS NULL OR standby_ate > NOW())
+            ");
+            $qStmt->execute(array_merge([$companyId], array_values($allIds)));
+            $qualidadeIds = array_flip($qStmt->fetchAll(PDO::FETCH_COLUMN));
         }
 
         // ── 3. Remove clientes que já re-agendaram após o último lote ──
@@ -891,6 +1064,10 @@ if ($action === 'get_pos_barbearia') {
             $cid = (int)$c['id'];
             if ($cid > 0 && isset($cooldownIds[$cid])) {
                 $removidos['cooldown']++;
+                continue;
+            }
+            if ($cid > 0 && isset($qualidadeIds[$cid])) {
+                $removidos['qualidade'] = ($removidos['qualidade'] ?? 0) + 1;
                 continue;
             }
             $c['ultimo_servico'] = '';
@@ -1048,6 +1225,7 @@ if ($action === 'create_lote' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                    0 as has_appt
             FROM clients
             WHERE id IN ($placeholders) AND company_id = ?
+              AND " . cadastro_qualidade_active_filter('clients') . "
         ");
         $stmt->execute([...$clientIds, $companyId]);
         $clientsData = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1221,8 +1399,25 @@ if ($action === 'send_next' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         } else {
             // Erro de envio
-            $pdo->prepare("UPDATE reativacao_envios SET status='erro', erro_msg=? WHERE id=?")->execute([$result['error'], $envio['id']]);
+            $erroMsg   = (string)($result['error'] ?? '');
+            $isInvalid = str_contains($erroMsg, '"exists":false')
+                || str_contains($erroMsg, '"exists": false')
+                || str_contains($erroMsg, 'HTTP 400')
+                || response_indicates_whatsapp_missing($erroMsg);
+
+            $pdo->prepare("UPDATE reativacao_envios SET status='erro', erro_msg=? WHERE id=?")->execute([$erroMsg, $envio['id']]);
             $pdo->prepare("UPDATE reativacao_lotes SET erros=erros+1 WHERE id=?")->execute([$loteId]);
+            if ($isInvalid && !empty($envio['client_id'])) {
+                try {
+                    record_cadastro_qualidade_error(
+                        $pdo,
+                        $companyId,
+                        (int)$envio['client_id'],
+                        (string)$envio['whatsapp'],
+                        $erroMsg
+                    );
+                } catch (Throwable $ignored) {}
+            }
         }
 
         $pdo->commit();
@@ -1323,8 +1518,314 @@ if ($action === 'update_client_status' && $_SERVER['REQUEST_METHOD'] === 'POST')
 }
 
 /* ═══════════════════════════════════════════════════
-   MARK RESPONDED — chamado pelo webhook quando cliente responde
+   QUALIDADE DE CADASTRO — endpoints
 ═══════════════════════════════════════════════════ */
+if ($action === 'register_send_error') {
+    ensure_cadastro_qualidade_table($pdo);
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $clientId = (int)($body['client_id'] ?? 0);
+    $waNum    = normalize_cadastro_whatsapp((string)($body['whatsapp'] ?? ''));
+    $erroMsg  = trim((string)($body['erro_msg'] ?? ''));
+    $envioId  = (int)($body['envio_id'] ?? 0);
+
+    if (!$clientId) {
+        echo json_encode(['ok' => false, 'error' => 'client_id obrigatório.']);
+        exit;
+    }
+
+    try {
+        if ($waNum === '') {
+            $waStmt = $pdo->prepare("SELECT whatsapp FROM clients WHERE id=? AND company_id=? LIMIT 1");
+            $waStmt->execute([$clientId, $companyId]);
+            $waNum = normalize_cadastro_whatsapp((string)$waStmt->fetchColumn());
+        }
+
+        $cur = $pdo->prepare("SELECT * FROM cadastro_qualidade WHERE company_id=? AND client_id=? LIMIT 1");
+        $cur->execute([$companyId, $clientId]);
+        $existing = $cur->fetch(PDO::FETCH_ASSOC);
+
+        if (!$existing) {
+            $pdo->prepare("
+                INSERT INTO cadastro_qualidade
+                    (company_id, client_id, whatsapp, ultimo_erro, total_erros, status, standby_ate, criado_em, atualizado_em)
+                VALUES
+                    (?, ?, ?, ?, 1, 'standby_7', DATE_ADD(NOW(), INTERVAL 7 DAY), NOW(), NOW())
+            ")->execute([$companyId, $clientId, $waNum, $erroMsg]);
+            $novoStatus = 'standby_7';
+        } else {
+            $totalErros = min((int)$existing['total_erros'] + 1, 127);
+            if (($existing['status'] ?? '') === 'standby_7' || $totalErros >= 2) {
+                $novoStatus = 'urgencia_30';
+                $standbySql = "DATE_ADD(NOW(), INTERVAL 30 DAY)";
+            } else {
+                $novoStatus = 'standby_7';
+                $standbySql = "DATE_ADD(NOW(), INTERVAL 7 DAY)";
+            }
+
+            $pdo->prepare("
+                UPDATE cadastro_qualidade
+                   SET whatsapp=?,
+                       ultimo_erro=?,
+                       total_erros=?,
+                       status=?,
+                       standby_ate={$standbySql},
+                       atualizado_em=NOW()
+                 WHERE company_id=? AND client_id=?
+            ")->execute([$waNum, $erroMsg, $totalErros, $novoStatus, $companyId, $clientId]);
+        }
+
+        $pdo->prepare("UPDATE clients SET reativ_status='numero_invalido' WHERE id=? AND company_id=?")
+            ->execute([$clientId, $companyId]);
+
+        if ($envioId) {
+            $pdo->prepare("UPDATE reativacao_envios SET status='erro', erro_msg=? WHERE id=? AND company_id=?")
+                ->execute([$erroMsg, $envioId, $companyId]);
+        }
+
+        echo json_encode(['ok' => true, 'novo_status' => $novoStatus]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'get_cadastro_qualidade_stats') {
+    try {
+        echo json_encode(['ok' => true, 'stats' => cadastro_qualidade_stats($pdo, $companyId)]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'get_cadastro_qualidade') {
+    ensure_cadastro_qualidade_table($pdo);
+    $status = $_GET['status'] ?? 'standby_7';
+    $limit  = max(10, min(100, (int)($_GET['limit'] ?? 30)));
+    $page   = max(1, (int)($_GET['page'] ?? 1));
+    $offset = ($page - 1) * $limit;
+
+    try {
+        release_expired_cadastro_qualidade($pdo, $companyId);
+
+        $allowed = ['standby_7','urgencia_30','liberado_standby','liberado_urgencia','descartado'];
+        if ($status === 'abertos') $status = 'standby_7';
+        if ($status === 'pendente') $status = 'liberado_standby';
+        if (!in_array($status, $allowed, true)) $status = 'standby_7';
+
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM cadastro_qualidade WHERE company_id=? AND status=?");
+        $stmt->execute([$companyId, $status]);
+        $total = (int)$stmt->fetchColumn();
+
+        $stmt2 = $pdo->prepare("
+            SELECT
+                cq.id,
+                cq.company_id,
+                cq.client_id,
+                cq.whatsapp,
+                cq.ultimo_erro,
+                cq.total_erros,
+                cq.status,
+                cq.standby_ate,
+                cq.criado_em,
+                cq.atualizado_em,
+                cq.status AS status_operacional,
+                c.nome,
+                c.whatsapp AS wa_atual,
+                c.telefone_principal,
+                c.instagram_username,
+                c.email,
+                c.tags,
+                c.reativ_status
+            FROM cadastro_qualidade cq
+            LEFT JOIN clients c ON c.id = cq.client_id AND c.company_id = cq.company_id
+            WHERE cq.company_id = ? AND cq.status = ?
+            ORDER BY cq.atualizado_em DESC
+            LIMIT {$limit} OFFSET {$offset}
+        ");
+        $stmt2->execute([$companyId, $status]);
+        $rows = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+
+        $counts = [];
+        foreach (['standby_7','urgencia_30','liberado_standby','liberado_urgencia'] as $s) {
+            $cs = $pdo->prepare("SELECT COUNT(*) FROM cadastro_qualidade WHERE company_id=? AND status=?");
+            $cs->execute([$companyId, $s]);
+            $counts[$s] = (int)$cs->fetchColumn();
+        }
+
+        echo json_encode([
+            'ok'     => true,
+            'rows'   => $rows,
+            'items'  => $rows,
+            'total'  => $total,
+            'counts' => $counts,
+            'stats'  => cadastro_qualidade_stats($pdo, $companyId),
+            'page'   => $page,
+        ]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'resolver_cadastro') {
+    ensure_cadastro_qualidade_table($pdo);
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $clientId = (int)($body['client_id'] ?? 0);
+    $novoWa   = normalize_cadastro_whatsapp((string)($body['novo_whatsapp'] ?? ''));
+
+    if (!$clientId) {
+        echo json_encode(['ok'=>false,'error'=>'client_id obrigatório.']);
+        exit;
+    }
+
+    try {
+        $now = gmdate('Y-m-d H:i:s');
+
+        if ($novoWa !== '') {
+            $pdo->prepare("UPDATE clients SET whatsapp=?, telefone_principal=?, updated_at=? WHERE id=? AND company_id=?")
+                ->execute([$novoWa, $novoWa, $now, $clientId, $companyId]);
+        }
+
+        $pdo->prepare("UPDATE clients SET reativ_status='elegivel', reativ_tentativas=0 WHERE id=? AND company_id=?")
+            ->execute([$clientId, $companyId]);
+
+        $pdo->prepare("DELETE FROM cadastro_qualidade WHERE client_id=? AND company_id=?")
+            ->execute([$clientId, $companyId]);
+
+        echo json_encode(['ok'=>true,'novo_whatsapp'=>$novoWa]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'descartar_cadastro') {
+    ensure_cadastro_qualidade_table($pdo);
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $clientId = (int)($body['client_id'] ?? 0);
+
+    if (!$clientId) {
+        echo json_encode(['ok'=>false,'error'=>'client_id obrigatório.']);
+        exit;
+    }
+
+    try {
+        $pdo->prepare("UPDATE clients SET reativ_status='standby' WHERE id=? AND company_id=?")
+            ->execute([$clientId, $companyId]);
+        $pdo->prepare("UPDATE cadastro_qualidade SET status='descartado', atualizado_em=NOW() WHERE client_id=? AND company_id=?")
+            ->execute([$clientId, $companyId]);
+        echo json_encode(['ok'=>true]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'save_cadastro_qualidade_whatsapp' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    ensure_cadastro_qualidade_table($pdo);
+    $body = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+    $id = (int)($body['id'] ?? 0);
+    $whatsapp = normalize_cadastro_whatsapp((string)($body['whatsapp'] ?? ''));
+
+    if ($id <= 0 || strlen($whatsapp) < 10) {
+        echo json_encode(['ok' => false, 'error' => 'WhatsApp invalido.']);
+        exit;
+    }
+
+    try {
+        $pdo->beginTransaction();
+        $rowStmt = $pdo->prepare("SELECT client_id FROM cadastro_qualidade WHERE id=? AND company_id=? FOR UPDATE");
+        $rowStmt->execute([$id, $companyId]);
+        $clientId = (int)$rowStmt->fetchColumn();
+        if (!$clientId) throw new RuntimeException('Registro nao encontrado.');
+
+        $pdo->prepare("
+            UPDATE clients
+               SET whatsapp = ?,
+                   telefone_principal = ?,
+                   reativ_status = 'elegivel',
+                   updated_at = NOW()
+             WHERE id = ? AND company_id = ?
+        ")->execute([$whatsapp, $whatsapp, $clientId, $companyId]);
+
+        $pdo->prepare("
+            UPDATE cadastro_qualidade
+               SET whatsapp = ?,
+                   status = 'liberado',
+                   standby_ate = NULL,
+                   atualizado_em = NOW()
+             WHERE id = ? AND company_id = ?
+        ")->execute([$whatsapp, $id, $companyId]);
+
+        $pdo->commit();
+        echo json_encode(['ok' => true, 'id' => $id, 'whatsapp' => $whatsapp]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action === 'update_cadastro_qualidade_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    ensure_cadastro_qualidade_table($pdo);
+    $body = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+    $id = (int)($body['id'] ?? 0);
+    $novoStatus = (string)($body['status'] ?? '');
+    $allowed = ['standby_7', 'liberado', 'descartado'];
+
+    if ($id <= 0 || !in_array($novoStatus, $allowed, true)) {
+        echo json_encode(['ok' => false, 'error' => 'Status ou ID invalido.']);
+        exit;
+    }
+
+    try {
+        $pdo->beginTransaction();
+        $rowStmt = $pdo->prepare("SELECT client_id FROM cadastro_qualidade WHERE id=? AND company_id=? FOR UPDATE");
+        $rowStmt->execute([$id, $companyId]);
+        $clientId = (int)$rowStmt->fetchColumn();
+        if (!$clientId) throw new RuntimeException('Registro nao encontrado.');
+
+        if ($novoStatus === 'standby_7') {
+            $pdo->prepare("
+                UPDATE cadastro_qualidade
+                   SET status='standby_7',
+                       standby_ate=DATE_ADD(NOW(), INTERVAL 7 DAY),
+                       atualizado_em=NOW()
+                 WHERE id=? AND company_id=?
+            ")->execute([$id, $companyId]);
+        } elseif ($novoStatus === 'liberado') {
+            $pdo->prepare("
+                UPDATE cadastro_qualidade
+                   SET status='liberado',
+                       standby_ate=NULL,
+                       atualizado_em=NOW()
+                 WHERE id=? AND company_id=?
+            ")->execute([$id, $companyId]);
+            $pdo->prepare("UPDATE clients SET reativ_status='elegivel', updated_at=NOW() WHERE id=? AND company_id=?")
+                ->execute([$clientId, $companyId]);
+        } else {
+            $pdo->prepare("
+                UPDATE cadastro_qualidade
+                   SET status='descartado',
+                       standby_ate=NULL,
+                       atualizado_em=NOW()
+                 WHERE id=? AND company_id=?
+            ")->execute([$id, $companyId]);
+            $pdo->prepare("UPDATE clients SET reativ_status='numero_invalido', updated_at=NOW() WHERE id=? AND company_id=?")
+                ->execute([$clientId, $companyId]);
+        }
+
+        $pdo->commit();
+        echo json_encode(['ok' => true, 'id' => $id, 'status' => $novoStatus]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* MARK RESPONDED */
 if ($action === 'mark_responded') {
     $whatsapp = preg_replace('/\D/', '', $_POST['whatsapp'] ?? '');
     if (!$whatsapp) { echo json_encode(['ok'=>false]); exit; }
@@ -1671,6 +2172,7 @@ if ($action === 'get_promo_contacts') {
               AND c.whatsapp IS NOT NULL
               AND c.whatsapp != ''
               AND LENGTH(REGEXP_REPLACE(c.whatsapp,'[^0-9]','')) >= 10
+              AND " . cadastro_qualidade_active_filter('c') . "
               AND NOT EXISTS (
                 SELECT 1 FROM promocoes_cooldown pc
                 WHERE pc.company_id = c.company_id
@@ -1689,6 +2191,7 @@ if ($action === 'get_promo_contacts') {
             WHERE c.company_id = ?
               AND c.whatsapp IS NOT NULL AND c.whatsapp != ''
               AND LENGTH(REGEXP_REPLACE(c.whatsapp,'[^0-9]','')) >= 10
+              AND " . cadastro_qualidade_active_filter('c') . "
               AND NOT EXISTS (
                 SELECT 1 FROM promocoes_cooldown pc
                 WHERE pc.company_id = c.company_id
