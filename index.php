@@ -144,52 +144,6 @@ $s->execute([$companyId]); $ordersPDV = (int)$s->fetchColumn();
 $s = $pdo->prepare("SELECT COUNT(*) FROM interactions WHERE company_id=? AND DATE(DATE_SUB(created_at,INTERVAL 4 HOUR))=CURDATE()");
 $s->execute([$companyId]); $interactionsHoje = (int)$s->fetchColumn();
 
-/* ── Comparativo mês anterior ─────────────────────────────── */
-$mesAtual   = date('Y-m');
-$mesAnterior= date('Y-m', strtotime('first day of last month'));
-
-// Clientes novos este mês vs mês anterior
-$s = $pdo->prepare("SELECT COUNT(*) FROM clients WHERE company_id=? AND DATE_FORMAT(created_at,'%Y-%m')=?");
-$s->execute([$companyId, $mesAtual]);   $clientsNovosMes = (int)$s->fetchColumn();
-$s->execute([$companyId, $mesAnterior]);$clientsNovosAnt = (int)$s->fetchColumn();
-
-// Pedidos mês anterior
-$s = $pdo->prepare("SELECT COUNT(*) FROM orders WHERE company_id=? AND DATE_FORMAT(created_at,'%Y-%m')=?");
-$s->execute([$companyId, $mesAnterior]); $ordersAnt = (int)$s->fetchColumn();
-
-// PDV mês anterior
-$s = $pdo->prepare("SELECT COUNT(*) FROM orders WHERE company_id=? AND origem='pdv' AND DATE_FORMAT(created_at,'%Y-%m')=?");
-$s->execute([$companyId, $mesAnterior]); $ordersPDVAnt = (int)$s->fetchColumn();
-
-// Atendimentos mês anterior
-$s = $pdo->prepare("SELECT COUNT(*) FROM interactions WHERE company_id=? AND DATE_FORMAT(created_at,'%Y-%m')=?");
-$s->execute([$companyId, $mesAnterior]); $interactionsAnt = (int)$s->fetchColumn();
-
-// Função helper para calcular variação
-function calc_trend(int $atual, int $anterior): array {
-    if ($anterior === 0) {
-        return ['pct' => $atual > 0 ? 100 : 0, 'dir' => $atual > 0 ? 'up' : 'flat', 'label' => $atual > 0 ? '+100%' : '—'];
-    }
-    $pct = round((($atual - $anterior) / $anterior) * 100, 1);
-    $dir = $pct > 0 ? 'up' : ($pct < 0 ? 'down' : 'flat');
-    $label = ($pct > 0 ? '+' : '') . $pct . '%';
-    return ['pct' => $pct, 'dir' => $dir, 'label' => $label];
-}
-
-$trendOrders       = calc_trend($ordersCount,       $ordersAnt);
-$trendPDV          = calc_trend($ordersPDV,          $ordersPDVAnt);
-$trendInteractions = calc_trend($interactionsCount,  $interactionsAnt);
-$trendClientes     = calc_trend($clientsNovosMes,    $clientsNovosAnt);
-
-// Score geral para mensagem motivacional (média das variações)
-$allPcts   = [$trendOrders['pct'], $trendPDV['pct'], $trendInteractions['pct']];
-$avgScore  = count(array_filter($allPcts)) > 0 ? array_sum($allPcts) / count($allPcts) : 0;
-$mesLabel  = (new DateTime('first day of last month'))->format('F');
-$mesLabels = ['January'=>'Janeiro','February'=>'Fevereiro','March'=>'Março','April'=>'Abril',
-              'May'=>'Maio','June'=>'Junho','July'=>'Julho','August'=>'Agosto',
-              'September'=>'Setembro','October'=>'Outubro','November'=>'Novembro','December'=>'Dezembro'];
-$mesAnteriorLabel = $mesLabels[$mesLabel] ?? $mesLabel;
-
 /* ── Pedidos ──────────────────────────────────────────────────── */
 $latestOrdersStmt = $pdo->prepare("
     SELECT o.*, c.nome AS cliente_nome
@@ -214,22 +168,6 @@ include __DIR__ . '/views/partials/header.php';
 .kpi-lbl { font-size:.67rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; margin-bottom:.4rem; }
 .kpi-val { font-size:2rem; font-weight:800; color:#0f172a; line-height:1; transition:color .3s; }
 .kpi-sub { font-size:.67rem; color:#94a3b8; margin-top:.3rem; }
-.kpi-trend { display:flex; align-items:center; gap:.3rem; font-size:.68rem; font-weight:700; margin-top:.35rem; }
-.kpi-trend.up   { color:#16a34a; }
-.kpi-trend.down { color:#dc2626; }
-.kpi-trend.flat { color:#94a3b8; }
-.kpi-trend-icon { font-size:.65rem; }
-.kpi-vs { font-size:.62rem; font-weight:400; color:#94a3b8; margin-left:.15rem; }
-
-/* Banner motivacional */
-.mot-banner { display:flex; align-items:center; gap:.85rem; padding:.75rem 1.1rem; border-radius:12px; margin-bottom:1.4rem; border:1px solid; }
-.mot-banner.great  { background:#f0fdf4; border-color:#bbf7d0; color:#166534; }
-.mot-banner.good   { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
-.mot-banner.neutral{ background:#f8fafc; border-color:#e2e8f0; color:#475569; }
-.mot-banner.low    { background:#fffbeb; border-color:#fde68a; color:#92400e; }
-.mot-icon { font-size:1.25rem; flex-shrink:0; }
-.mot-text { font-size:.8rem; line-height:1.45; }
-.mot-text strong { font-weight:700; }
 
 /* ── Actions ── */
 .act-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.85rem; margin-bottom:1.4rem; }
@@ -307,84 +245,32 @@ include __DIR__ . '/views/partials/header.php';
 .empty-tl p { font-size:.78rem; }
 </style>
 
-<?php
-// Helper inline de badge trend
-function trend_badge(array $t, string $vs): string {
-    $icons = ['up'=>'↑','down'=>'↓','flat'=>'→'];
-    $icon  = $icons[$t['dir']] ?? '→';
-    $cls   = $t['dir'];
-    return "<div class='kpi-trend {$cls}'><span class='kpi-trend-icon'>{$icon}</span>{$t['label']}<span class='kpi-vs'>vs {$vs}</span></div>";
-}
-?>
-
-<!-- Banner motivacional -->
-<?php
-if ($avgScore >= 20) {
-    $motClass = 'great';
-    $motIcon  = '🚀';
-    $motMsg   = "<strong>Excelente mês!</strong> Os números estão acima de {$mesAnteriorLabel} — a equipe está entregando acima da média. Continue assim!";
-} elseif ($avgScore >= 5) {
-    $motClass = 'good';
-    $motIcon  = '📈';
-    $motMsg   = "<strong>Crescendo!</strong> Este mês está melhor que {$mesAnteriorLabel} — cada atendimento bem feito constrói o resultado.";
-} elseif ($avgScore >= -5) {
-    $motClass = 'neutral';
-    $motIcon  = '⚖️';
-    $motMsg   = "<strong>Estável.</strong> Resultado próximo de {$mesAnteriorLabel} — boa consistência. Identifique o que pode melhorar para dar o próximo passo.";
-} elseif ($avgScore >= -20) {
-    $motClass = 'low';
-    $motIcon  = '💪';
-    $motMsg   = "<strong>Abaixo de {$mesAnteriorLabel}.</strong> Mercado é cíclico — o importante é manter o ritmo e identificar oportunidades. A virada pode vir neste mês.";
-} else {
-    $motClass = 'low';
-    $motIcon  = '🔄';
-    $motMsg   = "<strong>Mês desafiador.</strong> Períodos difíceis fazem parte — use os dados para agir com estratégia. O próximo mês começa agora.";
-}
-?>
-<div class="mot-banner <?= $motClass ?>">
-    <span class="mot-icon"><?= $motIcon ?></span>
-    <p class="mot-text"><?= $motMsg ?></p>
-</div>
-
 <!-- KPIs -->
 <div class="kpi-grid">
   <div class="kpi-card" style="--ac:#6366f1;">
     <p class="kpi-lbl">Clientes</p>
-    <p class="kpi-val"><?= $clientsCount ?></p>
+    <p class="kpi-val" id="k-clientes"><?= $clientsCount ?></p>
     <p class="kpi-sub">cadastrados</p>
-    <?= trend_badge($trendClientes, $mesAnteriorLabel) ?>
-    <p class="kpi-vs" style="font-size:.62rem;color:#94a3b8;margin-top:.1rem;"><?= $clientsNovosAnt ?> novos em <?= $mesAnteriorLabel ?></p>
   </div>
-
   <div class="kpi-card" style="--ac:#0ea5e9;">
     <p class="kpi-lbl">Produtos ativos</p>
     <p class="kpi-val"><?= $productsCount ?></p>
     <p class="kpi-sub">no catálogo</p>
-    <div class="kpi-trend flat" style="margin-top:.35rem;"><span class="kpi-vs">sem comparativo mensal</span></div>
   </div>
-
   <div class="kpi-card" style="--ac:#22c55e;">
     <p class="kpi-lbl">Atendimentos hoje</p>
     <p class="kpi-val" id="k-hoje"><?= $interactionsHoje ?></p>
     <p class="kpi-sub" id="k-mes"><?= $interactionsCount ?> no mês</p>
-    <?= trend_badge($trendInteractions, $mesAnteriorLabel) ?>
-    <p class="kpi-vs" style="font-size:.62rem;color:#94a3b8;margin-top:.1rem;"><?= $interactionsAnt ?> em <?= $mesAnteriorLabel ?></p>
   </div>
-
   <div class="kpi-card" style="--ac:#f59e0b;">
     <p class="kpi-lbl">Pedidos no mês</p>
     <p class="kpi-val"><?= $ordersCount ?></p>
     <p class="kpi-sub"><?= $ordersPDV ?> via PDV</p>
-    <?= trend_badge($trendOrders, $mesAnteriorLabel) ?>
-    <p class="kpi-vs" style="font-size:.62rem;color:#94a3b8;margin-top:.1rem;"><?= $ordersAnt ?> em <?= $mesAnteriorLabel ?></p>
   </div>
-
   <div class="kpi-card" style="--ac:#8b5cf6;">
     <p class="kpi-lbl">Vendas PDV mês</p>
     <p class="kpi-val"><?= $ordersPDV ?></p>
     <p class="kpi-sub">no caixa</p>
-    <?= trend_badge($trendPDV, $mesAnteriorLabel) ?>
-    <p class="kpi-vs" style="font-size:.62rem;color:#94a3b8;margin-top:.1rem;"><?= $ordersPDVAnt ?> em <?= $mesAnteriorLabel ?></p>
   </div>
 </div>
 
