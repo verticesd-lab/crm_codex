@@ -107,7 +107,8 @@ if ($jsonBody && isset($jsonBody['fileId'])) {
 
     /* Tenta desembrulhar se veio como JSON com campo content/body */
     if ($jsonBody) {
-        $xmlContent = $jsonBody['content']
+        $xmlContent = $jsonBody['xml']
+                   ?? $jsonBody['content']
                    ?? $jsonBody['body']
                    ?? $jsonBody['text']
                    ?? $jsonBody['data']
