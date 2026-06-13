@@ -16,7 +16,7 @@ $userId    = (int)($_SESSION['user_id'] ?? 0);
 
 if (!$companyId) {
     flash('error', 'Empresa não definida na sessão.');
-    redirect('dashboard.php');
+    redirect('login.php');
 }
 
 $action = $_GET['action'] ?? 'list';

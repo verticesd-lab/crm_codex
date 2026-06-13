@@ -15,7 +15,7 @@ $companyId = current_company_id();
 
 if (!$companyId) {
     flash('error', 'Empresa não definida na sessão.');
-    redirect('dashboard.php');
+    redirect('login.php');
 }
 
 $msg  = '';
@@ -300,7 +300,7 @@ tr:last-child td { border-bottom:none; }
            target="_blank" rel="noopener" class="view-link">
             👁 Ver página pública ↗
         </a>
-        <a href="<?= BASE_URL ?>/dashboard.php" class="tab">← Dashboard</a>
+        <a href="<?= BASE_URL ?>/index.php" class="tab">← Dashboard</a>
     </div>
 </div>
 

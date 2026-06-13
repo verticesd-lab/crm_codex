@@ -13,7 +13,7 @@ if (function_exists('pdo_apply_timezone')) {
 $companyId = current_company_id();
 if (!$companyId) {
     flash('error', 'Empresa não definida na sessão.');
-    redirect('dashboard.php');
+    redirect('login.php');
 }
 
 /* ── Intent parser ──────────────────────────────────────────────── */

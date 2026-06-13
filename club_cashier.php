@@ -431,7 +431,7 @@ include __DIR__ . '/views/partials/header.php';
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
         <a href="club.php" style="padding:.45rem .9rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.78rem;font-weight:600;color:#475569;text-decoration:none;">📊 Painel</a>
         <a href="club_rules.php" style="padding:.45rem .9rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.78rem;font-weight:600;color:#475569;text-decoration:none;">⚙️ Regras</a>
-        <a href="dashboard.php" style="padding:.45rem .9rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.78rem;font-weight:600;color:#475569;text-decoration:none;">← Dashboard</a>
+        <a href="<?= BASE_URL ?>/index.php" style="padding:.45rem .9rem;border:1px solid #e2e8f0;border-radius:8px;font-size:.78rem;font-weight:600;color:#475569;text-decoration:none;">← Dashboard</a>
     </div>
 </div>
 
