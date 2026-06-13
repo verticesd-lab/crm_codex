@@ -54,21 +54,68 @@ function gerar_codigo_voucher(): string {
     return strtoupper(substr(md5(uniqid('v',true)),0,8));
 }
 
-function enviar_whatsapp_cashback(PDO $pdo, int $companyId, array $cliente, float $cashback, float $saldoTotal, array $rules): bool {
-    // Busca config Evolution API
-    try {
-        $cols = $pdo->query('SHOW COLUMNS FROM companies')->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('evolution_api_url', $cols)) return false;
-        $row = $pdo->prepare("SELECT evolution_api_url, evolution_api_key, evolution_instance FROM companies WHERE id=? LIMIT 1");
-        $row->execute([$companyId]);
-        $cfg = $row->fetch(PDO::FETCH_ASSOC);
-    } catch (Throwable $e) { return false; }
+function club_evolution_config(PDO $pdo, int $companyId): array {
+    $base     = defined('EVOLUTION_API_URL')  ? EVOLUTION_API_URL  : (getenv('EVOLUTION_API_URL')  ?: '');
+    $key      = defined('EVOLUTION_API_KEY')  ? EVOLUTION_API_KEY  : (getenv('EVOLUTION_API_KEY')  ?: '');
+    $instance = defined('EVOLUTION_INSTANCE') ? EVOLUTION_INSTANCE : (getenv('EVOLUTION_INSTANCE') ?: '');
 
-    if (!$cfg || !$cfg['evolution_api_url'] || !$cfg['evolution_api_key'] || !$cfg['evolution_instance']) return false;
+    if ((!$base || !$key || !$instance) && $pdo && $companyId) {
+        try {
+            $cols = $pdo->query('SHOW COLUMNS FROM companies')->fetchAll(PDO::FETCH_COLUMN);
+            $sel  = [];
+            if (in_array('evolution_api_url',  $cols)) $sel[] = 'evolution_api_url';
+            if (in_array('evolution_api_key',  $cols)) $sel[] = 'evolution_api_key';
+            if (in_array('evolution_instance', $cols)) $sel[] = 'evolution_instance';
 
-    $wa = preg_replace('/\D/', '', $cliente['whatsapp'] ?? '');
-    if (!$wa) return false;
-    if (!str_starts_with($wa, '55')) $wa = '55' . $wa;
+            if ($sel) {
+                $row = $pdo->prepare('SELECT ' . implode(',', $sel) . ' FROM companies WHERE id=? LIMIT 1');
+                $row->execute([$companyId]);
+                $cfg = $row->fetch(PDO::FETCH_ASSOC);
+                if ($cfg) {
+                    if (!$base     && !empty($cfg['evolution_api_url']))  $base     = $cfg['evolution_api_url'];
+                    if (!$key      && !empty($cfg['evolution_api_key']))  $key      = $cfg['evolution_api_key'];
+                    if (!$instance && !empty($cfg['evolution_instance'])) $instance = $cfg['evolution_instance'];
+                }
+            }
+        } catch (Throwable $e) {}
+    }
+
+    return ['base' => rtrim((string)$base, '/'), 'key' => (string)$key, 'instance' => (string)$instance];
+}
+
+function club_whatsapp_candidates(?string ...$numbers): array {
+    $candidates = [];
+    foreach ($numbers as $number) {
+        $digits = preg_replace('/\D/', '', (string)$number);
+        if ($digits === '') continue;
+        if (!str_starts_with($digits, '55')) $digits = '55' . $digits;
+
+        $candidates[] = $digits;
+
+        // Brasil: tenta variações com e sem o nono dígito após o DDD.
+        if (strlen($digits) === 13 && substr($digits, 4, 1) === '9') {
+            $candidates[] = substr($digits, 0, 4) . substr($digits, 5);
+        } elseif (strlen($digits) === 12) {
+            $candidates[] = substr($digits, 0, 4) . '9' . substr($digits, 4);
+        }
+    }
+
+    return array_values(array_unique(array_filter($candidates)));
+}
+
+function enviar_whatsapp_cashback(PDO $pdo, int $companyId, array $cliente, float $cashback, float $saldoTotal, array $rules, ?string $whatsappBusca = null, &$erroEnvio = null): bool {
+    $erroEnvio = '';
+    $cfg = club_evolution_config($pdo, $companyId);
+    if (!$cfg['base'] || !$cfg['key'] || !$cfg['instance']) {
+        $erroEnvio = 'Evolution API não configurada para esta empresa.';
+        return false;
+    }
+
+    $numeros = club_whatsapp_candidates($whatsappBusca, $cliente['whatsapp'] ?? '');
+    if (!$numeros) {
+        $erroEnvio = 'WhatsApp do cliente vazio ou inválido.';
+        return false;
+    }
 
     $primeiroNome = explode(' ', trim($cliente['nome']))[0];
     $validade     = (int)($rules['cashback_validade'] ?? 45);
@@ -80,23 +127,44 @@ function enviar_whatsapp_cashback(PDO $pdo, int $companyId, array $cliente, floa
            . "⏰ Válido por *{$validade} dias*\n\n"
            . "_Use seu saldo na próxima compra. Obrigado!_ 😊";
 
-    if (!function_exists('curl_init')) return false;
+    if (!function_exists('curl_init')) {
+        $erroEnvio = 'Extensão cURL indisponível no servidor.';
+        return false;
+    }
 
-    $url = rtrim($cfg['evolution_api_url'], '/') . "/message/sendText/" . $cfg['evolution_instance'];
-    $ch  = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'apikey: ' . $cfg['evolution_api_key']],
-        CURLOPT_POSTFIELDS     => json_encode(['number' => $wa, 'text' => $texto]),
-        CURLOPT_TIMEOUT        => 10,
-        CURLOPT_SSL_VERIFYPEER => false,
-    ]);
-    $resp = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    $url = $cfg['base'] . "/message/sendText/" . $cfg['instance'];
+    foreach ($numeros as $wa) {
+        $payload = json_encode(['number' => $wa, 'text' => $texto], JSON_UNESCAPED_UNICODE);
+        if ($payload === false) {
+            $erroEnvio = 'Falha ao montar JSON da mensagem.';
+            return false;
+        }
 
-    return $code >= 200 && $code < 300;
+        $ch  = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'apikey: ' . $cfg['key']],
+            CURLOPT_POSTFIELDS     => $payload,
+            CURLOPT_TIMEOUT        => 20,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 3,
+            CURLOPT_SSL_VERIFYPEER => false,
+        ]);
+        $resp    = curl_exec($ch);
+        $code    = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($ch);
+        curl_close($ch);
+
+        if (!$curlErr && $code >= 200 && $code < 300) return true;
+
+        $erroEnvio = $curlErr
+            ? "cURL ao enviar para {$wa}: {$curlErr}"
+            : "HTTP {$code} ao enviar para {$wa}: " . substr((string)$resp, 0, 180);
+    }
+
+    error_log("[club_cashier] Falha WhatsApp cashback company={$companyId}: {$erroEnvio}");
+    return false;
 }
 
 $msg  = '';
@@ -153,11 +221,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cliente) {
             $saldoTotal  = (float)$wallet['saldo'];
 
             // Envia WhatsApp automaticamente
-            $waSent = enviar_whatsapp_cashback($pdo, $companyId, $cliente, $cashback, $saldoTotal, $rules);
+            $waErro = '';
+            $waSent = enviar_whatsapp_cashback($pdo, $companyId, $cliente, $cashback, $saldoTotal, $rules, $whatsInput, $waErro);
 
             $waInfo = $waSent
                 ? ' <span style="color:#16a34a;font-size:.82rem;">📱 WhatsApp enviado!</span>'
-                : ' <span style="color:#f59e0b;font-size:.82rem;">⚠️ WhatsApp não enviado (verifique Evolution API)</span>';
+                : ' <span style="color:#f59e0b;font-size:.82rem;">⚠️ WhatsApp não enviado: ' . sanitize($waErro ?: 'verifique Evolution API') . '</span>';
 
             $msg = "✅ Cashback de " . fmt_r($cashback) . " creditado!"
                  . " Saldo atual: " . fmt_r($saldoTotal) . "."
