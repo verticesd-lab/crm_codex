@@ -24,20 +24,6 @@ require_once __DIR__ . '/db.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-$rawBody = file_get_contents('php://input');
-$jsonBody = json_decode($rawBody, true);
-
-// DEBUG TEMPORÁRIO — remover após resolver
-echo json_encode([
-    'raw_length'   => strlen($rawBody),
-    'raw_preview'  => substr($rawBody, 0, 200),
-    'json_ok'      => is_array($jsonBody),
-    'json_keys'    => is_array($jsonBody) ? array_keys($jsonBody) : [],
-    'xml_length'   => strlen($jsonBody['xml'] ?? ''),
-    'xml_preview'  => substr($jsonBody['xml'] ?? '', 0, 100),
-]);
-exit;
-
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['ok' => false, 'reason' => 'method_not_allowed']);
@@ -46,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 /* ── Lê o corpo ── */
 $rawBody = file_get_contents('php://input');
-if (!$rawBody) {
+if (!$rawBody || strlen($rawBody) < 100) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'reason' => 'empty_body']);
     exit;
