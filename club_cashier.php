@@ -54,8 +54,54 @@ function gerar_codigo_voucher(): string {
     return strtoupper(substr(md5(uniqid('v',true)),0,8));
 }
 
+function enviar_whatsapp_cashback(PDO $pdo, int $companyId, array $cliente, float $cashback, float $saldoTotal, array $rules): bool {
+    // Busca config Evolution API
+    try {
+        $cols = $pdo->query('SHOW COLUMNS FROM companies')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('evolution_api_url', $cols)) return false;
+        $row = $pdo->prepare("SELECT evolution_api_url, evolution_api_key, evolution_instance FROM companies WHERE id=? LIMIT 1");
+        $row->execute([$companyId]);
+        $cfg = $row->fetch(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) { return false; }
+
+    if (!$cfg || !$cfg['evolution_api_url'] || !$cfg['evolution_api_key'] || !$cfg['evolution_instance']) return false;
+
+    $wa = preg_replace('/\D/', '', $cliente['whatsapp'] ?? '');
+    if (!$wa) return false;
+    if (!str_starts_with($wa, '55')) $wa = '55' . $wa;
+
+    $primeiroNome = explode(' ', trim($cliente['nome']))[0];
+    $validade     = (int)($rules['cashback_validade'] ?? 45);
+    $nomClube     = $rules['nome_clube'] ?? 'Clube For Men';
+
+    $texto = "Oi, {$primeiroNome}! 🎉\n\n"
+           . "Acabamos de creditar *R$ " . number_format($cashback, 2, ',', '.') . "* de cashback na sua carteira do *{$nomClube}*! 💰\n\n"
+           . "💳 Saldo total: *R$ " . number_format($saldoTotal, 2, ',', '.') . "*\n"
+           . "⏰ Válido por *{$validade} dias*\n\n"
+           . "_Use seu saldo na próxima compra. Obrigado!_ 😊";
+
+    if (!function_exists('curl_init')) return false;
+
+    $url = rtrim($cfg['evolution_api_url'], '/') . "/message/sendText/" . $cfg['evolution_instance'];
+    $ch  = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'apikey: ' . $cfg['evolution_api_key']],
+        CURLOPT_POSTFIELDS     => json_encode(['number' => $wa, 'text' => $texto]),
+        CURLOPT_TIMEOUT        => 10,
+        CURLOPT_SSL_VERIFYPEER => false,
+    ]);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return $code >= 200 && $code < 300;
+}
+
 $msg  = '';
 $erro = '';
+$aviso = '';
 $cliente = null;
 $wallet  = null;
 $stamp   = null;
@@ -82,7 +128,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cliente) {
 
     // ── Registrar venda (cashback) ─────────────────────────────
     if ($acao === 'registrar_venda') {
-        $valorVenda = (float)str_replace(',','.',$_POST['valor_venda'] ?? '0');
+        $valorVenda = (float)str_replace(',', '.', $_POST['valor_venda'] ?? '0');
+        $origemManual = ($_POST['origem'] ?? '') === 'manual';
+
         if ($valorVenda < (float)$rules['cashback_minimo'] && (float)$rules['cashback_minimo'] > 0) {
             $erro = 'Venda mínima para gerar cashback: ' . fmt_r($rules['cashback_minimo']);
         } elseif ($valorVenda <= 0) {
@@ -90,15 +138,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cliente) {
         } else {
             $cashback = round($valorVenda * $rules['cashback_pct'] / 100, 2);
             $expira   = date('Y-m-d', strtotime('+' . $rules['cashback_validade'] . ' days'));
+
             // Credita na carteira
             $pdo->prepare("UPDATE club_wallets SET saldo=saldo+?, total_ganho=total_ganho+?, updated_at=NOW() WHERE id=?")
                 ->execute([$cashback, $cashback, $wallet['id']]);
+
             // Registra transação
+            $descOrigem = $origemManual ? 'Cashback manual de ' : 'Cashback de venda de ';
             $pdo->prepare("INSERT INTO club_transactions (company_id,client_id,wallet_id,tipo,valor,descricao,referencia_tipo,expira_em) VALUES (?,?,?,'credito',?,?,?,?)")
-                ->execute([$companyId,$clientId,$wallet['id'],$cashback,"Cashback de venda de " . fmt_r($valorVenda),'venda',$expira]);
-            $msg = "✅ Cashback de " . fmt_r($cashback) . " creditado! Expira em {$rules['cashback_validade']} dias.";
-            // Recarrega wallet
-            $wallet = get_or_create_wallet($pdo, $companyId, $clientId);
+                ->execute([$companyId, $clientId, $wallet['id'], $cashback, $descOrigem . fmt_r($valorVenda), 'venda', $expira]);
+
+            // Recarrega wallet para pegar saldo atualizado
+            $wallet      = get_or_create_wallet($pdo, $companyId, $clientId);
+            $saldoTotal  = (float)$wallet['saldo'];
+
+            // Envia WhatsApp automaticamente
+            $waSent = enviar_whatsapp_cashback($pdo, $companyId, $cliente, $cashback, $saldoTotal, $rules);
+
+            $waInfo = $waSent
+                ? ' <span style="color:#16a34a;font-size:.82rem;">📱 WhatsApp enviado!</span>'
+                : ' <span style="color:#f59e0b;font-size:.82rem;">⚠️ WhatsApp não enviado (verifique Evolution API)</span>';
+
+            $msg = "✅ Cashback de " . fmt_r($cashback) . " creditado!"
+                 . " Saldo atual: " . fmt_r($saldoTotal) . "."
+                 . " Expira em {$rules['cashback_validade']} dias."
+                 . $waInfo;
+
+            if ($origemManual) {
+                $aviso = "⚠️ Cashback gerado manualmente pelo caixa. Confira se a venda também foi registrada no sistema principal.";
+            }
         }
     }
 
@@ -278,6 +346,7 @@ include __DIR__ . '/views/partials/header.php';
 
 /* Alerts */
 .alert-ok  { padding:.75rem 1rem; border-radius:9px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:.85rem; margin-bottom:1rem; }
+.alert-warn { padding:.75rem 1rem; border-radius:9px; background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:.85rem; margin-bottom:1rem; font-weight:600; }
 .alert-err { padding:.75rem 1rem; border-radius:9px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:.85rem; margin-bottom:1rem; }
 
 @media(max-width:640px) {
@@ -306,7 +375,8 @@ include __DIR__ . '/views/partials/header.php';
     </form>
 </div>
 
-<?php if ($msg):  ?><div class="alert-ok">✅ <?= $msg ?></div><?php endif; ?>
+<?php if ($msg):  ?><div class="alert-ok"><?= $msg ?></div><?php endif; ?>
+<?php if ($aviso): ?><div class="alert-warn"><?= sanitize($aviso) ?></div><?php endif; ?>
 <?php if ($erro): ?><div class="alert-err">⚠️ <?= sanitize($erro) ?></div><?php endif; ?>
 
 <?php if ($whatsInput && !$cliente): ?>
@@ -392,12 +462,33 @@ $pct       = $selosMeta > 0 ? min(100, round($selosCiclo / $selosMeta * 100)) : 
 
         <!-- Registrar Venda -->
         <div class="action-block" style="border-color:#bbf7d0;">
-            <h4>💰 Registrar Venda (Cashback <?= $rules['cashback_pct'] ?>%)</h4>
+            <h4>💰 Registrar Cashback Manual (<?= $rules['cashback_pct'] ?>%)</h4>
             <form method="POST">
                 <input type="hidden" name="acao" value="registrar_venda">
                 <input type="hidden" name="whatsapp" value="<?= sanitize($whatsInput) ?>">
-                <input type="number" name="valor_venda" class="a-inp" placeholder="Valor da venda R$" step="0.01" min="0" required>
-                <button type="submit" class="a-btn green">+ Gerar Cashback</button>
+                <input type="hidden" name="origem" value="manual">
+
+                <div style="margin-bottom:.5rem;">
+                    <label style="font-size:.68rem;font-weight:700;color:#64748b;display:block;margin-bottom:.25rem;">
+                        Valor total da compra (R$)
+                    </label>
+                    <input type="number" name="valor_venda" class="a-inp"
+                        placeholder="Ex: 250.00" step="0.01" min="0" required
+                        oninput="calcPreviewCashback(this.value)">
+                </div>
+
+                <!-- Preview do cashback calculado em tempo real -->
+                <div id="cashback-preview" style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:.5rem .75rem;margin-bottom:.5rem;font-size:.82rem;color:#166534;">
+                    💰 Cashback gerado: <strong id="cashback-valor">R$ 0,00</strong>
+                    <span style="color:#94a3b8;font-size:.72rem;"> · <?= $rules['cashback_pct'] ?>% de <span id="cashback-base">R$ 0,00</span></span>
+                </div>
+
+                <button type="submit" class="a-btn green">
+                    💰 Gerar Cashback + Enviar WhatsApp
+                </button>
+                <p style="font-size:.65rem;color:#94a3b8;margin-top:.35rem;text-align:center;">
+                    📱 O cliente recebe notificação automática no WhatsApp
+                </p>
             </form>
         </div>
 
@@ -474,5 +565,25 @@ $pct       = $selosMeta > 0 ? min(100, round($selosCiclo / $selosMeta * 100)) : 
 <?php endif; ?>
 
 </div><!-- /club-wrap -->
+
+<script>
+function calcPreviewCashback(valor) {
+    const v   = parseFloat(valor) || 0;
+    const pct = <?= (float)$rules['cashback_pct'] ?>;
+    const cb  = Math.round(v * pct / 100 * 100) / 100;
+
+    const preview = document.getElementById('cashback-preview');
+    const valEl   = document.getElementById('cashback-valor');
+    const baseEl  = document.getElementById('cashback-base');
+
+    if (v > 0) {
+        valEl.textContent  = 'R$ ' + cb.toFixed(2).replace('.', ',');
+        baseEl.textContent = 'R$ ' + v.toFixed(2).replace('.', ',');
+        preview.style.display = 'block';
+    } else {
+        preview.style.display = 'none';
+    }
+}
+</script>
 
 <?php include __DIR__ . '/views/partials/footer.php'; ?>
