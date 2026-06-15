@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
+$agendaHelpersFile = __DIR__ . '/agenda_helpers.php';
+if (is_file($agendaHelpersFile)) require_once $agendaHelpersFile;
 require_login();
 
 $pdo       = get_pdo();
@@ -32,7 +34,6 @@ switch ($period) {
     case 'mes':
         $dFrom = date('Y-m-01');
         $dTo   = date('Y-m-d');
-        $label = 'Mês atual (' . strftime('%B', mktime(0,0,0,(int)date('m'),1)) . ')';
         $label = 'Mês atual (' . ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][(int)date('m')] . ')';
         break;
     case 'ano':
@@ -69,6 +70,13 @@ function trend(float $atual, float $ant): array {
 }
 function qn(PDO $pdo, string $sql, array $p): float {
     $s = $pdo->prepare($sql); $s->execute($p); return (float)($s->fetchColumn() ?: 0);
+}
+function has_col(array $cols, string $col): bool {
+    return in_array($col, $cols, true);
+}
+function sql_col(string $col, string $alias = ''): string {
+    $quoted = '`' . str_replace('`', '``', $col) . '`';
+    return $alias !== '' ? $alias . '.' . $quoted : $quoted;
 }
 
 /* ══════════════════════════════════════════════════
@@ -122,6 +130,9 @@ $origens = $origens->fetchAll(PDO::FETCH_ASSOC);
 $apptCols = [];
 try { $apptCols = $pdo->query('SHOW COLUMNS FROM appointments')->fetchAll(PDO::FETCH_COLUMN); } catch(Throwable $e){}
 $hasAppt = !empty($apptCols);
+$barberCols = [];
+try { $barberCols = $pdo->query('SHOW COLUMNS FROM barbers')->fetchAll(PDO::FETCH_COLUMN); } catch(Throwable $e){}
+$hasBarbers = !empty($barberCols);
 
 $agendaStats  = [];
 $barbeirStats = [];
@@ -130,6 +141,10 @@ $agendaChart  = []; // por dia
 $agendaChartPrev = [];
 
 if ($hasAppt) {
+    $priceCol = has_col($apptCols, 'total_price') ? 'total_price' : (has_col($apptCols, 'price') ? 'price' : null);
+    $priceExpr = $priceCol ? 'COALESCE(' . sql_col($priceCol) . ',0)' : '0';
+    $priceExprA = $priceCol ? 'COALESCE(' . sql_col($priceCol, 'a') . ',0)' : '0';
+
     // Total agendamentos
     $totalAppt    = (int)qn($pdo,"SELECT COUNT(*) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?",[$companyId,$dFrom,$dTo]);
     $totalApptAnt = (int)qn($pdo,"SELECT COUNT(*) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?",[$companyId,$prevFrom,$prevTo]);
@@ -142,8 +157,8 @@ if ($hasAppt) {
     foreach ($statusAppt->fetchAll(PDO::FETCH_ASSOC) as $r) $statusMap[$r['status']] = (int)$r['n'];
 
     // Faturamento barbearia
-    $fatBarb    = qn($pdo,"SELECT SUM(price) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND status IN ('concluido','confirmado','agendado')",[$companyId,$dFrom,$dTo]);
-    $fatBarbAnt = qn($pdo,"SELECT SUM(price) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND status IN ('concluido','confirmado','agendado')",[$companyId,$prevFrom,$prevTo]);
+    $fatBarb    = qn($pdo,"SELECT SUM({$priceExpr}) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND status IN ('concluido','confirmado','agendado')",[$companyId,$dFrom,$dTo]);
+    $fatBarbAnt = qn($pdo,"SELECT SUM({$priceExpr}) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND status IN ('concluido','confirmado','agendado')",[$companyId,$prevFrom,$prevTo]);
     $tFatBarb   = trend($fatBarb, $fatBarbAnt);
 
     // Ticket médio
@@ -161,19 +176,35 @@ if ($hasAppt) {
     ];
 
     // Por barbeiro
-    $hasProfCol = in_array('professional_name', $apptCols) || in_array('barber_name', $apptCols) || in_array('professional_id', $apptCols);
-    $profCol = in_array('professional_name',$apptCols) ? 'professional_name'
-             : (in_array('barber_name',$apptCols) ? 'barber_name' : null);
+    $profCol = has_col($apptCols,'professional_name') ? 'professional_name'
+             : (has_col($apptCols,'barber_name') ? 'barber_name' : null);
 
     if ($profCol) {
-        $byBarb = $pdo->prepare("SELECT {$profCol} as barbeiro, COUNT(*) as atend, SUM(price) as fat, AVG(price) as ticket
-            FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND {$profCol} IS NOT NULL AND {$profCol} != ''
-            GROUP BY {$profCol} ORDER BY fat DESC");
+        $profSqlCol = sql_col($profCol);
+        $byBarb = $pdo->prepare("SELECT {$profSqlCol} as barbeiro, COUNT(*) as atend, SUM({$priceExpr}) as fat, AVG({$priceExpr}) as ticket
+            FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND {$profSqlCol} IS NOT NULL AND {$profSqlCol} != ''
+            GROUP BY {$profSqlCol} ORDER BY fat DESC");
         $byBarb->execute([$companyId,$dFrom,$dTo]);
         $barbeirStats = $byBarb->fetchAll(PDO::FETCH_ASSOC);
-    } elseif (in_array('professional_id',$apptCols)) {
-        $byBarb = $pdo->prepare("SELECT COALESCE(u.nome, CONCAT('Barbeiro #', a.professional_id)) as barbeiro,
-            COUNT(*) as atend, SUM(a.price) as fat, AVG(a.price) as ticket
+    } elseif (has_col($apptCols, 'barber_id')) {
+        if ($hasBarbers && has_col($barberCols, 'name')) {
+            $barberCompanyJoin = has_col($barberCols, 'company_id') ? ' AND b.company_id=a.company_id' : '';
+            $byBarb = $pdo->prepare("SELECT COALESCE(b.name, CONCAT('Barbeiro #', COALESCE(a.barber_id,0))) as barbeiro,
+                COUNT(*) as atend, SUM({$priceExprA}) as fat, AVG({$priceExprA}) as ticket
+                FROM appointments a LEFT JOIN barbers b ON b.id=a.barber_id{$barberCompanyJoin}
+                WHERE a.company_id=? AND DATE(a.date) BETWEEN ? AND ?
+                GROUP BY a.barber_id, b.name ORDER BY fat DESC");
+        } else {
+            $byBarb = $pdo->prepare("SELECT CONCAT('Barbeiro #', COALESCE(barber_id,0)) as barbeiro,
+                COUNT(*) as atend, SUM({$priceExpr}) as fat, AVG({$priceExpr}) as ticket
+                FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?
+                GROUP BY barber_id ORDER BY fat DESC");
+        }
+        $byBarb->execute([$companyId,$dFrom,$dTo]);
+        $barbeirStats = $byBarb->fetchAll(PDO::FETCH_ASSOC);
+    } elseif (has_col($apptCols, 'professional_id')) {
+        $byBarb = $pdo->prepare("SELECT COALESCE(u.nome, CONCAT('Barbeiro #', COALESCE(a.professional_id,0))) as barbeiro,
+            COUNT(*) as atend, SUM({$priceExprA}) as fat, AVG({$priceExprA}) as ticket
             FROM appointments a LEFT JOIN users u ON u.id=a.professional_id
             WHERE a.company_id=? AND DATE(a.date) BETWEEN ? AND ?
             GROUP BY a.professional_id ORDER BY fat DESC");
@@ -182,25 +213,62 @@ if ($hasAppt) {
     }
 
     // Por serviço
-    $servCol = in_array('service_name',$apptCols) ? 'service_name'
-             : (in_array('services_json',$apptCols) ? null : null);
+    $servCol = has_col($apptCols,'service_name') ? 'service_name'
+             : (has_col($apptCols,'services_json') ? null : null);
     if ($servCol) {
-        $byServ = $pdo->prepare("SELECT {$servCol} as servico, COUNT(*) as qtd, SUM(price) as fat
-            FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND {$servCol} IS NOT NULL AND {$servCol} != ''
-            GROUP BY {$servCol} ORDER BY qtd DESC LIMIT 10");
+        $servSqlCol = sql_col($servCol);
+        $byServ = $pdo->prepare("SELECT {$servSqlCol} as servico, COUNT(*) as qtd, SUM({$priceExpr}) as fat
+            FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND {$servSqlCol} IS NOT NULL AND {$servSqlCol} != ''
+            GROUP BY {$servSqlCol} ORDER BY qtd DESC LIMIT 10");
         $byServ->execute([$companyId,$dFrom,$dTo]);
         $servicoStats = $byServ->fetchAll(PDO::FETCH_ASSOC);
+    } elseif (has_col($apptCols, 'services_json')) {
+        $catalog = function_exists('agenda_default_services_catalog') ? agenda_default_services_catalog() : [];
+        try {
+            $svcCols = $pdo->query('SHOW COLUMNS FROM services')->fetchAll(PDO::FETCH_COLUMN);
+            if (has_col($svcCols, 'service_key') && has_col($svcCols, 'label')) {
+                $svcRows = $pdo->prepare('SELECT service_key, label FROM services WHERE company_id=?');
+                $svcRows->execute([$companyId]);
+                foreach ($svcRows->fetchAll(PDO::FETCH_ASSOC) as $svcRow) {
+                    $svcKey = (string)($svcRow['service_key'] ?? '');
+                    if ($svcKey !== '') $catalog[$svcKey]['label'] = (string)($svcRow['label'] ?? $svcKey);
+                }
+            }
+        } catch (Throwable $e) {}
+        $servRows = $pdo->prepare("SELECT services_json, {$priceExpr} as valor
+            FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND services_json IS NOT NULL AND services_json != ''");
+        $servRows->execute([$companyId,$dFrom,$dTo]);
+        $servAgg = [];
+        foreach ($servRows->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $services = json_decode((string)($row['services_json'] ?? ''), true);
+            if (!is_array($services) || !$services) continue;
+
+            $valor = (float)($row['valor'] ?? 0);
+            $share = $valor > 0 ? $valor / max(1, count($services)) : 0;
+            foreach ($services as $svc) {
+                $key = is_array($svc) ? (string)($svc['service_key'] ?? $svc['key'] ?? $svc['label'] ?? '') : (string)$svc;
+                $key = trim($key);
+                if ($key === '') continue;
+
+                $labelSvc = $catalog[$key]['label'] ?? $key;
+                if (!isset($servAgg[$key])) $servAgg[$key] = ['servico' => $labelSvc, 'qtd' => 0, 'fat' => 0.0];
+                $servAgg[$key]['qtd']++;
+                $servAgg[$key]['fat'] += $share;
+            }
+        }
+        usort($servAgg, fn($a, $b) => ($b['qtd'] <=> $a['qtd']) ?: ($b['fat'] <=> $a['fat']));
+        $servicoStats = array_slice($servAgg, 0, 10);
     }
 
     // Gráfico por dia (agendamentos)
-    $chartDays = $pdo->prepare("SELECT DATE(date) as dia, COUNT(*) as n, SUM(price) as fat
+    $chartDays = $pdo->prepare("SELECT DATE(date) as dia, COUNT(*) as n, SUM({$priceExpr}) as fat
         FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?
         GROUP BY DATE(date) ORDER BY dia");
     $chartDays->execute([$companyId,$dFrom,$dTo]);
     $agendaChart = $chartDays->fetchAll(PDO::FETCH_ASSOC);
 
     // Período anterior para gráfico
-    $chartPrev = $pdo->prepare("SELECT DATE(date) as dia, COUNT(*) as n, SUM(price) as fat
+    $chartPrev = $pdo->prepare("SELECT DATE(date) as dia, COUNT(*) as n, SUM({$priceExpr}) as fat
         FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?
         GROUP BY DATE(date) ORDER BY dia");
     $chartPrev->execute([$companyId,$prevFrom,$prevTo]);
