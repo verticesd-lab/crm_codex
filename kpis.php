@@ -144,6 +144,8 @@ if ($hasAppt) {
     $priceCol = has_col($apptCols, 'total_price') ? 'total_price' : (has_col($apptCols, 'price') ? 'price' : null);
     $priceExpr = $priceCol ? 'COALESCE(' . sql_col($priceCol) . ',0)' : '0';
     $priceExprA = $priceCol ? 'COALESCE(' . sql_col($priceCol, 'a') . ',0)' : '0';
+    $statusFilter = has_col($apptCols, 'status') ? " AND " . sql_col('status') . " IN ('concluido','confirmado','agendado')" : '';
+    $statusFilterA = has_col($apptCols, 'status') ? " AND " . sql_col('status', 'a') . " IN ('concluido','confirmado','agendado')" : '';
 
     // Total agendamentos
     $totalAppt    = (int)qn($pdo,"SELECT COUNT(*) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?",[$companyId,$dFrom,$dTo]);
@@ -157,8 +159,8 @@ if ($hasAppt) {
     foreach ($statusAppt->fetchAll(PDO::FETCH_ASSOC) as $r) $statusMap[$r['status']] = (int)$r['n'];
 
     // Faturamento barbearia
-    $fatBarb    = qn($pdo,"SELECT SUM({$priceExpr}) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND status IN ('concluido','confirmado','agendado')",[$companyId,$dFrom,$dTo]);
-    $fatBarbAnt = qn($pdo,"SELECT SUM({$priceExpr}) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND status IN ('concluido','confirmado','agendado')",[$companyId,$prevFrom,$prevTo]);
+    $fatBarb    = qn($pdo,"SELECT SUM({$priceExpr}) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?{$statusFilter}",[$companyId,$dFrom,$dTo]);
+    $fatBarbAnt = qn($pdo,"SELECT SUM({$priceExpr}) FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?{$statusFilter}",[$companyId,$prevFrom,$prevTo]);
     $tFatBarb   = trend($fatBarb, $fatBarbAnt);
 
     // Ticket médio
@@ -182,7 +184,7 @@ if ($hasAppt) {
     if ($profCol) {
         $profSqlCol = sql_col($profCol);
         $byBarb = $pdo->prepare("SELECT {$profSqlCol} as barbeiro, COUNT(*) as atend, SUM({$priceExpr}) as fat, AVG({$priceExpr}) as ticket
-            FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ? AND {$profSqlCol} IS NOT NULL AND {$profSqlCol} != ''
+            FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?{$statusFilter} AND {$profSqlCol} IS NOT NULL AND {$profSqlCol} != ''
             GROUP BY {$profSqlCol} ORDER BY fat DESC");
         $byBarb->execute([$companyId,$dFrom,$dTo]);
         $barbeirStats = $byBarb->fetchAll(PDO::FETCH_ASSOC);
@@ -192,12 +194,12 @@ if ($hasAppt) {
             $byBarb = $pdo->prepare("SELECT COALESCE(b.name, CONCAT('Barbeiro #', COALESCE(a.barber_id,0))) as barbeiro,
                 COUNT(*) as atend, SUM({$priceExprA}) as fat, AVG({$priceExprA}) as ticket
                 FROM appointments a LEFT JOIN barbers b ON b.id=a.barber_id{$barberCompanyJoin}
-                WHERE a.company_id=? AND DATE(a.date) BETWEEN ? AND ?
+                WHERE a.company_id=? AND DATE(a.date) BETWEEN ? AND ?{$statusFilterA}
                 GROUP BY a.barber_id, b.name ORDER BY fat DESC");
         } else {
             $byBarb = $pdo->prepare("SELECT CONCAT('Barbeiro #', COALESCE(barber_id,0)) as barbeiro,
                 COUNT(*) as atend, SUM({$priceExpr}) as fat, AVG({$priceExpr}) as ticket
-                FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?
+                FROM appointments WHERE company_id=? AND DATE(date) BETWEEN ? AND ?{$statusFilter}
                 GROUP BY barber_id ORDER BY fat DESC");
         }
         $byBarb->execute([$companyId,$dFrom,$dTo]);
@@ -206,7 +208,7 @@ if ($hasAppt) {
         $byBarb = $pdo->prepare("SELECT COALESCE(u.nome, CONCAT('Barbeiro #', COALESCE(a.professional_id,0))) as barbeiro,
             COUNT(*) as atend, SUM({$priceExprA}) as fat, AVG({$priceExprA}) as ticket
             FROM appointments a LEFT JOIN users u ON u.id=a.professional_id
-            WHERE a.company_id=? AND DATE(a.date) BETWEEN ? AND ?
+            WHERE a.company_id=? AND DATE(a.date) BETWEEN ? AND ?{$statusFilterA}
             GROUP BY a.professional_id ORDER BY fat DESC");
         $byBarb->execute([$companyId,$dFrom,$dTo]);
         $barbeirStats = $byBarb->fetchAll(PDO::FETCH_ASSOC);
@@ -574,13 +576,14 @@ function fmtN(float $v): string { return number_format($v, 0, ',', '.'); }
     <div class="kpi-box" style="margin-bottom:1rem;">
         <div class="kpi-box-hd"><h3>💈 Desempenho por barbeiro</h3><span><?= $label ?></span></div>
         <div class="kpi-box-bd" style="padding:.5rem;">
-            <?php $maxFatBarb = max(array_column($barbeirStats,'fat') ?: [1]); ?>
+            <?php $totalFatBarbeiros = array_sum(array_map('floatval', array_column($barbeirStats, 'fat'))); ?>
             <table class="kpi-tbl">
                 <thead><tr><th>Barbeiro</th><th>Atend.</th><th>Ticket médio</th><th>Faturamento</th><th style="width:120px;">Participação</th></tr></thead>
                 <tbody>
                 <?php foreach ($barbeirStats as $b):
-                    $pctBarb = round($b['fat']/$maxFatBarb*100);
-                    $pctTotal = $agendaStats['faturamento'] > 0 ? round($b['fat']/$agendaStats['faturamento']*100, 1) : 0;
+                    $fatBarbeiro = (float)($b['fat'] ?? 0);
+                    $pctTotal = $totalFatBarbeiros > 0 ? round($fatBarbeiro / $totalFatBarbeiros * 100, 1) : 0;
+                    $pctBarb = min(100, max(0, $pctTotal));
                 ?>
                 <tr>
                     <td style="font-weight:700;"><?= sanitize($b['barbeiro']) ?></td>
