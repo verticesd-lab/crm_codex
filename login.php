@@ -80,6 +80,7 @@ if (!empty($companyBg['logo'])) {
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
+<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
     <meta charset="UTF-8">
     <title>Login - Micro CRM SaaS</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
