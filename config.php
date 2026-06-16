@@ -1,4 +1,9 @@
 <?php
+// Força o PHP a reconhecer o HTTPS vindo do Proxy do Coolify/Cloudflare
+if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https') {
+    $_SERVER['HTTPS'] = 'on';
+}
+
 // =========================
 // CONFIGURAÇÕES DO SISTEMA
 // =========================
