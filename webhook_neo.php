@@ -195,67 +195,42 @@ if (!$companyId) {
     $companyId = $row ? (int)$row['id'] : 1;
 }
 
-/* Garante tabelas */
-setup_cashback_tables($pdo);
-
-/* Idempotência: evita reprocessar mesma NF-e */
-if ($chaveNFe) {
-    $st = $pdo->prepare("SELECT id FROM cashback_transactions WHERE chave_nfe = ? LIMIT 1");
-    $st->execute([$chaveNFe]);
-    if ($st->fetchColumn()) {
-        echo json_encode(['ok' => false, 'reason' => 'nfe_ja_processada', 'chave_nfe' => $chaveNFe]);
-        exit;
-    }
-}
-
 /* Busca cliente */
 $client = null;
 if ($telefone) {
     $client = buscar_cliente_por_telefone($pdo, $companyId, $telefone);
 }
 
-/* Calcula cashback */
-$regra    = get_cashback_config($pdo, $companyId);
-$pct      = (float)$regra['percentual'];
-$minimo   = (float)$regra['valor_minimo_compra'];
+/* Busca as regras originais do Clube For Men */
+$rules = $pdo->prepare("SELECT * FROM club_rules WHERE company_id=? LIMIT 1");
+$rules->execute([$companyId]);
+$rules = $rules->fetch(PDO::FETCH_ASSOC);
+
+if (!$rules || empty($rules['ativo'])) {
+    echo json_encode(['ok' => false, 'reason' => 'clube_inativo_ou_sem_regras']);
+    exit;
+}
+
+$pct          = (float)($rules['cashback_pct'] ?? 5.00);
+$minimo       = (float)($rules['cashback_minimo'] ?? 0.00);
+$validadeDias = (int)($rules['cashback_validade'] ?? 90);
+
 $cashback = round($valorTotal * ($pct / 100), 2);
+$expiraEm = date('Y-m-d', strtotime("+{$validadeDias} days"));
 
 if ($valorTotal < $minimo) {
     echo json_encode([
-        'ok'          => false,
-        'reason'      => 'valor_abaixo_do_minimo',
-        'valor_compra'=> number_format($valorTotal, 2, '.', ''),
-        'minimo'      => number_format($minimo, 2, '.', ''),
+        'ok'           => false,
+        'reason'       => 'valor_abaixo_do_minimo',
+        'valor_compra' => number_format($valorTotal, 2, '.', ''),
+        'minimo'       => number_format($minimo, 2, '.', ''),
     ]);
     exit;
 }
 
-/* Salva transação */
 $clientId   = $client ? (int)$client['id'] : null;
 $clientNome = $client ? $client['nome']    : 'Cliente';
 
-$pdo->prepare("
-    INSERT INTO cashback_transactions
-        (company_id, client_id, chave_nfe, valor_compra, percentual,
-         cashback_gerado, telefone_usado, data_compra, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente', NOW())
-")->execute([$companyId, $clientId, $chaveNFe ?: null, $valorTotal, $pct, $cashback, $telefone, $dataEmissao]);
-
-/* Atualiza saldo */
-$saldoTotal = 0;
-if ($clientId) {
-    $pdo->prepare("
-        INSERT INTO cashback_saldos (company_id, client_id, saldo, updated_at)
-        VALUES (?, ?, ?, NOW())
-        ON DUPLICATE KEY UPDATE saldo = saldo + VALUES(saldo), updated_at = NOW()
-    ")->execute([$companyId, $clientId, $cashback]);
-
-    $st = $pdo->prepare("SELECT saldo FROM cashback_saldos WHERE company_id=? AND client_id=?");
-    $st->execute([$companyId, $clientId]);
-    $saldoTotal = (float)($st->fetchColumn() ?: 0);
-}
-
-/* Resposta */
 if (!$telefone || !$client) {
     echo json_encode([
         'ok'              => false,
@@ -268,6 +243,36 @@ if (!$telefone || !$client) {
     exit;
 }
 
+/* ════════════ ATUALIZA O SALDO NA TABELA CORRETA (CLUB_WALLETS) ════════════ */
+$s_w = $pdo->prepare("SELECT id, saldo FROM club_wallets WHERE company_id=? AND client_id=? LIMIT 1");
+$s_w->execute([$companyId, $clientId]);
+$wallet = $s_w->fetch(PDO::FETCH_ASSOC);
+
+$saldoTotal = 0;
+
+if (!$wallet) {
+    // Cria a carteira se não existir
+    $pdo->prepare("INSERT INTO club_wallets (company_id, client_id, saldo, total_ganho) VALUES (?, ?, ?, ?)")
+        ->execute([$companyId, $clientId, $cashback, $cashback]);
+    $walletId = $pdo->lastInsertId();
+    $saldoTotal = $cashback;
+} else {
+    // Atualiza a carteira existente
+    $walletId = $wallet['id'];
+    $pdo->prepare("UPDATE club_wallets SET saldo = saldo + ?, total_ganho = total_ganho + ?, updated_at = NOW() WHERE id = ?")
+        ->execute([$cashback, $cashback, $walletId]);
+    $saldoTotal = (float)$wallet['saldo'] + $cashback;
+}
+
+/* ════════════ SALVA O HISTÓRICO NA TABELA CORRETA (CLUB_TRANSACTIONS) ════════════ */
+$pdo->prepare("
+    INSERT INTO club_transactions
+    (company_id, client_id, wallet_id, tipo, valor, descricao, referencia_tipo, expira_em, created_at)
+    VALUES (?, ?, ?, 'credito', ?, ?, 'venda', ?, NOW())
+")->execute([$companyId, $clientId, $walletId, $cashback, "Cashback automático via NF-e", $expiraEm]);
+
+
+/* Resposta Final de Sucesso para o Activepieces */
 echo json_encode([
     'ok'              => true,
     'cliente'         => $clientNome,
@@ -331,57 +336,3 @@ function buscar_cliente_por_telefone(PDO $pdo, int $companyId, string $telefone)
     return $st2->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
-function setup_cashback_tables(PDO $pdo): void {
-    try {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_transactions (
-            id              INT AUTO_INCREMENT PRIMARY KEY,
-            company_id      INT NOT NULL,
-            client_id       INT NULL,
-            chave_nfe       VARCHAR(60) NULL,
-            valor_compra    DECIMAL(10,2) NOT NULL,
-            percentual      DECIMAL(5,2)  NOT NULL DEFAULT 5.00,
-            cashback_gerado DECIMAL(10,2) NOT NULL,
-            telefone_usado  VARCHAR(20)   NULL,
-            data_compra     DATETIME      NULL,
-            status          VARCHAR(20)   DEFAULT 'pendente',
-            created_at      DATETIME      DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_chave (chave_nfe),
-            INDEX idx_client  (client_id),
-            INDEX idx_company (company_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    } catch (Throwable $e) {}
-
-    try {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_saldos (
-            id         INT AUTO_INCREMENT PRIMARY KEY,
-            company_id INT NOT NULL,
-            client_id  INT NOT NULL,
-            saldo      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_company_client (company_id, client_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    } catch (Throwable $e) {}
-
-    try {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_config (
-            id                  INT AUTO_INCREMENT PRIMARY KEY,
-            company_id          INT NOT NULL UNIQUE,
-            percentual          DECIMAL(5,2)  NOT NULL DEFAULT 5.00,
-            valor_minimo_compra DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-            validade_dias       INT           NOT NULL DEFAULT 365,
-            ativo               TINYINT(1)    NOT NULL DEFAULT 1
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    } catch (Throwable $e) {}
-}
-
-function get_cashback_config(PDO $pdo, int $companyId): array {
-    $default = ['percentual' => 5.0, 'valor_minimo_compra' => 0.0, 'validade_dias' => 365];
-    try {
-        $st = $pdo->prepare("SELECT * FROM cashback_config WHERE company_id = ? LIMIT 1");
-        $st->execute([$companyId]);
-        $row = $st->fetch(PDO::FETCH_ASSOC);
-        return $row ?: $default;
-    } catch (Throwable $e) {
-        return $default;
-    }
-}
