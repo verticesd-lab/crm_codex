@@ -69,6 +69,12 @@ function crm_detect_base_url(): string
 define('BASE_URL', crm_detect_base_url());
 
 // =========================
+// API DO HERMES AGENT
+// =========================
+define('HERMES_API_TOKEN', getenv('HERMES_API_TOKEN') ?: '617a9464710c73125b5f3ed3fc46df6f95bdf999713089d487fc551129028257');
+define('HERMES_AGENT_URL', getenv('HERMES_AGENT_URL') ?: 'https://hermes.formenstore.com.br');
+
+// =========================
 // BANCO DE DADOS
 // =========================
 $dbHost = getenv('DB_HOST');
