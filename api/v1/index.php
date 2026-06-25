@@ -1,4 +1,5 @@
 <?php
+ob_start(); // buffer de saída — evita "headers already sent"
 /**
  * /api/v1/index.php — Gateway da API do CRM para o Agente Hermes
  * ─────────────────────────────────────────────────────────────────
