@@ -26,6 +26,18 @@ header('Access-Control-Allow-Headers: Authorization, Content-Type');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
 
+$pdo = get_pdo();
+
+/* ── Health check — sem autenticação ── */
+$path     = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$endpoint = basename($path, '.php');
+
+if ($endpoint === 'health' || $endpoint === 'v1') {
+    $st = $pdo->query("SELECT COUNT(*) FROM clients")->fetchColumn();
+    echo json_encode(['ok' => true, 'status' => 'online', 'clientes' => (int)$st]);
+    exit;
+}
+
 /* ── Autenticação por Bearer Token ── */
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
 $token      = trim(str_replace('Bearer', '', $authHeader));
@@ -37,22 +49,9 @@ if ($expected && $token !== $expected) {
     exit;
 }
 
-$pdo = get_pdo();
-
 /* ── Roteamento ── */
-$path     = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$endpoint = basename($path, '.php');
 $method   = $_SERVER['REQUEST_METHOD'];
 $body     = json_decode(file_get_contents('php://input'), true) ?? [];
-
-/* ══════════════════════════════════════════════════════════════
-   HEALTH CHECK
-══════════════════════════════════════════════════════════════ */
-if ($endpoint === 'health' || $endpoint === 'index') {
-    $st = $pdo->query("SELECT COUNT(*) FROM clients")->fetchColumn();
-    echo json_encode(['ok' => true, 'status' => 'online', 'clientes' => (int)$st]);
-    exit;
-}
 
 /* ══════════════════════════════════════════════════════════════
    HELPER: descobre company_id pelo token (multi-empresa)
