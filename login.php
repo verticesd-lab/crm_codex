@@ -84,32 +84,129 @@ if (!empty($companyBg['logo'])) {
     <meta charset="UTF-8">
     <title>Login - Micro CRM SaaS</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
-                    colors: {
-                        brand: {
-                            500: '#4f46e5',
-                            600: '#4338ca',
-                            700: '#3730a3',
-                        }
-                    }
-                }
-            }
+    <style>
+        html, body { margin: 0; min-height: 100%; }
+        .login-body {
+            min-height: 100vh;
+            background: #020617;
+            color: #f8fafc;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
-    </script>
+        .login-shell {
+            min-height: 100vh;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+        .login-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, .75);
+            backdrop-filter: blur(8px);
+        }
+        .login-panel {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            max-width: 28rem;
+        }
+        .login-brand {
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        .login-logo {
+            display: block;
+            height: 4rem;
+            width: 4rem;
+            margin: 0 auto .75rem;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, .4);
+            object-fit: cover;
+        }
+        .login-eyebrow {
+            margin: 0;
+            color: #cbd5e1;
+            font-size: .75rem;
+            line-height: 1rem;
+            letter-spacing: .25em;
+            text-transform: uppercase;
+        }
+        .login-heading {
+            margin: .25rem 0 0;
+            font-size: 1.5rem;
+            line-height: 2rem;
+            font-weight: 600;
+        }
+        .login-alert {
+            margin-bottom: 1rem;
+            border: 1px solid rgba(239, 68, 68, .4);
+            border-radius: .5rem;
+            background: rgba(239, 68, 68, .1);
+            color: #fca5a5;
+            padding: .75rem;
+            font-size: .875rem;
+        }
+        .login-form {
+            display: grid;
+            gap: 1rem;
+            border: 1px solid #1e293b;
+            border-radius: 1rem;
+            background: rgba(15, 23, 42, .92);
+            padding: 1.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, .6);
+        }
+        .login-field {
+            display: grid;
+            gap: .25rem;
+        }
+        .login-label {
+            color: #e2e8f0;
+            font-size: .875rem;
+        }
+        .login-input {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #334155;
+            border-radius: .5rem;
+            background: rgba(2, 6, 23, .8);
+            color: #f8fafc;
+            padding: .625rem .75rem;
+            font-size: .875rem;
+            outline: none;
+        }
+        .login-input:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 2px rgba(79, 70, 229, .45);
+        }
+        .login-submit {
+            width: 100%;
+            margin-top: .5rem;
+            border: 0;
+            border-radius: .5rem;
+            background: #4f46e5;
+            color: #fff;
+            padding: .75rem 1rem;
+            font-size: .875rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background .15s ease;
+        }
+        .login-submit:hover { background: #4338ca; }
+    </style>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100">
-    <div class="min-h-screen w-full flex items-center justify-center p-6 relative overflow-hidden"
+<body class="login-body min-h-screen bg-slate-950 text-slate-100">
+    <div class="login-shell min-h-screen w-full flex items-center justify-center p-6 relative overflow-hidden"
          style="<?= $bgStyle ?>">
         <!-- overlay escuro em cima do fundo -->
-        <div class="absolute inset-0 bg-slate-900/75 backdrop-blur-sm"></div>
+        <div class="login-overlay absolute inset-0 bg-slate-900/75 backdrop-blur-sm"></div>
 
-        <div class="relative z-10 w-full max-w-md">
-            <div class="mb-6 text-center">
+        <div class="login-panel relative z-10 w-full max-w-md">
+            <div class="login-brand mb-6 text-center">
                 <?php if (!empty($companyBg['logo'])): ?>
                     <?php
                     $logo = $companyBg['logo'];
@@ -117,43 +214,43 @@ if (!empty($companyBg['logo'])) {
                         $logo = BASE_URL . '/' . ltrim($logo, '/');
                     }
                     ?>
-                    <img src="<?= sanitize($logo) ?>" class="mx-auto h-16 w-16 rounded-full border border-white/40 object-cover mb-3">
+                    <img src="<?= sanitize($logo) ?>" class="login-logo mx-auto h-16 w-16 rounded-full border border-white/40 object-cover mb-3">
                 <?php endif; ?>
-                <p class="text-xs uppercase tracking-[0.25em] text-slate-300">Acesso ao painel</p>
-                <h2 class="mt-1 text-2xl font-semibold">
+                <p class="login-eyebrow text-xs uppercase tracking-[0.25em] text-slate-300">Acesso ao painel</p>
+                <h2 class="login-heading mt-1 text-2xl font-semibold">
                     <?= sanitize($companyBg['nome_fantasia'] ?? 'Micro CRM SaaS') ?>
                 </h2>
             </div>
 
             <?php if ($flashError): ?>
-                <div class="mb-4 p-3 rounded-lg bg-red-500/10 text-red-300 border border-red-500/40 text-sm">
+                <div class="login-alert mb-4 p-3 rounded-lg bg-red-500/10 text-red-300 border border-red-500/40 text-sm">
                     <?= sanitize($flashError) ?>
                 </div>
             <?php endif; ?>
 
-            <form method="POST" class="space-y-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl shadow-black/60">
-                <div>
-                    <label class="text-sm text-slate-200">E-mail</label>
+            <form method="POST" class="login-form space-y-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl shadow-black/60">
+                <div class="login-field">
+                    <label class="login-label text-sm text-slate-200">E-mail</label>
                     <input
                         type="email"
                         name="email"
                         required
-                        class="mt-1 w-full rounded-lg bg-slate-950/80 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                        class="login-input mt-1 w-full rounded-lg bg-slate-950/80 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                         placeholder="voce@empresa.com"
                     >
                 </div>
-                <div>
-                    <label class="text-sm text-slate-200">Senha</label>
+                <div class="login-field">
+                    <label class="login-label text-sm text-slate-200">Senha</label>
                     <input
                         type="password"
                         name="senha"
                         required
-                        class="mt-1 w-full rounded-lg bg-slate-950/80 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                        class="login-input mt-1 w-full rounded-lg bg-slate-950/80 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                         placeholder="********"
                     >
                 </div>
                 <button
-                    class="w-full mt-2 bg-brand-600 hover:bg-brand-700 transition-colors text-white font-semibold py-2.5 rounded-lg text-sm">
+                    class="login-submit w-full mt-2 bg-brand-600 hover:bg-brand-700 transition-colors text-white font-semibold py-2.5 rounded-lg text-sm">
                     Entrar no painel
                 </button>
             </form>

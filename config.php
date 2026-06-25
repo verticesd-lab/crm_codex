@@ -1,6 +1,8 @@
 <?php
 // Força o PHP a reconhecer o HTTPS vindo do Proxy do Coolify/Cloudflare
-if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https') {
+$forwardedProto = strtolower(trim(explode(',', (string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+$cfVisitor = json_decode((string)($_SERVER['HTTP_CF_VISITOR'] ?? ''), true);
+if ($forwardedProto === 'https' || (is_array($cfVisitor) && strtolower((string)($cfVisitor['scheme'] ?? '')) === 'https')) {
     $_SERVER['HTTPS'] = 'on';
 }
 
@@ -18,10 +20,53 @@ define('APP_NAME', 'Micro CRM SaaS');
 // =========================
 // CAMINHO BASE (BASE_URL)
 // =========================
-$envBaseUrl = getenv('BASE_URL');
-if ($envBaseUrl === false) $envBaseUrl = '';
-$envBaseUrl = rtrim($envBaseUrl, '/');
-define('BASE_URL', $envBaseUrl);
+function crm_request_scheme(): string
+{
+    $forwardedProto = strtolower(trim(explode(',', (string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+    if ($forwardedProto === 'https') return 'https';
+
+    $cfVisitor = json_decode((string)($_SERVER['HTTP_CF_VISITOR'] ?? ''), true);
+    if (is_array($cfVisitor) && strtolower((string)($cfVisitor['scheme'] ?? '')) === 'https') return 'https';
+
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') return 'https';
+    if ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443) return 'https';
+
+    return 'http';
+}
+
+function crm_detect_base_path(): string
+{
+    $scriptName = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    $scriptDir = trim(str_replace('\\', '/', dirname($scriptName)), '/');
+    if ($scriptDir === '' || $scriptDir === '.') return '';
+
+    $scriptFile = realpath((string)($_SERVER['SCRIPT_FILENAME'] ?? ''));
+    $appRoot = realpath(__DIR__);
+    if (!$scriptFile || !$appRoot || strpos($scriptFile, $appRoot) !== 0) {
+        return '/' . $scriptDir;
+    }
+
+    $relative = trim(str_replace('\\', '/', substr($scriptFile, strlen($appRoot))), '/');
+    $relativeDir = trim(str_replace('\\', '/', dirname($relative)), '/');
+    if ($relativeDir !== '' && $relativeDir !== '.' && str_ends_with($scriptDir, '/' . $relativeDir)) {
+        $scriptDir = substr($scriptDir, 0, -strlen('/' . $relativeDir));
+    }
+
+    return $scriptDir !== '' ? '/' . trim($scriptDir, '/') : '';
+}
+
+function crm_detect_base_url(): string
+{
+    $envBaseUrl = rtrim((string)(getenv('BASE_URL') ?: ''), '/');
+    if (PHP_SAPI === 'cli') return $envBaseUrl;
+
+    $host = trim((string)($_SERVER['HTTP_X_FORWARDED_HOST'] ?? $_SERVER['HTTP_HOST'] ?? ''));
+    if ($host === '') return $envBaseUrl;
+
+    return crm_request_scheme() . '://' . $host . crm_detect_base_path();
+}
+
+define('BASE_URL', crm_detect_base_url());
 
 // =========================
 // BANCO DE DADOS
@@ -51,6 +96,7 @@ define(
 // SEGREDO DA API (MCP)
 // =========================
 define('API_SECRET', getenv('API_TOKEN_IA') ?: ($_ENV['API_TOKEN_IA'] ?? 'fallback-aqui'));
+define('HERMES_API_TOKEN', getenv('HERMES_API_TOKEN') ?: 'COLE_AQUI_O_TOKEN_QUE_VOCE_GEROU');
 
 // =========================
 // CONFIGURAÇÕES CHATWOOT

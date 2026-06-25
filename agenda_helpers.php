@@ -391,7 +391,7 @@ function agenda_seed_default_barbers(PDO $pdo, int $companyId): void
         $seed = [
             ['Pedro', 1],
             ['Samuel', 1],
-            ['Barbeiro 3', 0],
+            ['Barbeiro 3', 1],
         ];
 
         $insert = $pdo->prepare('
