@@ -32,9 +32,14 @@ $pdo = get_pdo();
 $path     = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $endpoint = basename($path, '.php');
 
-if ($endpoint === 'health' || $endpoint === 'v1') {
-    $st = $pdo->query("SELECT COUNT(*) FROM clients")->fetchColumn();
-    echo json_encode(['ok' => true, 'status' => 'online', 'clientes' => (int)$st]);
+if ($endpoint === 'health' || $endpoint === 'v1' || $endpoint === 'index') {
+    try {
+        $st = $pdo->query("SELECT COUNT(*) FROM clients")->fetchColumn();
+        echo json_encode(['ok' => true, 'status' => 'online', 'clientes' => (int)$st]);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'status' => 'db_error', 'error' => $e->getMessage()]);
+    }
     exit;
 }
 
@@ -82,27 +87,43 @@ function get_company_id(PDO $pdo): int {
     return $r ? (int)$r['id'] : 1;
 }
 
-function normalizar_wa(string $tel): string {
+function normalizar_telefone(string $tel): string {
     $d = preg_replace('/\D/', '', $tel);
     if (strlen($d) <= 11 && !str_starts_with($d, '55')) $d = '55' . $d;
     return $d;
 }
 
+function ensure_cashback_tables(PDO $pdo): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_saldos (
+        id INT AUTO_INCREMENT PRIMARY KEY, company_id INT NOT NULL, client_id INT NOT NULL,
+        saldo DECIMAL(10,2) NOT NULL DEFAULT 0, updated_at DATETIME DEFAULT NOW() ON UPDATE NOW(),
+        UNIQUE KEY uq (company_id,client_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY, company_id INT NOT NULL, client_id INT,
+        chave_nfe VARCHAR(60), valor_compra DECIMAL(10,2), percentual DECIMAL(5,2),
+        cashback_gerado DECIMAL(10,2), telefone_usado VARCHAR(20), data_compra DATETIME,
+        status VARCHAR(20) DEFAULT 'pendente', created_at DATETIME DEFAULT NOW(),
+        INDEX idx_client(client_id), INDEX idx_company(company_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
 function buscar_cliente(PDO $pdo, int $cid, string $tel = '', string $nome = ''): ?array {
     if ($tel) {
-        $wa = normalizar_wa($tel);
+        $telefone = normalizar_telefone($tel);
         $s8 = substr(preg_replace('/\D/','',$tel), -8);
-        $st = $pdo->prepare("SELECT id, nome, whatsapp, email FROM clients
+        $st = $pdo->prepare("SELECT id, nome, whatsapp AS telefone, email FROM clients
             WHERE company_id=?
               AND (REGEXP_REPLACE(whatsapp,'[^0-9]','') = ? OR REGEXP_REPLACE(whatsapp,'[^0-9]','') = ?
                    OR RIGHT(REGEXP_REPLACE(whatsapp,'[^0-9]',''),8) = ?)
             LIMIT 1");
-        $st->execute([$cid, $wa, substr($wa,2), $s8]);
+        $st->execute([$cid, $telefone, substr($telefone,2), $s8]);
         $r = $st->fetch(PDO::FETCH_ASSOC);
         if ($r) return $r;
     }
     if ($nome) {
-        $st = $pdo->prepare("SELECT id, nome, whatsapp, email FROM clients
+        $st = $pdo->prepare("SELECT id, nome, whatsapp AS telefone, email FROM clients
             WHERE company_id=? AND nome LIKE ? LIMIT 3");
         $st->execute([$cid, '%' . trim($nome) . '%']);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -198,22 +219,9 @@ if ($endpoint === 'aplicar_cashback' && $method === 'POST') {
 
     $cashback = round($valorCompra * $pct / 100, 2);
     $expira   = date('Y-m-d', strtotime('+45 days'));
-    $now      = gmdate('Y-m-d H:i:s');
 
     try {
-        // Garante tabelas
-        $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_saldos (
-            id INT AUTO_INCREMENT PRIMARY KEY, company_id INT NOT NULL, client_id INT NOT NULL,
-            saldo DECIMAL(10,2) NOT NULL DEFAULT 0, updated_at DATETIME DEFAULT NOW() ON UPDATE NOW(),
-            UNIQUE KEY uq (company_id,client_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_transactions (
-            id INT AUTO_INCREMENT PRIMARY KEY, company_id INT NOT NULL, client_id INT,
-            chave_nfe VARCHAR(60), valor_compra DECIMAL(10,2), percentual DECIMAL(5,2),
-            cashback_gerado DECIMAL(10,2), telefone_usado VARCHAR(20), data_compra DATETIME,
-            status VARCHAR(20) DEFAULT 'pendente', created_at DATETIME DEFAULT NOW(),
-            INDEX idx_client(client_id), INDEX idx_company(company_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        ensure_cashback_tables($pdo);
 
         // Credita
         $pdo->prepare("INSERT INTO cashback_saldos (company_id,client_id,saldo,updated_at) VALUES (?,?,?,NOW())
@@ -230,38 +238,11 @@ if ($endpoint === 'aplicar_cashback' && $method === 'POST') {
         $ss->execute([$cid, $cliente['id']]);
         $saldoTotal = (float)($ss->fetchColumn() ?: $cashback);
 
-        // Envia WhatsApp
-        $wa_enviado = false;
-        try {
-            $evoUrl = defined('EVOLUTION_API_URL') ? EVOLUTION_API_URL : getenv('EVOLUTION_API_URL');
-            $evoKey = defined('EVOLUTION_API_KEY') ? EVOLUTION_API_KEY : getenv('EVOLUTION_API_KEY');
-            $evoIns = defined('EVOLUTION_INSTANCE') ? EVOLUTION_INSTANCE : getenv('EVOLUTION_INSTANCE');
-            $nome1  = explode(' ', trim($cliente['nome']))[0];
-
-            if ($evoUrl && $evoKey) {
-                $waNum = normalizar_wa($cliente['whatsapp'] ?? $tel);
-                $msg   = "Oi, {$nome1}! 🎉\n\nAcabamos de creditar *R$ " . number_format($cashback,2,',','.') . "* de cashback na sua carteira do *Clube For Men*! 💰\n\n💳 Seu saldo total: *R$ " . number_format($saldoTotal,2,',','.') . "*\n⏰ Válido por *45 dias*\n\n_Use na próxima compra!_ 😊";
-
-                $ch = curl_init("{$evoUrl}/message/sendText/{$evoIns}");
-                curl_setopt_array($ch, [
-                    CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
-                    CURLOPT_HTTPHEADER => ["Content-Type: application/json","apikey: {$evoKey}"],
-                    CURLOPT_POSTFIELDS  => json_encode(['number'=>$waNum,'text'=>$msg]),
-                    CURLOPT_TIMEOUT => 8, CURLOPT_SSL_VERIFYPEER => false
-                ]);
-                $resp = curl_exec($ch);
-                $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
-                $wa_enviado = $code >= 200 && $code < 300;
-            }
-        } catch (Throwable $e) {}
-
         echo json_encode([
             'ok'              => true,
             'cliente'         => $cliente['nome'],
             'cashback_gerado' => number_format($cashback, 2, '.', ''),
             'saldo_total'     => number_format($saldoTotal, 2, '.', ''),
-            'whatsapp_enviado'=> $wa_enviado,
             'expira_em'       => $expira,
         ]);
 
@@ -291,13 +272,14 @@ if ($endpoint === 'registrar_venda' && $method === 'POST') {
     }
 
     try {
+        ensure_cashback_tables($pdo);
+        $pdo->beginTransaction();
+
         // Registra pedido
         $pdo->prepare("INSERT INTO orders (company_id,client_id,total,forma_pagamento,origem,status,observacoes,created_at)
             VALUES (?,?,?,?,?,?,?,NOW())")
             ->execute([$cid,$cliente['id'],$valor,$pgto,'agente','concluido',$obs]);
         $orderId = (int)$pdo->lastInsertId();
-
-        echo json_encode(['ok'=>true,'order_id'=>$orderId,'cliente'=>$cliente['nome'],'valor'=>$valor]);
 
         // Aplica cashback automaticamente
         $cashback = round($valor * 5 / 100, 2);
@@ -305,7 +287,23 @@ if ($endpoint === 'registrar_venda' && $method === 'POST') {
             ON DUPLICATE KEY UPDATE saldo=saldo+VALUES(saldo), updated_at=NOW()")
             ->execute([$cid,$cliente['id'],$cashback]);
 
+        $pdo->prepare("INSERT INTO cashback_transactions
+            (company_id,client_id,valor_compra,percentual,cashback_gerado,telefone_usado,data_compra,status,created_at)
+            VALUES (?,?,?,?,?,?,NOW(),'confirmado',NOW())")
+            ->execute([$cid,$cliente['id'],$valor,5,$cashback,$tel]);
+
+        $pdo->commit();
+
+        echo json_encode([
+            'ok'=>true,
+            'order_id'=>$orderId,
+            'cliente'=>$cliente['nome'],
+            'valor'=>$valor,
+            'cashback_gerado'=>number_format($cashback, 2, '.', '')
+        ]);
+
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
     }
     exit;
