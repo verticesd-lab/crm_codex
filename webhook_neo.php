@@ -97,6 +97,8 @@ if (!$regra || !$regra['ativo']) {
 
 // C. Busca Cliente no CRM
 $client = null;
+$isNovoCliente = false;
+
 if ($telefone) {
     $last8 = substr($telefone, -8);
     $st_cli = $pdo->prepare("SELECT id, nome FROM clients WHERE company_id = ? AND (whatsapp LIKE ? OR documento = ?)");
@@ -104,14 +106,25 @@ if ($telefone) {
     $client = $st_cli->fetch();
 }
 
+// Auto-cadastra cliente identificado na venda quando ainda não existe no CRM.
+if (!$client && $telefone && $nomeCliente !== 'CONSUMIDOR') {
+    $pdo->prepare("INSERT INTO clients (company_id, nome, whatsapp, status, created_at) VALUES (?, ?, ?, 'ativo', NOW())")
+        ->execute([$companyId, $nomeCliente, $telefone]);
+
+    $newId = $pdo->lastInsertId();
+    $client = [
+        "id" => $newId,
+        "nome" => $nomeCliente
+    ];
+    $isNovoCliente = true;
+}
+
 if (!$client) {
-    // Retorna erro amigável para o Hermes Agent tratar (pedir identificação)
     die(json_encode([
         "ok" => false, 
-        "reason" => "cliente_nao_encontrado", 
+        "reason" => "venda_sem_identificacao", 
         "venda_id" => $vendaIdIdentificador,
-        "valor" => $valorTotal,
-        "nome_na_venda" => $nomeCliente
+        "valor" => $valorTotal
     ]));
 }
 
@@ -153,7 +166,8 @@ echo json_encode([
     "telefone" => $telefone,
     "cashback_gerado" => number_format($cashback, 2, ',', '.'),
     "saldo_total" => number_format($saldoAtual, 2, ',', '.'),
-    "valor_compra" => number_format($valorTotal, 2, ',', '.')
+    "valor_compra" => number_format($valorTotal, 2, ',', '.'),
+    "cliente_criado" => $isNovoCliente
 ]);
 
 // FUNÇÃO AUXILIAR
