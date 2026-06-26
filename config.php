@@ -12,8 +12,8 @@ if ($forwardedProto === 'https' || (is_array($cfVisitor) && strtolower((string)(
 
 ini_set('default_charset', 'UTF-8');
 
-// ✅ Base do sistema em UTC (exibição pode ser convertida nos helpers)
-date_default_timezone_set('UTC');
+// Timezone operacional da loja
+date_default_timezone_set('America/Cuiaba');
 
 define('APP_NAME', 'Micro CRM SaaS');
 

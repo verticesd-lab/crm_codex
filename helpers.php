@@ -21,11 +21,11 @@ if (!function_exists('str_starts_with')) {
 
 /**
  * ========= TIMEZONES (CORRETO) =========
- * APP_TZ = fuso da aplicação (exibição)
- * DB_TZ  = fuso padrão do banco (recomendado: UTC)
+ * APP_TZ = fuso operacional da aplicação
+ * DB_TZ  = fuso usado pela sessão do banco
  */
 function app_timezone(): string { return 'America/Cuiaba'; }
-function db_timezone(): string  { return 'UTC'; }
+function db_timezone(): string  { return 'America/Cuiaba'; }
 
 /**
  * Aplica timezone do app no PHP (para date(), DateTime sem tz, etc).
@@ -45,7 +45,7 @@ function apply_app_timezone(): void {
 apply_app_timezone();
 
 /**
- * Retorna datetime atual em UTC (para salvar no banco de forma consistente).
+ * Retorna datetime atual em UTC quando uma integração externa exigir UTC.
  */
 function now_utc_datetime(): string {
     $d = new DateTime('now', new DateTimeZone('UTC'));
@@ -62,11 +62,9 @@ function now_app_datetime(): string {
 
 /**
  * Define timezone da sessão do MySQL.
- * RECOMENDADO: manter em UTC (+00:00).
- *
  * Chame após $pdo = get_pdo(); (1x por request) se quiser forçar.
  */
-function pdo_apply_timezone(PDO $pdo, string $tz = '+00:00'): void {
+function pdo_apply_timezone(PDO $pdo, string $tz = '-04:00'): void {
     try {
         $pdo->exec("SET time_zone = " . $pdo->quote($tz));
     } catch (Throwable $e) {
@@ -76,7 +74,7 @@ function pdo_apply_timezone(PDO $pdo, string $tz = '+00:00'): void {
 
 /**
  * ========= CONVERSÃO DE DATETIME DO BANCO =========
- * Converte um datetime (assumido como DB_TZ/UTC) para o TZ do app (Cuiabá).
+ * Converte um datetime do fuso do banco para o fuso do app.
  */
 function db_datetime_to_app(?string $dt, ?string $dbTz = null): ?DateTime {
     if (!$dt) return null;
@@ -111,7 +109,7 @@ function db_datetime_to_app(?string $dt, ?string $dbTz = null): ?DateTime {
 
 /**
  * Formata datetime do banco para BR (d/m/Y H:i) já convertido para TZ do app.
- * Por padrão assume que o banco está em UTC.
+ * Por padrão assume o fuso configurado em db_timezone().
  */
 function format_datetime_br(?string $dt, ?string $dbTz = null): string {
     $d = db_datetime_to_app($dt, $dbTz);

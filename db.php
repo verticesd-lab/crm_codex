@@ -15,9 +15,8 @@ function get_pdo(): PDO
 
         $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
 
-        // ✅ Ajusta timezone da sessão do MySQL para Cuiabá (UTC-4)
-        // (mais confiável do que depender de tabelas de timezone do MySQL)
-        $pdo->exec("SET time_zone = '+00:00'");
+        // Ajusta timezone da sessão do MySQL para Cuiabá (UTC-4).
+        $pdo->exec("SET time_zone = '-04:00'");
     }
 
     return $pdo;
