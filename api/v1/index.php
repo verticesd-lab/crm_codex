@@ -38,23 +38,35 @@ if ($endpoint === 'health' || $endpoint === 'v1') {
     exit;
 }
 
-// DEBUG TEMPORÁRIO — remover após resolver
-$allHeaders  = getallheaders() ?: [];
-$serverAuth  = $_SERVER['HTTP_AUTHORIZATION'] ?? 'ausente';
-$queryToken  = $_GET['token'] ?? 'ausente';
-$expectedDef = defined('HERMES_API_TOKEN') ? HERMES_API_TOKEN : 'NAO_DEFINIDO';
-$expectedEnv = getenv('HERMES_API_TOKEN') ?: 'NAO_NO_ENV';
+/* Autenticacao por token */
+$headers = function_exists('getallheaders') ? (getallheaders() ?: []) : [];
+$authHeader = $_SERVER['HTTP_AUTHORIZATION']
+           ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+           ?? ($headers['Authorization'] ?? '')
+           ?? ($headers['authorization'] ?? '');
+$tokenHeader = trim(preg_replace('/^Bearer\s+/i', '', $authHeader));
 
-echo json_encode([
-    'debug'          => true,
-    'server_auth'    => $serverAuth,
-    'query_token'    => $queryToken,
-    'headers'        => $allHeaders,
-    'expected_def'   => substr($expectedDef, 0, 8).'...',
-    'expected_env'   => substr($expectedEnv, 0, 8).'...',
-    'get_params'     => $_GET,
-]);
-exit;
+$tokenQuery = trim((string)($_GET['token'] ?? ''));
+$tokenApiHeader = trim((string)(
+    $_SERVER['HTTP_X_API_TOKEN']
+    ?? ($headers['X-Api-Token'] ?? '')
+    ?? ($headers['x-api-token'] ?? '')
+));
+$token = $tokenHeader ?: ($tokenApiHeader ?: $tokenQuery);
+
+$expected = defined('HERMES_API_TOKEN') ? HERMES_API_TOKEN : getenv('HERMES_API_TOKEN');
+
+if (!$expected) {
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Token da API nao configurado']);
+    exit;
+}
+
+if (!$token || !hash_equals((string)$expected, (string)$token)) {
+    http_response_code(401);
+    echo json_encode(['ok' => false, 'error' => 'Token invalido']);
+    exit;
+}
 
 /* ── Roteamento ── */
 $method   = $_SERVER['REQUEST_METHOD'];
