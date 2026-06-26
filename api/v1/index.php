@@ -8,7 +8,7 @@ ob_start(); // buffer de saída — evita "headers already sent"
  *
  * Endpoints:
  *   GET  /consultar_cliente   ?telefone= ou ?nome=
- *   GET  /consultar_saldo     ?telefone=
+ *   GET  /consultar_saldo     ?telefone= ou ?nome=
  *   POST /aplicar_cashback    {telefone, valor_compra, percentual?}
  *   POST /registrar_venda     {telefone, produto_nome?, valor, forma_pagamento?, observacao?}
  *   POST /cadastrar_produto   {nome, preco, custo?, categoria?, descricao?, tags?, estoque?, sizes?, status?}
@@ -93,22 +93,6 @@ function normalizar_telefone(string $tel): string {
     return $d;
 }
 
-function ensure_cashback_tables(PDO $pdo): void {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_saldos (
-        id INT AUTO_INCREMENT PRIMARY KEY, company_id INT NOT NULL, client_id INT NOT NULL,
-        saldo DECIMAL(10,2) NOT NULL DEFAULT 0, updated_at DATETIME DEFAULT NOW() ON UPDATE NOW(),
-        UNIQUE KEY uq (company_id,client_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-    $pdo->exec("CREATE TABLE IF NOT EXISTS cashback_transactions (
-        id INT AUTO_INCREMENT PRIMARY KEY, company_id INT NOT NULL, client_id INT,
-        chave_nfe VARCHAR(60), valor_compra DECIMAL(10,2), percentual DECIMAL(5,2),
-        cashback_gerado DECIMAL(10,2), telefone_usado VARCHAR(20), data_compra DATETIME,
-        status VARCHAR(20) DEFAULT 'pendente', created_at DATETIME DEFAULT NOW(),
-        INDEX idx_client(client_id), INDEX idx_company(company_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-}
-
 function buscar_cliente(PDO $pdo, int $cid, string $tel = '', string $nome = ''): ?array {
     if ($tel) {
         $telefone = normalizar_telefone($tel);
@@ -130,6 +114,44 @@ function buscar_cliente(PDO $pdo, int $cid, string $tel = '', string $nome = '')
         return count($rows) === 1 ? $rows[0] : ($rows ?: null);
     }
     return null;
+}
+
+function get_or_create_club_wallet(PDO $pdo, int $cid, int $clientId): array {
+    $s = $pdo->prepare("SELECT * FROM club_wallets WHERE company_id=? AND client_id=? LIMIT 1");
+    $s->execute([$cid, $clientId]);
+    $wallet = $s->fetch(PDO::FETCH_ASSOC);
+    if (!$wallet) {
+        $pdo->prepare("INSERT INTO club_wallets (company_id,client_id) VALUES (?,?)")->execute([$cid, $clientId]);
+        $id = (int)$pdo->lastInsertId();
+        $wallet = [
+            'id' => $id,
+            'company_id' => $cid,
+            'client_id' => $clientId,
+            'saldo' => 0,
+            'total_ganho' => 0,
+            'total_resgatado' => 0,
+        ];
+    }
+    return $wallet;
+}
+
+function get_club_rules(PDO $pdo, int $cid): array {
+    try {
+        $s = $pdo->prepare("SELECT * FROM club_rules WHERE company_id=? LIMIT 1");
+        $s->execute([$cid]);
+        return $s->fetch(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function get_cashback_saldo(PDO $pdo, int $cid, int $clientId): float {
+    try {
+        $wallet = get_or_create_club_wallet($pdo, $cid, $clientId);
+        return (float)($wallet['saldo'] ?? 0);
+    } catch (Throwable $e) {
+        return 0;
+    }
 }
 
 $cid = get_company_id($pdo);
@@ -156,13 +178,7 @@ if ($endpoint === 'consultar_cliente' && $method === 'GET') {
         echo json_encode(['ok'=>true,'found'=>true,'multiplos'=>true,'clientes'=>$cliente]); exit;
     }
 
-    // Busca saldo cashback
-    $saldo = 0;
-    try {
-        $ss = $pdo->prepare("SELECT saldo FROM cashback_saldos WHERE company_id=? AND client_id=?");
-        $ss->execute([$cid, $cliente['id']]);
-        $saldo = (float)($ss->fetchColumn() ?: 0);
-    } catch (Throwable $e) {}
+    $saldo = get_cashback_saldo($pdo, $cid, (int)$cliente['id']);
 
     echo json_encode([
         'ok'      => true,
@@ -176,20 +192,19 @@ if ($endpoint === 'consultar_cliente' && $method === 'GET') {
    GET /consultar_saldo
 ══════════════════════════════════════════════════════════════ */
 if ($endpoint === 'consultar_saldo' && $method === 'GET') {
-    $tel = trim($_GET['telefone'] ?? '');
-    if (!$tel) { echo json_encode(['ok'=>false,'error'=>'Telefone obrigatório']); exit; }
+    $tel  = trim($_GET['telefone'] ?? '');
+    $nome = trim($_GET['nome']     ?? '');
+    if (!$tel && !$nome) { echo json_encode(['ok'=>false,'error'=>'Informe telefone ou nome']); exit; }
 
-    $cliente = buscar_cliente($pdo, $cid, $tel);
+    $cliente = buscar_cliente($pdo, $cid, $tel, $nome);
     if (!$cliente) {
         echo json_encode(['ok'=>false,'found'=>false,'message'=>'Cliente não encontrado']); exit;
     }
+    if (isset($cliente[0])) {
+        echo json_encode(['ok'=>true,'found'=>true,'multiplos'=>true,'clientes'=>$cliente]); exit;
+    }
 
-    $saldo = 0;
-    try {
-        $ss = $pdo->prepare("SELECT saldo FROM cashback_saldos WHERE company_id=? AND client_id=?");
-        $ss->execute([$cid, $cliente['id']]);
-        $saldo = (float)($ss->fetchColumn() ?: 0);
-    } catch (Throwable $e) {}
+    $saldo = get_cashback_saldo($pdo, $cid, (int)$cliente['id']);
 
     echo json_encode([
         'ok'      => true,
@@ -206,7 +221,8 @@ if ($endpoint === 'consultar_saldo' && $method === 'GET') {
 if ($endpoint === 'aplicar_cashback' && $method === 'POST') {
     $tel         = trim($body['telefone']     ?? '');
     $valorCompra = (float)($body['valor_compra'] ?? 0);
-    $pct         = (float)($body['percentual']   ?? 5);
+    $rules       = get_club_rules($pdo, $cid);
+    $pct         = isset($body['percentual']) ? (float)$body['percentual'] : (float)($rules['cashback_pct'] ?? 5);
 
     if (!$tel || $valorCompra <= 0) {
         echo json_encode(['ok'=>false,'error'=>'telefone e valor_compra obrigatórios']); exit;
@@ -218,35 +234,37 @@ if ($endpoint === 'aplicar_cashback' && $method === 'POST') {
     }
 
     $cashback = round($valorCompra * $pct / 100, 2);
-    $expira   = date('Y-m-d', strtotime('+45 days'));
+    $validade = (int)($rules['cashback_validade'] ?? 45);
+    $expira   = date('Y-m-d', strtotime('+' . $validade . ' days'));
 
     try {
-        ensure_cashback_tables($pdo);
+        $wallet = get_or_create_club_wallet($pdo, $cid, (int)$cliente['id']);
+        $pdo->beginTransaction();
 
-        // Credita
-        $pdo->prepare("INSERT INTO cashback_saldos (company_id,client_id,saldo,updated_at) VALUES (?,?,?,NOW())
-            ON DUPLICATE KEY UPDATE saldo=saldo+VALUES(saldo), updated_at=NOW()")
-            ->execute([$cid, $cliente['id'], $cashback]);
+        $pdo->prepare("UPDATE club_wallets SET saldo=saldo+?, total_ganho=total_ganho+?, updated_at=NOW() WHERE id=?")
+            ->execute([$cashback, $cashback, $wallet['id']]);
 
-        $pdo->prepare("INSERT INTO cashback_transactions
-            (company_id,client_id,valor_compra,percentual,cashback_gerado,telefone_usado,data_compra,status,created_at)
-            VALUES (?,?,?,?,?,?,NOW(),'confirmado',NOW())")
-            ->execute([$cid,$cliente['id'],$valorCompra,$pct,$cashback,$tel]);
+        $pdo->prepare("INSERT INTO club_transactions
+            (company_id,client_id,wallet_id,tipo,valor,descricao,referencia_tipo,expira_em)
+            VALUES (?,?,?,'credito',?,?,?,?)")
+            ->execute([$cid, $cliente['id'], $wallet['id'], $cashback, 'Cashback manual via Hermes de R$ ' . number_format($valorCompra, 2, ',', '.'), 'hermes', $expira]);
 
-        // Saldo atualizado
-        $ss = $pdo->prepare("SELECT saldo FROM cashback_saldos WHERE company_id=? AND client_id=?");
-        $ss->execute([$cid, $cliente['id']]);
-        $saldoTotal = (float)($ss->fetchColumn() ?: $cashback);
+        $pdo->commit();
+
+        $wallet = get_or_create_club_wallet($pdo, $cid, (int)$cliente['id']);
+        $saldoTotal = (float)($wallet['saldo'] ?? 0);
 
         echo json_encode([
             'ok'              => true,
             'cliente'         => $cliente['nome'],
             'cashback_gerado' => number_format($cashback, 2, '.', ''),
             'saldo_total'     => number_format($saldoTotal, 2, '.', ''),
+            'percentual'      => number_format($pct, 2, '.', ''),
             'expira_em'       => $expira,
         ]);
 
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
     }
     exit;
@@ -272,7 +290,11 @@ if ($endpoint === 'registrar_venda' && $method === 'POST') {
     }
 
     try {
-        ensure_cashback_tables($pdo);
+        $rules = get_club_rules($pdo, $cid);
+        $pct = (float)($rules['cashback_pct'] ?? 5);
+        $validade = (int)($rules['cashback_validade'] ?? 45);
+        $expira = date('Y-m-d', strtotime('+' . $validade . ' days'));
+        $wallet = get_or_create_club_wallet($pdo, $cid, (int)$cliente['id']);
         $pdo->beginTransaction();
 
         // Registra pedido
@@ -282,24 +304,26 @@ if ($endpoint === 'registrar_venda' && $method === 'POST') {
         $orderId = (int)$pdo->lastInsertId();
 
         // Aplica cashback automaticamente
-        $cashback = round($valor * 5 / 100, 2);
-        $pdo->prepare("INSERT INTO cashback_saldos (company_id,client_id,saldo) VALUES (?,?,?)
-            ON DUPLICATE KEY UPDATE saldo=saldo+VALUES(saldo), updated_at=NOW()")
-            ->execute([$cid,$cliente['id'],$cashback]);
+        $cashback = round($valor * $pct / 100, 2);
+        $pdo->prepare("UPDATE club_wallets SET saldo=saldo+?, total_ganho=total_ganho+?, updated_at=NOW() WHERE id=?")
+            ->execute([$cashback, $cashback, $wallet['id']]);
 
-        $pdo->prepare("INSERT INTO cashback_transactions
-            (company_id,client_id,valor_compra,percentual,cashback_gerado,telefone_usado,data_compra,status,created_at)
-            VALUES (?,?,?,?,?,?,NOW(),'confirmado',NOW())")
-            ->execute([$cid,$cliente['id'],$valor,5,$cashback,$tel]);
+        $pdo->prepare("INSERT INTO club_transactions
+            (company_id,client_id,wallet_id,tipo,valor,descricao,referencia_tipo,referencia_id,expira_em)
+            VALUES (?,?,?,'credito',?,?,?,?,?)")
+            ->execute([$cid, $cliente['id'], $wallet['id'], $cashback, 'Cashback de venda via Hermes de R$ ' . number_format($valor, 2, ',', '.'), 'order', $orderId, $expira]);
 
         $pdo->commit();
+
+        $wallet = get_or_create_club_wallet($pdo, $cid, (int)$cliente['id']);
 
         echo json_encode([
             'ok'=>true,
             'order_id'=>$orderId,
             'cliente'=>$cliente['nome'],
             'valor'=>$valor,
-            'cashback_gerado'=>number_format($cashback, 2, '.', '')
+            'cashback_gerado'=>number_format($cashback, 2, '.', ''),
+            'saldo_total'=>number_format((float)($wallet['saldo'] ?? 0), 2, '.', '')
         ]);
 
     } catch (Throwable $e) {
