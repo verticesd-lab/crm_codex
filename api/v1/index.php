@@ -39,9 +39,38 @@ if ($endpoint === 'health' || $endpoint === 'v1') {
 }
 
 /* ── Autenticação por Bearer Token ── */
-$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-$token      = trim(str_replace('Bearer', '', $authHeader));
-$expected   = defined('HERMES_API_TOKEN') ? HERMES_API_TOKEN : getenv('HERMES_API_TOKEN');
+function crm_api_normalize_authorization_header(): void {
+    if (!empty($_SERVER['HTTP_AUTHORIZATION'])) {
+        return;
+    }
+
+    foreach (['REDIRECT_HTTP_AUTHORIZATION', 'Authorization'] as $key) {
+        if (!empty($_SERVER[$key])) {
+            $_SERVER['HTTP_AUTHORIZATION'] = $_SERVER[$key];
+            return;
+        }
+    }
+
+    $headers = [];
+    if (function_exists('apache_request_headers')) {
+        $headers = apache_request_headers() ?: [];
+    } elseif (function_exists('getallheaders')) {
+        $headers = getallheaders() ?: [];
+    }
+
+    foreach ($headers as $key => $value) {
+        if (strtolower((string)$key) === 'authorization') {
+            $_SERVER['HTTP_AUTHORIZATION'] = (string)$value;
+            return;
+        }
+    }
+}
+
+crm_api_normalize_authorization_header();
+
+$authHeader = trim((string)($_SERVER['HTTP_AUTHORIZATION'] ?? ''));
+$token      = preg_match('/^Bearer\s+(.+)$/i', $authHeader, $m) ? trim($m[1]) : $authHeader;
+$expected   = trim((string)(defined('HERMES_API_TOKEN') ? HERMES_API_TOKEN : getenv('HERMES_API_TOKEN')));
 
 if ($expected && $token !== $expected) {
     http_response_code(401);
