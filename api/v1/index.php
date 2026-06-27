@@ -793,10 +793,19 @@ if ($endpoint === 'upload_imagem_produto' && $method === 'POST') {
             ['ok'=>false,'error'=>'Falha ao processar imagem. Use JPG/PNG/WebP de ate ' . MAX_UPLOAD_SIZE_MB . 'MB.'],
             $reqStart, $agentMeta, 400);
     }
+
+    // Constroi URL absoluta robusta — NAO usa image_url() porque BASE_URL
+    // pode estar contaminada com /api/v1 quando chamado deste endpoint.
+    // Usa o host real do request + path /uploads/products/...
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host   = $_SERVER['HTTP_X_FORWARDED_HOST'] ?? $_SERVER['HTTP_HOST'] ?? 'crm.formenstore.com.br';
+    $cleanPath = ltrim($path, '/'); // 'uploads/products/xxx.jpg'
+    $absoluteUrl = $scheme . '://' . $host . '/' . $cleanPath;
+
     finish_request($pdo, $cid, $endpoint, ['name'=>$_FILES['imagem']['name'] ?? ''], [
         'ok'   => true,
         'path' => $path,
-        'url'  => image_url($path),
+        'url'  => $absoluteUrl,
     ], $reqStart, $agentMeta);
 }
 
@@ -885,8 +894,8 @@ if ($endpoint === 'processar_nf_xml' && $method === 'POST') {
     }
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────
 // 404
-// ────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 http_response_code(404);
 echo json_encode(['ok'=>false,'error'=>"Endpoint '{$endpoint}' nao encontrado"], JSON_UNESCAPED_UNICODE);
