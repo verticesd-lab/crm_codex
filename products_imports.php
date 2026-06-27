@@ -1,6 +1,13 @@
 <?php
 /**
- * products_imports.php — Cadastro em Massa (v2)
+ * products_imports.php — Cadastro em Massa (v3)
+ *
+ * MUDANÇAS v2 → v3:
+ *  ✅ ni_int corrigido: trata "5.0000" como 5 (padrão SEFAZ NF-e, 4 casas decimais)
+ *     Antes: "5.0000" → 50000 (regex removia ponto, mantinha zeros) → quantidade absurda
+ *  ✅ row_number escapado com backticks (palavra reservada em MySQL 8)
+ *  ✅ DivisionByZeroError corrigido na paginação (perPage default = 50)
+ *  ✅ Defesa em volta de ceil() pra nunca dividir por 0
  *
  * MELHORIAS v2:
  *  ✅ XLSX nativo via ZipArchive (sem Composer, sem dependências externas)
@@ -39,7 +46,37 @@ function ni_price($v): ?float {
     return ($f > 0) ? $f : null;
 }
 
-function ni_int($v): int { return max(1,(int)preg_replace('/[^0-9]/','',(string)$v)); }
+/**
+ * Converte qualquer representação de número inteiro tratando casos comuns:
+ *  - "5"           → 5
+ *  - "5.0000"      → 5  (padrão SEFAZ NF-e: 4 casas decimais)
+ *  - "5,00"        → 5  (decimal br)
+ *  - "1.234,56"    → 1234 (milhar br)
+ *  - "50 un"       → 50
+ * Sempre retorna mínimo 1.
+ */
+function ni_int($v): int {
+    $s = trim((string)$v);
+    if ($s === '') return 1;
+
+    // Normaliza decimais antes de fazer cast pra float
+    if (substr_count($s, ',') === 1 && substr_count($s, '.') === 0) {
+        // "5,00" → "5.00"
+        $s = str_replace(',', '.', $s);
+    } elseif (substr_count($s, ',') >= 1 && substr_count($s, '.') >= 1) {
+        // "1.234,56" → "1234.56"
+        $s = str_replace('.', '', $s);
+        $s = str_replace(',', '.', $s);
+    }
+
+    // Remove qualquer caractere que não seja número, ponto ou sinal
+    $s = preg_replace('/[^0-9.\-]/', '', $s);
+    if ($s === '' || $s === '.' || $s === '-') return 1;
+
+    // Cast pra float (interpreta "5.0000" como 5.0) e trunca pra inteiro
+    $n = (int)floor((float)$s);
+    return max(1, $n);
+}
 
 function ni_norm($s): string { return trim(preg_replace('/\s+/',' ',(string)$s)); }
 
@@ -151,25 +188,19 @@ function ni_read_xml_nfe(string $path): array {
 
 /* ================================================================
    LEITOR PDF DIGITAL (PHP puro — funciona para PDFs com texto)
-   Extrai texto dos streams de conteúdo e tenta montar linhas.
-   Para PDFs escaneados retorna array vazio (sem texto extraível).
    ================================================================ */
 
 function ni_read_pdf(string $path): array {
     $raw = file_get_contents($path);
     if ($raw === false) throw new Exception('Não foi possível ler o arquivo PDF.');
 
-    // Verifica assinatura PDF
     if (strpos($raw, '%PDF') === false) {
         throw new Exception('O arquivo não é um PDF válido.');
     }
 
-    // Extrai blocos de texto dos streams
     $text = '';
-    // Descomprime streams FlateDecode se possível
     preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $raw, $streams);
     foreach ($streams[1] as $stream) {
-        // Tenta decomprimir (flate)
         $dec = @gzuncompress($stream);
         if ($dec !== false) {
             $text .= $dec . "\n";
@@ -178,7 +209,6 @@ function ni_read_pdf(string $path): array {
         }
     }
 
-    // Extrai sequências de texto PDF: (texto) Tj / TJ
     $lines_raw = [];
     preg_match_all('/\(((?:[^()\\\\]|\\\\.)*)\)\s*Tj/s', $text, $m1);
     preg_match_all('/\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\s*TJ/s', $text, $m2);
@@ -188,7 +218,6 @@ function ni_read_pdf(string $path): array {
         if (trim($t) !== '') $lines_raw[] = trim($t);
     }
     foreach ($m2[1] as $t) {
-        // Extrai strings dentro do array TJ
         preg_match_all('/\(((?:[^()\\\\]|\\\\.)*)\)/', $t, $inner);
         $merged = '';
         foreach ($inner[1] as $s) $merged .= ni_pdf_decode_string($s);
@@ -196,16 +225,10 @@ function ni_read_pdf(string $path): array {
     }
 
     if (empty($lines_raw)) {
-        // PDF provavelmente escaneado — sem texto extraível
         return [];
     }
 
-    // Junta tudo em texto corrido e tenta encontrar tabela de produtos
     $fullText = implode(' | ', $lines_raw);
-
-    // Heurística: divide em linhas e tenta identificar padrão
-    // Procura padrões: [descrição] [qtd] [valor]
-    // Retorna como CSV para ni_process_rows processar normalmente
     $lines = preg_split('/\s*\|\s*/', $fullText);
 
     $rows = [];
@@ -218,14 +241,10 @@ function ni_read_pdf(string $path): array {
 
         $buffer[] = $line;
 
-        // Detecta se a linha tem padrão de item de NF (tem número de valor monetário)
         $hasPrice = preg_match('/\d{1,3}(?:[.,]\d{3})*[.,]\d{2}/', $line);
-        $hasQty   = preg_match('/^\d+[\.,]?\d*\s+|\s+\d+[\.,]?\d*\s+/', $line);
 
         if ($hasPrice || count($buffer) >= 3) {
             $lineText = implode(' ', $buffer);
-
-            // Tenta extrair: nome | qtd | preço
             preg_match('/(\d+(?:[.,]\d+)?)\s*(?:un|pc|par|pç)?[\s]+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/i', $lineText, $nums);
 
             $nome  = preg_replace('/\d+(?:[.,]\d{3})*[.,]\d{2}.*$/', '', $lineText);
@@ -250,11 +269,9 @@ function ni_read_pdf(string $path): array {
 }
 
 function ni_pdf_decode_string(string $s): string {
-    // Decodifica escapes PDF
     $s = str_replace(['\\n','\\r','\\t','\\b','\\f'], ["\n","\r","\t","\b","\f"], $s);
     $s = preg_replace_callback('/\\\\([0-7]{1,3})/', fn($m) => chr(octdec($m[1])), $s);
     $s = str_replace(['\\\\','\\(','\\)'], ['\\','(',')'], $s);
-    // Converte Latin-1 para UTF-8 se necessário
     if (!mb_check_encoding($s, 'UTF-8')) {
         $s = mb_convert_encoding($s, 'UTF-8', 'ISO-8859-1');
     }
@@ -263,7 +280,6 @@ function ni_pdf_decode_string(string $s): string {
 
 /* ================================================================
    LEITOR XLSX NATIVO (ZipArchive + SimpleXML — sem Composer)
-   Lê a primeira aba da planilha e retorna array de arrays.
    ================================================================ */
 
 function ni_col_to_idx(string $col): int {
@@ -283,7 +299,6 @@ function ni_read_xlsx(string $path): array {
         throw new Exception('Não foi possível abrir o arquivo XLSX. O arquivo pode estar corrompido.');
     }
 
-    // 1. Shared strings (textos armazenados centralmente no xlsx)
     $sharedStrings = [];
     $ssRaw = $zip->getFromName('xl/sharedStrings.xml');
     if ($ssRaw) {
@@ -302,9 +317,7 @@ function ni_read_xlsx(string $path): array {
         }
     }
 
-    // 2. Descobre qual é a sheet1 (pode estar em workbook.xml)
     $sheetFile = 'xl/worksheets/sheet1.xml';
-    // Tenta via workbook relationships
     $wbRel = $zip->getFromName('xl/_rels/workbook.xml.rels');
     if ($wbRel) {
         libxml_use_internal_errors(true);
@@ -315,7 +328,7 @@ function ni_read_xlsx(string $path): array {
                 if (str_contains($type, 'worksheet')) {
                     $target = (string)$r['Target'];
                     $sheetFile = 'xl/' . ltrim($target, '/');
-                    break; // pega a primeira aba
+                    break;
                 }
             }
         }
@@ -349,7 +362,6 @@ function ni_read_xlsx(string $path): array {
             } elseif ($type === 'inlineStr') {
                 $val = isset($cell->is->t) ? (string)$cell->is->t : '';
             }
-            // Datas Excel (número): mantém como número — pode ser útil
 
             $cells[$colIdx] = $val;
             $maxCol = max($maxCol, $colIdx);
@@ -364,33 +376,43 @@ function ni_read_xlsx(string $path): array {
 }
 
 /* ================================================================
-   FUNÇÃO DE PROCESSAMENTO UNIFICADA (CSV + XLSX)
+   FUNÇÃO DE PROCESSAMENTO UNIFICADA (CSV + XLSX + XML + PDF)
    ================================================================ */
 
 function ni_process_rows(array $rows, PDO $pdo, int $importId, int $companyId): int {
     if (empty($rows)) throw new Exception('Arquivo vazio ou sem linhas reconhecíveis.');
 
-    $header = array_shift($rows); // primeira linha = cabeçalho
+    $header = array_shift($rows);
     $map    = ni_map_cols($header);
     if ($map['nome'] === null) $map['nome'] = 0;
 
     $pdo->prepare('DELETE FROM product_import_items WHERE import_id=? AND company_id=?')
         ->execute([$importId, $companyId]);
 
-    $ins = $pdo->prepare('
+    // Detecta se a tabela tem `row_number` (após migration v3) ou só `row_index`
+    // `row_number` é palavra reservada do MySQL 8 — precisa de backticks
+    $hasRowNumber = false;
+    try {
+        $cols = $pdo->query('SHOW COLUMNS FROM product_import_items')->fetchAll(PDO::FETCH_COLUMN);
+        $hasRowNumber = in_array('row_number', $cols, true);
+    } catch (Throwable $e) {}
+
+    $rowField = $hasRowNumber ? '`row_number`' : '`row_index`';
+
+    $ins = $pdo->prepare("
         INSERT INTO product_import_items
-            (import_id,company_id,row_number,
-             raw_nome,raw_preco,raw_categoria,raw_descricao,
-             final_nome,final_preco,final_categoria,final_descricao,
-             referencia,preco_custo,quantidade,cor,tamanho,
-             status,error_message)
+            (import_id, company_id, {$rowField},
+             raw_nome, raw_preco, raw_categoria, raw_descricao,
+             final_nome, final_preco, final_categoria, final_descricao,
+             referencia, preco_custo, quantidade, cor, tamanho,
+             status, error_message)
         VALUES
-            (:import_id,:company_id,:row_num,
-             :raw_nome,:raw_preco,:raw_cat,:raw_desc,
-             :nome,:preco_venda,:cat,:desc,
-             :ref,:custo,:qty,:cor,:tam,
-             "draft",NULL)
-    ');
+            (:import_id, :company_id, :row_num,
+             :raw_nome, :raw_preco, :raw_cat, :raw_desc,
+             :nome, :preco_venda, :cat, :desc,
+             :ref, :custo, :qty, :cor, :tam,
+             'draft', NULL)
+    ");
 
     $total = 0;
     foreach ($rows as $rowIdx => $row) {
@@ -464,7 +486,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_upload'])) {
     redirect(ni_url('action=view&id='.$id));
 }
 
-// ── Processar (CSV + XLSX) ──
+// ── Processar (CSV + XLSX + XML + PDF) ──
 if (($_GET['action'] ?? '') === 'process' && isset($_GET['id'])) {
     $importId = (int)$_GET['id'];
     $imp = $pdo->prepare('SELECT * FROM product_imports WHERE id=? AND company_id=?');
@@ -484,7 +506,6 @@ if (($_GET['action'] ?? '') === 'process' && isset($_GET['id'])) {
             $fh    = fopen($filePath, 'r');
             if (!$fh) throw new Exception('Não foi possível abrir o CSV.');
 
-            // Detecta encoding
             $firstLine = fgets($fh); rewind($fh);
             if (mb_detect_encoding($firstLine, 'UTF-8', true) === false) {
                 $content = mb_convert_encoding(file_get_contents($filePath), 'UTF-8', 'ISO-8859-1');
@@ -505,14 +526,12 @@ if (($_GET['action'] ?? '') === 'process' && isset($_GET['id'])) {
             $rows = ni_read_xlsx($filePath);
 
         } elseif ($ext === 'xml') {
-            // NF-e XML — extração 100% precisa
             $rows = ni_read_xml_nfe($filePath);
 
         } elseif ($ext === 'pdf') {
             $rows = ni_read_pdf($filePath);
 
             if (empty($rows)) {
-                // PDF escaneado (imagem) — sem texto extraível
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 $pdo->prepare('UPDATE product_imports SET status="failed" WHERE id=? AND company_id=?')
                     ->execute([$importId, $companyId]);
@@ -556,7 +575,7 @@ if (($_GET['action'] ?? '') === 'process' && isset($_GET['id'])) {
 if (($_GET['action'] ?? '') === 'apply_markup' && isset($_GET['id'])) {
     $importId  = (int)$_GET['id'];
     $markup    = max(1.0, (float)str_replace(',', '.', $_GET['markup'] ?? '2'));
-    $overwrite = isset($_GET['overwrite']); // se true, sobrescreve preços já preenchidos
+    $overwrite = isset($_GET['overwrite']);
 
     $where = $overwrite
         ? 'import_id=? AND company_id=? AND preco_custo > 0'
@@ -568,7 +587,6 @@ if (($_GET['action'] ?? '') === 'apply_markup' && isset($_GET['id'])) {
 
     $upd = $pdo->prepare('UPDATE product_import_items SET final_preco=? WHERE id=? AND company_id=?');
     foreach ($items as $it) {
-        // Arredonda para .90 ou .00 (ex: 62.9 → 62.90, mas pode customizar)
         $sell = round((float)$it['preco_custo'] * $markup, 2);
         $upd->execute([$sell, (int)$it['id'], $companyId]);
     }
@@ -640,8 +658,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_save'])) {
     }
 
     flash('success', "💾 {$saved} produto(s) salvos.");
-    $page      = (int)($_POST['page'] ?? 1);
-    $perPage   = (int)($_POST['per_page'] ?? 50);
+    $page      = max(1, (int)($_POST['page'] ?? 1));
+    $perPage   = max(25, (int)($_POST['per_page'] ?? 50));
     $filterSt  = $_POST['filter_status'] ?? '';
     redirect(ni_url("action=view&id={$importId}&page={$page}&per_page={$perPage}".($filterSt?"&filter_status={$filterSt}":'')));
 }
@@ -688,7 +706,6 @@ if (($_GET['action'] ?? '') === 'publish' && isset($_GET['id'])) {
     $importId = (int)$_GET['id'];
     $ativar   = isset($_GET['ativo']) ? 1 : 0;
 
-    // Garante colunas extras em products
     try {
         $cols = $pdo->query('SHOW COLUMNS FROM products')->fetchAll(PDO::FETCH_COLUMN);
         foreach (['referencia'=>'VARCHAR(100)','cor'=>'VARCHAR(80)','estoque'=>'INT DEFAULT 0',
@@ -787,86 +804,53 @@ include __DIR__ . '/views/partials/header.php';
 .ci-topbar { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:1.25rem; }
 .ci-topbar h1 { font-size:1.4rem; font-weight:700; color:#0f172a; }
 .ci-topbar p  { font-size:.82rem; color:#64748b; margin-top:.15rem; }
-
-/* Buttons */
 .btn { display:inline-flex; align-items:center; gap:.4rem; padding:.55rem 1.1rem; border-radius:8px; font-size:.82rem; font-weight:600; border:none; cursor:pointer; text-decoration:none; transition:all .15s; white-space:nowrap; }
-.btn-primary { background:#6366f1; color:#fff; }
-.btn-primary:hover { background:#4f46e5; }
-.btn-success { background:#16a34a; color:#fff; }
-.btn-success:hover { background:#15803d; }
-.btn-amber  { background:#f59e0b; color:#fff; }
-.btn-amber:hover { background:#d97706; }
-.btn-danger { background:#ef4444; color:#fff; }
-.btn-danger:hover { background:#dc2626; }
-.btn-ghost  { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; }
-.btn-ghost:hover { background:#e2e8f0; }
+.btn-primary { background:#6366f1; color:#fff; } .btn-primary:hover { background:#4f46e5; }
+.btn-success { background:#16a34a; color:#fff; } .btn-success:hover { background:#15803d; }
+.btn-amber  { background:#f59e0b; color:#fff; } .btn-amber:hover { background:#d97706; }
+.btn-danger { background:#ef4444; color:#fff; } .btn-danger:hover { background:#dc2626; }
+.btn-ghost  { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; } .btn-ghost:hover { background:#e2e8f0; }
 .btn-sm { padding:.35rem .75rem; font-size:.75rem; }
-
-/* Flash */
 .flash-ok  { padding:.75rem 1.1rem; border-radius:9px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:.85rem; margin-bottom:1rem; }
 .flash-err { padding:.75rem 1.1rem; border-radius:9px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:.85rem; margin-bottom:1rem; }
-
-/* Upload zone */
 .upload-zone { border:2px dashed #e2e8f0; border-radius:14px; padding:2.5rem 1.5rem; text-align:center; background:#f8fafc; cursor:pointer; transition:all .2s; }
 .upload-zone:hover,.upload-zone.drag { border-color:#6366f1; background:#f5f3ff; }
 .upload-zone input { display:none; }
 .upload-zone h3 { font-size:1rem; font-weight:600; color:#0f172a; }
 .upload-zone p  { font-size:.82rem; color:#64748b; margin-top:.3rem; }
 .ext-badge { display:inline-block; background:#e0e7ff; color:#4338ca; font-size:.72rem; font-weight:700; padding:.2rem .6rem; border-radius:6px; margin:.2rem; }
-
-/* Status badges */
 .sbadge { display:inline-flex; align-items:center; gap:.3rem; font-size:.7rem; font-weight:700; padding:.2rem .6rem; border-radius:20px; text-transform:uppercase; letter-spacing:.04em; }
-.sbadge.draft     { background:#f1f5f9; color:#475569; }
-.sbadge.approved  { background:#fef9c3; color:#a16207; }
+.sbadge.draft { background:#f1f5f9; color:#475569; }
+.sbadge.approved { background:#fef9c3; color:#a16207; }
 .sbadge.published { background:#dcfce7; color:#15803d; }
-.sbadge.error     { background:#fee2e2; color:#dc2626; }
-.sbadge.uploaded  { background:#dbeafe; color:#1e40af; }
+.sbadge.error { background:#fee2e2; color:#dc2626; }
+.sbadge.uploaded { background:#dbeafe; color:#1e40af; }
 .sbadge.processed { background:#f0fdf4; color:#15803d; }
-.sbadge.failed    { background:#fee2e2; color:#dc2626; }
-
-/* Stats */
+.sbadge.failed { background:#fee2e2; color:#dc2626; }
 .stat-pill { background:#f8fafc; border:1px solid #e2e8f0; border-radius:20px; padding:.3rem .85rem; font-size:.75rem; font-weight:600; color:#475569; text-decoration:none; }
 .stat-pill span { color:#6366f1; font-weight:700; }
 .prog-bar { height:6px; background:#f1f5f9; border-radius:3px; overflow:hidden; margin-top:.5rem; }
 .prog-fill { height:100%; border-radius:3px; background:linear-gradient(90deg,#6366f1,#8b5cf6); }
-
-/* ── Painel de ações em massa ── */
-.bulk-toolbar {
-    background:linear-gradient(135deg,#1e1b4b,#312e81);
-    border-radius:12px;
-    padding:1rem 1.25rem;
-    margin-bottom:1rem;
-    display:flex;
-    flex-wrap:wrap;
-    gap:1rem;
-    align-items:flex-end;
-}
+.bulk-toolbar { background:linear-gradient(135deg,#1e1b4b,#312e81); border-radius:12px; padding:1rem 1.25rem; margin-bottom:1rem; display:flex; flex-wrap:wrap; gap:1rem; align-items:flex-end; }
 .bulk-toolbar h3 { font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.08em; color:#a5b4fc; margin-bottom:.5rem; }
 .bulk-group { display:flex; flex-direction:column; gap:.25rem; }
 .bulk-input { padding:.45rem .75rem; border-radius:8px; border:1.5px solid #4338ca; background:#1e1b4b; color:#fff; font-size:.82rem; outline:none; min-width:140px; }
 .bulk-input:focus { border-color:#818cf8; }
 .bulk-btn { padding:.45rem .9rem; border-radius:8px; border:none; font-size:.78rem; font-weight:700; cursor:pointer; }
-.bulk-btn-indigo { background:#6366f1; color:#fff; }
-.bulk-btn-indigo:hover { background:#4f46e5; }
-.bulk-btn-amber  { background:#f59e0b; color:#fff; }
-.bulk-btn-amber:hover  { background:#d97706; }
-.bulk-btn-green  { background:#16a34a; color:#fff; }
-.bulk-btn-green:hover  { background:#15803d; }
+.bulk-btn-indigo { background:#6366f1; color:#fff; } .bulk-btn-indigo:hover { background:#4f46e5; }
+.bulk-btn-amber  { background:#f59e0b; color:#fff; } .bulk-btn-amber:hover  { background:#d97706; }
+.bulk-btn-green  { background:#16a34a; color:#fff; } .bulk-btn-green:hover  { background:#15803d; }
 .bulk-separator { width:1px; background:rgba(255,255,255,.15); align-self:stretch; margin:.2rem 0; }
-
-/* Review table */
 .review-table { width:100%; border-collapse:collapse; font-size:.8rem; }
 .review-table thead { position:sticky; top:0; z-index:10; }
 .review-table thead th { padding:.6rem .55rem; text-align:left; font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; background:#f8fafc; border-bottom:2px solid #e2e8f0; white-space:nowrap; }
 .review-table tbody tr { border-bottom:1px solid #f1f5f9; transition:background .1s; }
 .review-table tbody tr:hover { background:#fafafe; }
 .review-table td { padding:.45rem .55rem; vertical-align:middle; }
-.row-draft    { border-left:3px solid #e2e8f0; }
+.row-draft { border-left:3px solid #e2e8f0; }
 .row-approved { border-left:3px solid #f59e0b; background:#fffbeb; }
 .row-published{ border-left:3px solid #22c55e; background:#f0fdf4; }
 .row-error    { border-left:3px solid #ef4444; background:#fef2f2; }
-
-/* Inline inputs */
 .ri { padding:.38rem .55rem; border:1.5px solid #e2e8f0; border-radius:6px; font-size:.78rem; background:#f8fafc; color:#0f172a; outline:none; transition:border-color .15s; width:100%; box-sizing:border-box; }
 .ri:focus { border-color:#6366f1; background:#fff; }
 .ri.warn  { border-color:#f59e0b; background:#fffbeb; }
@@ -875,24 +859,15 @@ include __DIR__ . '/views/partials/header.php';
 .ri-sm  { max-width:80px; }
 .ri-md  { max-width:110px; }
 .ri-num { text-align:right; font-family:monospace; }
-
-/* Checkbox estilizado */
 .chk-ok { accent-color:#22c55e; width:16px; height:16px; cursor:pointer; }
-
-/* Paginação */
 .pag { display:flex; align-items:center; gap:.35rem; flex-wrap:wrap; }
 .pag a,.pag span { width:30px; height:30px; display:flex; align-items:center; justify-content:center; border-radius:7px; font-size:.78rem; font-weight:600; text-decoration:none; border:1.5px solid #e2e8f0; color:#475569; }
 .pag a:hover { border-color:#6366f1; color:#6366f1; }
 .pag span.cur { background:#6366f1; border-color:#6366f1; color:#fff; }
-
-/* Import list */
 .import-row { display:flex; align-items:center; gap:1rem; padding:.9rem 1.25rem; background:#fff; border:1px solid #e2e8f0; border-radius:10px; margin-bottom:.5rem; transition:box-shadow .15s; }
 .import-row:hover { box-shadow:0 2px 12px rgba(0,0,0,.06); }
-
-/* Format hint */
 .format-hint { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:1rem; }
 .format-hint code { background:#e0e7ff; color:#3730a3; padding:.1rem .35rem; border-radius:4px; font-size:.76rem; }
-
 @media (max-width:768px) {
     .bulk-toolbar { flex-direction:column; }
     .review-table { font-size:.72rem; }
@@ -923,7 +898,6 @@ if ($action === 'list'): ?>
     </a>
   </div>
 
-  <!-- Fluxo visual -->
   <div class="ci-card" style="margin-bottom:1.25rem;">
     <div class="ci-card-body" style="padding:.9rem 1.25rem;">
       <div style="display:flex;gap:1.25rem;flex-wrap:wrap;align-items:flex-start;">
@@ -1014,7 +988,6 @@ elseif ($action === 'create'): ?>
   </div>
 
   <div style="display:grid;grid-template-columns:1fr 340px;gap:1.25rem;align-items:start;">
-
     <div class="ci-card">
       <div class="ci-card-header"><h2>Enviar arquivo</h2></div>
       <div class="ci-card-body">
@@ -1033,28 +1006,18 @@ elseif ($action === 'create'): ?>
             <p id="fname-preview" style="display:none;margin-top:.75rem;font-size:.85rem;font-weight:600;color:#334155;"></p>
             <input type="file" id="file-input" name="file" accept=".csv,.xlsx,.xml,.pdf">
           </label>
-
-          <!-- Dica dinâmica por tipo de arquivo -->
           <div id="file-tip" style="display:none;margin-top:.75rem;padding:.75rem 1rem;border-radius:9px;font-size:.78rem;"></div>
-
           <div style="margin-top:1.25rem;display:flex;justify-content:flex-end;gap:.6rem;">
             <a href="<?= ni_url() ?>" class="btn btn-ghost">Cancelar</a>
-            <button type="submit" class="btn btn-primary" id="upload-btn" disabled>
-              📤 Enviar e Processar
-            </button>
+            <button type="submit" class="btn btn-primary" id="upload-btn" disabled>📤 Enviar e Processar</button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- Dicas por formato -->
     <div style="display:flex;flex-direction:column;gap:.75rem;">
-
-      <!-- XML NF-e — destaque -->
       <div class="ci-card" style="border:2px solid #bbf7d0;">
-        <div class="ci-card-header" style="background:#f0fdf4;">
-          <h2 style="color:#166534;">⭐ XML NF-e — Melhor opção</h2>
-        </div>
+        <div class="ci-card-header" style="background:#f0fdf4;"><h2 style="color:#166534;">⭐ XML NF-e — Melhor opção</h2></div>
         <div class="ci-card-body">
           <p style="font-size:.78rem;color:#166534;font-weight:600;margin-bottom:.5rem;">Extração 100% precisa — sem erros de layout</p>
           <ul style="font-size:.75rem;color:#374151;padding-left:1rem;margin:0;">
@@ -1067,48 +1030,7 @@ elseif ($action === 'create'): ?>
           </div>
         </div>
       </div>
-
-      <!-- PDF -->
-      <div class="ci-card">
-        <div class="ci-card-header"><h2>📄 PDF</h2></div>
-        <div class="ci-card-body">
-          <div style="display:flex;flex-direction:column;gap:.5rem;">
-            <div style="padding:.6rem .75rem;background:#f0fdf4;border-radius:7px;border:1px solid #bbf7d0;">
-              <p style="font-size:.75rem;font-weight:700;color:#166534;">✅ PDF digital (texto selecionável)</p>
-              <p style="font-size:.72rem;color:#374151;">PDFs gerados por sistema — extrai os produtos automaticamente.</p>
-            </div>
-            <div style="padding:.6rem .75rem;background:#fef2f2;border-radius:7px;border:1px solid #fecaca;">
-              <p style="font-size:.75rem;font-weight:700;color:#991b1b;">❌ PDF escaneado (foto/imagem)</p>
-              <p style="font-size:.72rem;color:#374151;">Sem texto extraível. Solução: converta em <a href="https://smallpdf.com/pdf-to-excel" target="_blank" style="color:#6366f1;">smallpdf.com</a> → Excel → importe o XLSX.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CSV / XLSX -->
-      <div class="ci-card">
-        <div class="ci-card-header"><h2>📊 CSV / XLSX</h2></div>
-        <div class="ci-card-body">
-          <div class="format-hint">
-            <?php foreach([
-              ['nome / produto','Nome ✦'],
-              ['ref / referencia / sku','Código'],
-              ['custo / vl unit','Custo ✦'],
-              ['quantidade / qtd','Quantidade'],
-              ['categoria / grupo','Categoria'],
-              ['cor · tamanho / grade','Variações'],
-            ] as [$col,$desc]): ?>
-              <div style="display:flex;gap:.5rem;margin:.2rem 0;">
-                <code><?= $col ?></code>
-                <span style="font-size:.7rem;color:#64748b;">→ <?= $desc ?></span>
-              </div>
-            <?php endforeach; ?>
-            <p style="font-size:.68rem;color:#94a3b8;margin-top:.5rem;">✦ = usadas no markup automático</p>
-          </div>
-        </div>
-      </div>
-
-    </div><!-- fim col dicas -->
+    </div>
   </div>
 
 <?php /* ======================================================== VIEW / REVIEW */
@@ -1120,8 +1042,11 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
   $imp = $imp->fetch();
   if (!$imp) { echo '<div class="flash-err">Importação não encontrada.</div>'; include __DIR__.'/views/partials/footer.php'; exit; }
 
+  // ── FIX v3: paginação defensiva, nunca dividir por 0 ──
   $page         = max(1, (int)($_GET['page'] ?? 1));
-  $perPage      = in_array((int)($_GET['per_page'] ?? 50), [25,50,100]) ? (int)$_GET['per_page'] : 50;
+  $perPage      = (int)($_GET['per_page'] ?? 50);
+  if (!in_array($perPage, [25, 50, 100], true)) $perPage = 50; // fallback robusto
+  $perPage      = max(1, $perPage); // garantia anti-divisão-por-zero
   $offset       = ($page - 1) * $perPage;
   $filterStatus = in_array($_GET['filter_status'] ?? '', ['draft','approved','published','error']) ? $_GET['filter_status'] : '';
   $safeFilter   = $filterStatus ? " AND status='{$filterStatus}'" : '';
@@ -1129,11 +1054,18 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
   $countStmt = $pdo->prepare("SELECT COUNT(*) FROM product_import_items WHERE import_id=? AND company_id=? {$safeFilter}");
   $countStmt->execute([$importId, $companyId]);
   $totalItems = (int)$countStmt->fetchColumn();
-  $totalPages = max(1, (int)ceil($totalItems / $perPage));
+  $totalPages = $perPage > 0 ? max(1, (int)ceil($totalItems / $perPage)) : 1;
 
   $itemsStmt = $pdo->prepare("SELECT * FROM product_import_items WHERE import_id=? AND company_id=? {$safeFilter} ORDER BY id ASC LIMIT {$perPage} OFFSET {$offset}");
   $itemsStmt->execute([$importId, $companyId]);
   $items = $itemsStmt->fetchAll();
+
+  // Detecta nome da coluna row (compatível com v2/v3 do schema)
+  $rowCol = 'row_index';
+  try {
+      $colsRI = $pdo->query('SHOW COLUMNS FROM product_import_items')->fetchAll(PDO::FETCH_COLUMN);
+      if (in_array('row_number', $colsRI, true)) $rowCol = 'row_number';
+  } catch (Throwable $e) {}
 
   $statsStmt = $pdo->prepare('SELECT status, COUNT(*) c FROM product_import_items WHERE import_id=? AND company_id=? GROUP BY status');
   $statsStmt->execute([$importId, $companyId]);
@@ -1153,7 +1085,6 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
     <a href="<?= ni_url() ?>" class="btn btn-ghost">← Voltar</a>
   </div>
 
-  <!-- Barra de status + ações de lote -->
   <div class="ci-card">
     <div class="ci-card-header" style="flex-wrap:wrap;gap:.5rem;">
       <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
@@ -1179,7 +1110,6 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
     </div>
 
     <div class="ci-card-body" style="padding:.75rem 1.25rem;">
-      <!-- Progresso -->
       <?php if($totalAll > 0): $pct = round((($stats['approved']??0)+($stats['published']??0))/$totalAll*100); ?>
       <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.75rem;">
         <div class="prog-bar" style="flex:1;height:8px;"><div class="prog-fill" style="width:<?= $pct ?>%"></div></div>
@@ -1187,7 +1117,6 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
       </div>
       <?php endif; ?>
 
-      <!-- Filtros de status -->
       <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;">
         <?php foreach([
           ['','Todos',$totalAll,'#6366f1'],
@@ -1232,22 +1161,17 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
     </div>
   <?php else: ?>
 
-    <!-- ════ PAINEL DE AÇÕES EM MASSA ════ -->
     <?php if (!$filterStatus || $filterStatus === 'draft'): ?>
     <div class="bulk-toolbar">
-      <!-- Grupo 1: Markup global -->
       <div class="bulk-group">
         <h3>💰 Markup Global (custo × multiplicador)</h3>
         <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;">
-          <input type="number" id="markup-val" value="2.5" min="1" step="0.1"
-                 class="bulk-input" style="max-width:90px;" placeholder="2.5">
+          <input type="number" id="markup-val" value="2.5" min="1" step="0.1" class="bulk-input" style="max-width:90px;" placeholder="2.5">
           <span style="color:#a5b4fc;font-size:.8rem;">× custo =</span>
           <span id="markup-preview" style="color:#fde68a;font-size:.8rem;font-weight:700;"></span>
-          <a id="markup-btn" href="#" class="bulk-btn bulk-btn-indigo"
-             onclick="applyMarkup(); return false;">Calcular preços</a>
+          <a id="markup-btn" href="#" class="bulk-btn bulk-btn-indigo" onclick="applyMarkup(); return false;">Calcular preços</a>
           <label style="font-size:.72rem;color:#818cf8;display:flex;align-items:center;gap:.3rem;cursor:pointer;">
-            <input type="checkbox" id="overwrite-chk" style="accent-color:#818cf8;">
-            Sobrescrever existentes
+            <input type="checkbox" id="overwrite-chk" style="accent-color:#818cf8;">Sobrescrever existentes
           </label>
         </div>
         <p style="font-size:.68rem;color:#818cf8;margin-top:.2rem;">Aplica a todos os itens que têm preço de custo. Sem custo = mantém em branco.</p>
@@ -1255,15 +1179,13 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
 
       <div class="bulk-separator"></div>
 
-      <!-- Grupo 2: Categoria em lote -->
       <form method="POST" style="display:contents;">
         <input type="hidden" name="set_category_all" value="1">
         <input type="hidden" name="import_id" value="<?= $importId ?>">
         <div class="bulk-group">
           <h3>🏷️ Categoria para todos os rascunhos</h3>
           <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;">
-            <input type="text" name="category_all" list="cats-list" class="bulk-input"
-                   placeholder="Ex: Calçados masculinos" required>
+            <input type="text" name="category_all" list="cats-list" class="bulk-input" placeholder="Ex: Calçados masculinos" required>
             <datalist id="cats-list">
               <?php
               $catsExist = $pdo->prepare('SELECT DISTINCT final_categoria FROM product_import_items WHERE import_id=? AND company_id=? AND final_categoria != "" ORDER BY final_categoria');
@@ -1280,23 +1202,17 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
 
       <div class="bulk-separator"></div>
 
-      <!-- Grupo 3: Salvar tudo -->
       <div class="bulk-group" style="justify-content:flex-end;">
         <h3>💾 Esta página</h3>
         <div style="display:flex;gap:.4rem;flex-wrap:wrap;">
-          <button form="bulk-form" type="submit" class="bulk-btn bulk-btn-green">
-            💾 Salvar todos (<?= count($items) ?>)
-          </button>
-          <button form="bulk-form" type="button" onclick="checkAllOk()" class="bulk-btn" style="background:#312e81;color:#c7d2fe;">
-            ☑️ Marcar todos OK
-          </button>
+          <button form="bulk-form" type="submit" class="bulk-btn bulk-btn-green">💾 Salvar todos (<?= count($items) ?>)</button>
+          <button form="bulk-form" type="button" onclick="checkAllOk()" class="bulk-btn" style="background:#312e81;color:#c7d2fe;">☑️ Marcar todos OK</button>
         </div>
         <p style="font-size:.68rem;color:#818cf8;margin-top:.2rem;">Salva e aprova os itens desta página de uma vez.</p>
       </div>
     </div>
     <?php endif; ?>
 
-    <!-- ════ TABELA DE REVISÃO — 1 form para todos ════ -->
     <div class="ci-card">
       <form method="POST" id="bulk-form">
         <input type="hidden" name="bulk_save" value="1">
@@ -1327,53 +1243,36 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
               <?php foreach($items as $it):
                 $missingPrice = (!$it['final_preco'] || $it['final_preco'] <= 0);
                 $hasCost = $it['preco_custo'] > 0;
+                $rowNum = (int)($it[$rowCol] ?? 0);
               ?>
               <tr class="row-<?= $it['status'] ?>">
                 <input type="hidden" name="item_ids[]" value="<?= (int)$it['id'] ?>">
-
-                <td style="color:#94a3b8;font-size:.68rem;text-align:center;"><?= (int)$it['row_number'] ?></td>
-
+                <td style="color:#94a3b8;font-size:.68rem;text-align:center;"><?= $rowNum ?></td>
                 <td>
-                  <input class="ri" name="nome_<?= (int)$it['id'] ?>"
-                         value="<?= htmlspecialchars((string)($it['final_nome']??'')) ?>" required>
+                  <input class="ri" name="nome_<?= (int)$it['id'] ?>" value="<?= htmlspecialchars((string)($it['final_nome']??'')) ?>" required>
                   <?php if(!empty($it['error_message'])): ?>
                     <p style="font-size:.65rem;color:#dc2626;margin-top:.1rem;"><?= sanitize($it['error_message']) ?></p>
                   <?php endif; ?>
                 </td>
-
                 <td><input class="ri ri-xs" name="ref_<?= (int)$it['id'] ?>" value="<?= htmlspecialchars((string)($it['referencia']??'')) ?>" placeholder="REF"></td>
                 <td><input class="ri ri-xs" name="cor_<?= (int)$it['id'] ?>" value="<?= htmlspecialchars((string)($it['cor']??'')) ?>" placeholder="Cor"></td>
                 <td><input class="ri ri-xs" name="tam_<?= (int)$it['id'] ?>" value="<?= htmlspecialchars((string)($it['tamanho']??'')) ?>" placeholder="M"></td>
                 <td><input class="ri ri-xs ri-num" type="number" min="0" name="qty_<?= (int)$it['id'] ?>" value="<?= (int)($it['quantidade']??1) ?>"></td>
-
                 <td>
-                  <input class="ri ri-sm ri-num <?= $hasCost?'ok':'' ?>"
-                         name="custo_<?= (int)$it['id'] ?>"
+                  <input class="ri ri-sm ri-num <?= $hasCost?'ok':'' ?>" name="custo_<?= (int)$it['id'] ?>"
                          value="<?= $it['preco_custo'] ? number_format((float)$it['preco_custo'],2,',','.') : '' ?>"
-                         placeholder="0,00"
-                         data-cost="<?= (float)$it['preco_custo'] ?>">
+                         placeholder="0,00" data-cost="<?= (float)$it['preco_custo'] ?>">
                 </td>
-
                 <td>
-                  <input class="ri ri-sm ri-num <?= $missingPrice ? 'warn' : 'ok' ?>"
-                         name="preco_<?= (int)$it['id'] ?>"
+                  <input class="ri ri-sm ri-num <?= $missingPrice ? 'warn' : 'ok' ?>" name="preco_<?= (int)$it['id'] ?>"
                          value="<?= $it['final_preco'] ? number_format((float)$it['final_preco'],2,',','.') : '' ?>"
-                         placeholder="0,00"
-                         required>
+                         placeholder="0,00" required>
                 </td>
-
                 <td><input class="ri ri-xs ri-num" type="number" min="0" max="100" name="desc_<?= (int)$it['id'] ?>" value="<?= (int)($it['desconto']??0) ?>" placeholder="0"></td>
-
                 <td><input class="ri ri-md" name="cat_<?= (int)$it['id'] ?>" value="<?= htmlspecialchars((string)($it['final_categoria']??'')) ?>" placeholder="Ex: Tênis" list="cats-list"></td>
-
-                <td>
-                  <span class="sbadge <?= $it['status'] ?>" style="font-size:.6rem;"><?= mb_substr($it['status'],0,3) ?></span>
-                </td>
-
+                <td><span class="sbadge <?= $it['status'] ?>" style="font-size:.6rem;"><?= mb_substr($it['status'],0,3) ?></span></td>
                 <td style="text-align:center;">
-                  <input type="checkbox" class="chk-ok"
-                         name="ok_<?= (int)$it['id'] ?>"
-                         <?= in_array($it['status'],['approved','published']) ? 'checked' : '' ?>>
+                  <input type="checkbox" class="chk-ok" name="ok_<?= (int)$it['id'] ?>" <?= in_array($it['status'],['approved','published']) ? 'checked' : '' ?>>
                 </td>
               </tr>
               <?php endforeach; ?>
@@ -1381,7 +1280,6 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
           </table>
         </div>
 
-        <!-- Rodapé: salvar + paginar -->
         <div style="padding:.85rem 1.25rem;border-top:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;">
           <div style="display:flex;align-items:center;gap:.5rem;">
             <span style="font-size:.78rem;color:#94a3b8;"><?= $offset+1 ?>–<?= min($offset+$perPage,$totalItems) ?> de <?= $totalItems ?></span>
@@ -1412,7 +1310,6 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
 </div>
 
 <script>
-// ── Upload zone ──
 (function(){
   const input = document.getElementById('file-input');
   const btn   = document.getElementById('upload-btn');
@@ -1422,21 +1319,16 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
   if (!input) return;
 
   const tips = {
-    xml:  { bg:'#f0fdf4', border:'#bbf7d0', color:'#166534',
-            text:'⭐ XML NF-e detectado! Nome, referência, quantidade e custo serão extraídos automaticamente.' },
-    pdf:  { bg:'#fffbeb', border:'#fde68a', color:'#92400e',
-            text:'📄 PDF detectado. Se for digital (texto selecionável), os produtos serão extraídos. Se for escaneado, você receberá instruções de conversão.' },
-    xlsx: { bg:'#dbeafe', border:'#93c5fd', color:'#1e40af',
-            text:'📊 Excel detectado! Certifique-se de que a primeira linha tem os cabeçalhos das colunas.' },
-    csv:  { bg:'#f5f3ff', border:'#c4b5fd', color:'#5b21b6',
-            text:'📄 CSV detectado! O separador (vírgula, ponto-e-vírgula ou tab) será detectado automaticamente.' },
+    xml:  { bg:'#f0fdf4', border:'#bbf7d0', color:'#166534', text:'⭐ XML NF-e detectado! Nome, referência, quantidade e custo serão extraídos automaticamente.' },
+    pdf:  { bg:'#fffbeb', border:'#fde68a', color:'#92400e', text:'📄 PDF detectado. Se for digital (texto selecionável), os produtos serão extraídos.' },
+    xlsx: { bg:'#dbeafe', border:'#93c5fd', color:'#1e40af', text:'📊 Excel detectado! Primeira linha deve ter os cabeçalhos.' },
+    csv:  { bg:'#f5f3ff', border:'#c4b5fd', color:'#5b21b6', text:'📄 CSV detectado! O separador será detectado automaticamente.' },
   };
 
   function showFile(name) {
     if (prev) { prev.textContent = '📄 ' + name; prev.style.display = 'block'; }
     if (btn)  btn.disabled = false;
     if (zone) zone.style.borderColor = '#6366f1';
-
     const ext = name.split('.').pop().toLowerCase();
     if (tip && tips[ext]) {
       const t = tips[ext];
@@ -1458,22 +1350,18 @@ elseif ($action === 'view' && isset($_GET['id'])): ?>
   }
 })();
 
-// ── Markup global ──
 function applyMarkup() {
   const markup   = parseFloat(document.getElementById('markup-val')?.value || '2.5');
   const overwrite = document.getElementById('overwrite-chk')?.checked;
   const importId = <?= (int)($imp['id'] ?? 0) ?>;
   if (!markup || markup < 1) { alert('Informe um multiplicador válido (ex: 2.5)'); return; }
   const ow = overwrite ? '&overwrite=1' : '';
-  const msg = overwrite
-    ? `Recalcular TODOS os preços com markup ${markup}x (sobrescreve os existentes)?`
-    : `Calcular preços de venda com markup ${markup}x apenas onde não há preço?`;
+  const msg = overwrite ? `Recalcular TODOS os preços com markup ${markup}x?` : `Calcular preços com markup ${markup}x apenas onde não há preço?`;
   if (confirm(msg)) {
     location.href = `<?= ni_url('action=apply_markup&id=') ?>${importId}&markup=${markup}${ow}`;
   }
 }
 
-// Preview de markup na interface
 (function(){
   const inp = document.getElementById('markup-val');
   const prev = document.getElementById('markup-preview');
@@ -1486,12 +1374,10 @@ function applyMarkup() {
   update();
 })();
 
-// ── Marcar todos como OK ──
 function checkAllOk() {
   document.querySelectorAll('.chk-ok').forEach(c => c.checked = true);
 }
 
-// ── Auto-highlight: preço em branco = warn ──
 document.querySelectorAll('[name^="preco_"]').forEach(inp => {
   inp.addEventListener('input', function() {
     const v = parseFloat(this.value.replace(',','.'));
