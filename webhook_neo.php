@@ -161,13 +161,13 @@ $pdo->prepare("INSERT INTO club_transactions (company_id, client_id, wallet_id, 
 // G. Resposta Final
 echo json_encode([
     "ok" => true,
+    "novo_cliente" => $isNovoCliente,
     "cliente" => $client['nome'],
     "primeiro_nome" => explode(' ', trim($client['nome']))[0],
     "telefone" => $telefone,
     "cashback_gerado" => number_format($cashback, 2, ',', '.'),
     "saldo_total" => number_format($saldoAtual, 2, ',', '.'),
-    "valor_compra" => number_format($valorTotal, 2, ',', '.'),
-    "cliente_criado" => $isNovoCliente
+    "valor_compra" => number_format($valorTotal, 2, ',', '.')
 ]);
 
 // FUNÇÃO AUXILIAR

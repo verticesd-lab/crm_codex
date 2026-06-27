@@ -124,7 +124,7 @@ if (!function_exists('ni_process_rows')) {
             $hasRowNumber = in_array('row_number', $cols, true);
         } catch (Throwable $e) {}
 
-        $rowField = $hasRowNumber ? 'row_number' : 'row_index';
+        $rowField = $hasRowNumber ? '`row_number`' : '`row_index`';
 
         $ins = $pdo->prepare("
             INSERT INTO product_import_items
