@@ -24,7 +24,25 @@ if (!function_exists('ni_price')) {
     }
 }
 
-if (!function_exists('ni_int'))  { function ni_int($v): int  { return max(1,(int)preg_replace('/[^0-9]/','',(string)$v)); } }
+if (!function_exists('ni_int')) {
+    function ni_int($v): int {
+        // SEFAZ NF-e envia quantidade como "5.0000" (4 casas decimais).
+        // Converte primeiro como float pra resolver, depois trunca.
+        $s = trim((string)$v);
+        if ($s === '') return 1;
+        if (substr_count($s, ',') === 1 && substr_count($s, '.') === 0) {
+            // "5,00" -> "5.00"
+            $s = str_replace(',', '.', $s);
+        } elseif (substr_count($s, ',') >= 1 && substr_count($s, '.') >= 1) {
+            // "1.234,56" -> "1234.56"
+            $s = str_replace('.', '', $s);
+            $s = str_replace(',', '.', $s);
+        }
+        $s = preg_replace('/[^0-9.\-]/', '', $s);
+        if ($s === '' || $s === '.' || $s === '-') return 1;
+        return max(1, (int)floor((float)$s));
+    }
+}
 if (!function_exists('ni_norm')) { function ni_norm($s): string { return trim(preg_replace('/\s+/',' ',(string)$s)); } }
 
 if (!function_exists('ni_hdr')) {
