@@ -26,12 +26,12 @@ function get_services_for_barber(PDO $pdo, int $companyId, int $barberId = 0): a
             $st = $pdo->prepare("
                 SELECT
                     s.id,
-                    s.name                                              AS nome,
+                    s.label                                             AS nome,
                     COALESCE(o.preco,       s.price)                   AS preco,
-                    COALESCE(o.duracao_min, s.duration)                AS duracao_min,
+                    COALESCE(o.duracao_min, s.duration_minutes)        AS duracao_min,
                     s.price                                             AS preco_global,
-                    s.duration                                          AS duracao_global,
-                    (o.id IS NOT NULL AND o.preco IS NOT NULL)         AS tem_preco_custom,
+                    s.duration_minutes                                  AS duracao_global,
+                    (o.id IS NOT NULL AND o.preco       IS NOT NULL)   AS tem_preco_custom,
                     (o.id IS NOT NULL AND o.duracao_min IS NOT NULL)   AS tem_duracao_custom,
                     COALESCE(o.ativo, 1)                               AS ativo
                 FROM services s
@@ -40,8 +40,9 @@ function get_services_for_barber(PDO $pdo, int $companyId, int $barberId = 0): a
                     AND o.barber_id   = ?
                     AND o.company_id  = ?
                 WHERE s.company_id = ?
+                  AND s.is_active   = 1
                   AND COALESCE(o.ativo, 1) = 1
-                ORDER BY s.name ASC
+                ORDER BY s.label ASC
             ");
             $st->execute([$barberId, $companyId, $companyId]);
         } else {
@@ -49,17 +50,18 @@ function get_services_for_barber(PDO $pdo, int $companyId, int $barberId = 0): a
             $st = $pdo->prepare("
                 SELECT
                     id,
-                    name        AS nome,
-                    price       AS preco,
-                    duration    AS duracao_min,
-                    price       AS preco_global,
-                    duration    AS duracao_global,
-                    0           AS tem_preco_custom,
-                    0           AS tem_duracao_custom,
-                    1           AS ativo
+                    label              AS nome,
+                    price              AS preco,
+                    duration_minutes   AS duracao_min,
+                    price              AS preco_global,
+                    duration_minutes   AS duracao_global,
+                    0                  AS tem_preco_custom,
+                    0                  AS tem_duracao_custom,
+                    1                  AS ativo
                 FROM services
                 WHERE company_id = ?
-                ORDER BY name ASC
+                  AND is_active   = 1
+                ORDER BY label ASC
             ");
             $st->execute([$companyId]);
         }
@@ -116,4 +118,3 @@ function calc_slots_for_barber(PDO $pdo, int $companyId, int $barberId, array $s
 
     return $slotMin > 0 ? (int)ceil($totalMin / $slotMin) : 0;
 }
-

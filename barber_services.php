@@ -93,10 +93,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $barbers = [];
 try {
     if ($isAdmin) {
-        $st = $pdo->prepare("SELECT id, name, avatar_url FROM barbers WHERE company_id=? AND is_active=1 ORDER BY name");
+        $st = $pdo->prepare("SELECT id, name FROM barbers WHERE company_id=? AND is_active=1 ORDER BY name");
         $st->execute([$cid]);
     } else {
-        $st = $pdo->prepare("SELECT id, name, avatar_url FROM barbers WHERE company_id=? AND id=? AND is_active=1 LIMIT 1");
+        $st = $pdo->prepare("SELECT id, name FROM barbers WHERE company_id=? AND id=? AND is_active=1 LIMIT 1");
         $st->execute([$cid, $myBarberId]);
     }
     $barbers = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -112,20 +112,21 @@ if ($selBarberId) {
         $st = $pdo->prepare("
             SELECT
                 s.id,
-                s.name         AS nome,
-                s.price        AS preco_global,
-                s.duration     AS duracao_global,
-                o.preco        AS preco_override,
-                o.duracao_min  AS duracao_override,
-                o.ativo        AS ativo_override,
-                (o.id IS NOT NULL) AS tem_override
+                s.label                AS nome,
+                s.price                AS preco_global,
+                s.duration_minutes     AS duracao_global,
+                o.preco                AS preco_override,
+                o.duracao_min          AS duracao_override,
+                o.ativo                AS ativo_override,
+                (o.id IS NOT NULL)     AS tem_override
             FROM services s
             LEFT JOIN barber_service_overrides o
-                ON o.service_id = s.id
-                AND o.barber_id = ?
-                AND o.company_id = ?
+                ON  o.service_id  = s.id
+                AND o.barber_id   = ?
+                AND o.company_id  = ?
             WHERE s.company_id = ?
-            ORDER BY s.name ASC
+              AND s.is_active   = 1
+            ORDER BY s.label ASC
         ");
         $st->execute([$selBarberId, $cid, $cid]);
         $services = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -234,7 +235,7 @@ include __DIR__ . '/views/partials/header.php';
         <p>Personalize preço e duração de cada serviço por barbeiro. O padrão global é mantido quando não há personalização.</p>
     </div>
     <?php if ($isAdmin): ?>
-    <a href="services.php" class="bs-btn ghost" style="text-decoration:none;">⚙️ Editar serviços globais</a>
+    <a href="services_admin.php" class="bs-btn ghost" style="text-decoration:none;">⚙️ Editar serviços globais</a>
     <?php endif; ?>
 </div>
 
@@ -247,14 +248,13 @@ include __DIR__ . '/views/partials/header.php';
 <?php if (!empty($barbers)): ?>
 <div class="bs-tabs">
     <?php foreach ($barbers as $b): ?>
-    <?php $initials = strtoupper(implode('',array_map(fn($w)=>$w[0]??'',explode(' ',trim($b['name']??'?'))))); ?>
+    <?php
+        $words    = array_filter(explode(' ', trim($b['name'] ?? '?')));
+        $initials = strtoupper(implode('', array_map(fn($w) => $w[0] ?? '', array_slice($words, 0, 2))));
+    ?>
     <a href="?barber_id=<?= $b['id'] ?>"
        class="bs-tab <?= $selBarberId === (int)$b['id'] ? 'active' : '' ?>">
-        <?php if (!empty($b['avatar_url'])): ?>
-            <img src="<?= sanitize($b['avatar_url']) ?>" alt="">
-        <?php else: ?>
-            <div class="bs-tab-av"><?= sanitize(substr($initials,0,2)) ?></div>
-        <?php endif; ?>
+        <div class="bs-tab-av"><?= sanitize($initials) ?></div>
         <?= sanitize($b['name']) ?>
     </a>
     <?php endforeach; ?>
@@ -387,7 +387,7 @@ include __DIR__ . '/views/partials/header.php';
 </div>
 <?php elseif ($selBarberId): ?>
 <div style="text-align:center;padding:3rem;color:#94a3b8;background:#fff;border:1px solid #e2e8f0;border-radius:14px;">
-    Nenhum serviço cadastrado ainda. <a href="services.php" style="color:#6366f1;">Cadastrar serviços globais →</a>
+    Nenhum serviço cadastrado ainda. <a href="services_admin.php" style="color:#6366f1;">Cadastrar serviços globais →</a>
 </div>
 <?php else: ?>
 <div style="text-align:center;padding:3rem;color:#94a3b8;background:#fff;border:1px solid #e2e8f0;border-radius:14px;">
@@ -410,4 +410,3 @@ function toggleEditor(id) {
 </script>
 
 <?php include __DIR__ . '/views/partials/footer.php'; ?>
-
