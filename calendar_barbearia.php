@@ -3,6 +3,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/agenda_helpers.php';
+require_once __DIR__ . '/barber_services_helper.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -58,6 +59,25 @@ foreach ($servicesCatalog as $key => $v) {
         'price' => (float)($v['price'] ?? 0),
         'duration_minutes' => (int)($v['duration'] ?? 30),
     ];
+}
+
+// Catálogo efetivo de cada barbeiro para o modal de agendamento interno.
+$servicesByBarber = [];
+foreach ($barbers as $barber) {
+    $barberId = (int)($barber['id'] ?? 0);
+    if ($barberId <= 0) continue;
+
+    $servicesByBarber[$barberId] = [];
+    foreach (get_services_for_barber($pdo, $companyId, $barberId) as $service) {
+        $key = (string)($service['service_key'] ?? '');
+        if ($key === '') continue;
+
+        $servicesByBarber[$barberId][$key] = [
+            'label' => (string)($service['nome'] ?? $key),
+            'price' => (float)($service['preco'] ?? 0),
+            'duration_minutes' => (int)($service['duracao_min'] ?? 30),
+        ];
+    }
 }
 
 $appointments = agenda_get_appointments_for_date($pdo, $companyId, $selectedDateStr);
@@ -340,7 +360,8 @@ include __DIR__ . '/views/partials/header.php';
                 $price = (float)($s['price'] ?? 0);
                 $mins  = (int)($s['duration_minutes'] ?? 0);
               ?>
-              <label class="flex items-center gap-2 border rounded px-3 py-2 text-sm bg-white">
+              <label class="js-svc-row flex items-center gap-2 border rounded px-3 py-2 text-sm bg-white"
+                     data-service-key="<?= sanitize($k) ?>">
                 <input
                   type="checkbox"
                   class="js-svc"
@@ -349,8 +370,8 @@ include __DIR__ . '/views/partials/header.php';
                   data-price="<?= htmlspecialchars((string)$price, ENT_QUOTES, 'UTF-8') ?>"
                   data-minutes="<?= (int)$mins ?>"
                 >
-                <span class="font-medium"><?= sanitize($label) ?></span>
-                <span class="ml-auto text-slate-500">
+                <span class="js-svc-label font-medium"><?= sanitize($label) ?></span>
+                <span class="js-svc-details ml-auto text-slate-500">
                   R$ <?= number_format($price, 2, ',', '.') ?> · <?= (int)$mins ?>min
                 </span>
               </label>
@@ -373,6 +394,10 @@ include __DIR__ . '/views/partials/header.php';
 
 <script>
 (function(){
+  const servicesByBarber = <?= json_encode(
+    $servicesByBarber,
+    JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+  ) ?>;
   const modal = document.getElementById('apptModal');
   const apptInfo = document.getElementById('apptInfo');
   const apptDate = document.getElementById('apptDate');
@@ -410,12 +435,39 @@ include __DIR__ . '/views/partials/header.php';
     updateTotals();
   }
 
+  function applyBarberServices(barberId){
+    const catalog = servicesByBarber[String(barberId)] || {};
+
+    document.querySelectorAll('#apptModal .js-svc-row').forEach(row => {
+      const key = row.dataset.serviceKey || '';
+      const service = catalog[key];
+      const checkbox = row.querySelector('.js-svc');
+
+      if (!service) {
+        row.classList.add('hidden');
+        checkbox.checked = false;
+        checkbox.disabled = true;
+        return;
+      }
+
+      const price = Number(service.price || 0);
+      const minutes = Number.parseInt(service.duration_minutes || 30, 10);
+      row.classList.remove('hidden');
+      checkbox.disabled = false;
+      checkbox.dataset.price = String(price);
+      checkbox.dataset.minutes = String(minutes);
+      row.querySelector('.js-svc-label').textContent = service.label || key;
+      row.querySelector('.js-svc-details').textContent = `${formatBRL(price)} · ${minutes}min`;
+    });
+  }
+
   function openModal(btn){
     apptDate.value = btn.dataset.date;
     apptTime.value = btn.dataset.time;
     apptBarberId.value = btn.dataset.barberId;
     apptInfo.textContent = `${btn.dataset.date} às ${btn.dataset.time} — ${btn.dataset.barberName}`;
 
+    applyBarberServices(btn.dataset.barberId);
     resetServices();
 
     modal.classList.remove('hidden');

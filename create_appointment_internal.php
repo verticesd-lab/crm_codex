@@ -3,6 +3,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/agenda_helpers.php';
+require_once __DIR__ . '/barber_services_helper.php';
 
 require_login();
 
@@ -73,31 +74,18 @@ if ($date === '' || $timeHm === '' || $barberId <= 0 || $customerName === '' || 
 $timeDb = $timeHm . ':00';
 
 /**
- * Catálogo de serviços (prioriza banco; fallback no catálogo fixo)
+ * Catálogo de serviços com preço e duração do barbeiro selecionado.
  */
 $catalog = [];
-try {
-    $st = $pdo->prepare("
-        SELECT service_key, label, price, duration_minutes
-        FROM services
-        WHERE company_id = ? AND is_active = 1
-    ");
-    $st->execute([$companyId]);
+foreach (get_services_for_barber($pdo, $companyId, $barberId) as $service) {
+    $key = (string)($service['service_key'] ?? '');
+    if ($key === '') continue;
 
-    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $s) {
-        $key = (string)$s['service_key'];
-        $catalog[$key] = [
-            'label'    => (string)$s['label'],
-            'price'    => (float)$s['price'],
-            'duration' => (int)$s['duration_minutes'],
-        ];
-    }
-} catch (Throwable $e) {
-    // ignora e cai no fallback
-}
-
-if (!$catalog) {
-    $catalog = agenda_get_services_catalog();
+    $catalog[$key] = [
+        'label' => (string)($service['nome'] ?? $key),
+        'price' => (float)($service['preco'] ?? 0),
+        'duration' => (int)($service['duracao_min'] ?? 30),
+    ];
 }
 
 /**

@@ -3,6 +3,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/agenda_helpers.php';
+require_once __DIR__ . '/barber_services_helper.php';
 
 // ─── AJAX: autocomplete de clientes por nome ───────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'autocomplete_cliente') {
@@ -176,16 +177,7 @@ $showConfirmation = false;
  * ==============================
  * DADOS BASICOS DO FORMULARIO
  * ==============================
- *
- * ✅ IMPORTANTE:
- * Agora o catálogo de serviços vem do banco (services) via helper.
- * Se o helper antigo não aceitar params, cai no fallback.
  */
-try {
-    $servicesCatalog = agenda_get_services_catalog($pdo, $companyId, true);
-} catch (Throwable $e) {
-    $servicesCatalog = agenda_get_services_catalog();
-}
 
 // Barbeiros
 $allBarbers = agenda_get_barbers($pdo, $companyId, false);
@@ -198,6 +190,35 @@ foreach ($allBarbers as $barber) {
     $barbersById[(int)$barber['id']] = $barber;
 }
 
+$selectedBarberId = (int)($_POST['barbeiro'] ?? 0);
+
+// Catálogo global enquanto nenhum barbeiro foi escolhido.
+try {
+    $servicesCatalog = agenda_get_services_catalog($pdo, $companyId, true);
+} catch (Throwable $e) {
+    $servicesCatalog = agenda_get_services_catalog();
+}
+
+// Depois da escolha, preço, duração e disponibilidade são os do barbeiro.
+if (
+    $selectedBarberId > 0
+    && isset($barbersById[$selectedBarberId])
+    && (int)$barbersById[$selectedBarberId]['is_active'] === 1
+) {
+    $servicesCatalog = [];
+    foreach (get_services_for_barber($pdo, $companyId, $selectedBarberId) as $service) {
+        $key = (string)($service['service_key'] ?? '');
+        if ($key === '') continue;
+
+        $servicesCatalog[$key] = [
+            'label' => (string)($service['nome'] ?? $key),
+            'price' => (float)($service['preco'] ?? 0),
+            'duration' => (int)($service['duracao_min'] ?? 30),
+            'is_active' => (int)($service['ativo'] ?? 1),
+        ];
+    }
+}
+
 // Post fields
 $nome = trim($_POST['nome'] ?? '');
 $telefone = trim($_POST['telefone'] ?? '');
@@ -205,7 +226,6 @@ $instagram = trim($_POST['instagram'] ?? '');
 $dataPost = trim($_POST['data'] ?? $selectedDateStr);
 $horaPost = trim($_POST['hora'] ?? '');
 
-$selectedBarberId = (int)($_POST['barbeiro'] ?? 0);
 $selectedServices = agenda_normalize_services($_POST['servicos'] ?? [], $servicesCatalog);
 
 // Totais

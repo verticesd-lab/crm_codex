@@ -13,7 +13,7 @@ require_login();
 
 $pdo       = get_pdo();
 $cid       = current_company_id();
-$isAdmin   = !empty($_SESSION['is_admin']) || !empty($_SESSION['admin']);
+$isAdmin   = is_admin();
 $userId    = (int)($_SESSION['user_id'] ?? $_SESSION['id'] ?? 0);
 
 /* ── Migration automática ─────────────────────────────────── */

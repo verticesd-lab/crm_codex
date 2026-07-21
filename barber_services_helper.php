@@ -17,7 +17,7 @@
  * @param PDO $pdo
  * @param int $companyId
  * @param int $barberId   — 0 = retorna padrão global sem override
- * @return array  [ ['id','nome','preco','duracao_min','tem_override'], ... ]
+ * @return array  [ ['id','service_key','nome','preco','duracao_min',...], ... ]
  */
 function get_services_for_barber(PDO $pdo, int $companyId, int $barberId = 0): array
 {
@@ -26,6 +26,7 @@ function get_services_for_barber(PDO $pdo, int $companyId, int $barberId = 0): a
             $st = $pdo->prepare("
                 SELECT
                     s.id,
+                    s.service_key,
                     s.label                                             AS nome,
                     COALESCE(o.preco,       s.price)                   AS preco,
                     COALESCE(o.duracao_min, s.duration_minutes)        AS duracao_min,
@@ -50,6 +51,7 @@ function get_services_for_barber(PDO $pdo, int $companyId, int $barberId = 0): a
             $st = $pdo->prepare("
                 SELECT
                     id,
+                    service_key,
                     label              AS nome,
                     price              AS preco,
                     duration_minutes   AS duracao_min,
