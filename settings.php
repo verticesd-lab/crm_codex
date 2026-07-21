@@ -44,6 +44,7 @@ $ALL_MODULES = [
     ['agenda',               'Agenda',               'Calendário geral de compromissos.',                         'calendar.php',           '📅', 'agenda',    false],
     ['agenda_barbearia',     'Agenda Barbearia',     'Agendamentos específicos para barbearia.',                  'calendar_barbearia.php', '✂️', 'agenda',    false],
     ['servicos_barbearia',   'Serviços Barbearia',   'Catálogo de serviços da barbearia.',                        'services_admin.php',     '💈', 'agenda',    false],
+    ['barber_services',      'Serviços por Barbeiro','Preços, durações e disponibilidade por profissional.',       'barber_services.php',    '👤', 'agenda',    false],
     ['equipe',               'Equipe',               'Gestão de funcionários e permissões.',                      'staff.php',              '👤', 'config',    false],
     ['configuracoes',        'Configurações',        'Configurações da empresa e do sistema.',                    'settings.php',           '⚙️', 'config',    true ],
     ['ofertas',              'Ofertas',              'Flash sale com urgência, countdown e WhatsApp.',            'ofertas_admin.php',      '⚡', 'marketing', false],

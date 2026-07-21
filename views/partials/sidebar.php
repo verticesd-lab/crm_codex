@@ -29,6 +29,7 @@ $ALL_MENU = [
     ['agenda',               'Agenda',               $base . '/calendar.php',            false],
     ['agenda_barbearia',     'Agenda Barbearia',     $base . '/calendar_barbearia.php',  false],
     ['servicos_barbearia',   'Serviços Barbearia',   $base . '/services_admin.php',      false],
+    ['barber_services',      'Serviços por Barbeiro',$base . '/barber_services.php',      false],
     ['equipe',               'Equipe',               $base . '/staff.php',               false],
     ['tutoriais',            'Tutoriais',            $base . '/tutorials.php',           false],
     ['configuracoes',        'Configurações',        $base . '/settings.php',            false],
