@@ -77,18 +77,12 @@ function agenda_default_services_catalog(): array
 
 /**
  * =========================
- * Serviços (catálogo) - NOVO
+ * Serviços (catálogo) - ATUALIZADO
  * =========================
  * - Sem PDO/empresa => retorna catálogo padrão fixo (compat)
- * - Com ($pdo, $companyId) => lê do banco (services) e faz seed automático se vazio
- *
- * Retorno:
- * [
- *   'service_key' => ['label'=>..., 'price'=>..., 'duration'=>..., 'is_active'=>1],
- *   ...
- * ]
+ * - Com ($pdo, $companyId) => chama get_services_for_barber() para obter preços/durações personalizados
  */
-function agenda_get_services_catalog(PDO $pdo = null, int $companyId = 0, bool $onlyActive = true): array
+function agenda_get_services_catalog(PDO $pdo = null, int $companyId = 0, bool $onlyActive = true, int $barberId = 0): array
 {
     if (!$pdo || $companyId <= 0) {
         return agenda_default_services_catalog();
@@ -98,24 +92,16 @@ function agenda_get_services_catalog(PDO $pdo = null, int $companyId = 0, bool $
         // Seed se não houver nenhum serviço
         agenda_seed_default_services_if_empty($pdo, $companyId);
 
-        $sql = 'SELECT service_key, label, price, duration_minutes, is_active
-                FROM services
-                WHERE company_id = ?';
-
-        if ($onlyActive) {
-            $sql .= ' AND is_active = 1';
-        }
-
-        $sql .= ' ORDER BY id ASC';
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$companyId]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Substituição da query manual pela função que considera personalizações por barbeiro
+        $rows = get_services_for_barber($pdo, $companyId, $barberId);
 
         $catalog = [];
         foreach ($rows as $r) {
             $key = (string)($r['service_key'] ?? '');
             if ($key === '') continue;
+
+            // Se solicitado apenas ativos, filtramos aqui caso a get_services_for_barber não o faça
+            if ($onlyActive && !($r['is_active'] ?? 1)) continue;
 
             $catalog[$key] = [
                 'label' => (string)($r['label'] ?? $key),
