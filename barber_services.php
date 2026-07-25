@@ -26,6 +26,7 @@ try {
         preco           DECIMAL(10,2) NULL,
         duracao_min     INT NULL,
         ativo           TINYINT NOT NULL DEFAULT 1,
+        label_custom    VARCHAR(120) NULL,
         updated_at      DATETIME DEFAULT NOW() ON UPDATE NOW(),
         UNIQUE KEY uq_barber_svc (company_id, barber_id, service_id),
         INDEX idx_barber (company_id, barber_id)
@@ -60,20 +61,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$isAdmin && $barberId !== $myBarberId) {
         $msg = 'Acesso negado.'; $msgType = 'error';
     } elseif ($act === 'save_override') {
-        $preco      = $_POST['preco']      !== '' ? (float)str_replace(',','.',$_POST['preco'])      : null;
-        $duracao    = $_POST['duracao_min']!== '' ? (int)$_POST['duracao_min']                       : null;
-        $ativo      = isset($_POST['ativo']) ? 1 : 0;
+        $label_custom = trim($_POST['label_custom'] ?? '') ?: null;
+        $preco        = $_POST['preco']       !== '' ? (float)str_replace(',','.',$_POST['preco'])  : null;
+        $duracao      = $_POST['duracao_min'] !== '' ? (int)$_POST['duracao_min']                   : null;
+        $ativo        = isset($_POST['ativo']) ? 1 : 0;
 
         try {
             $pdo->prepare("INSERT INTO barber_service_overrides
-                (company_id, barber_id, service_id, preco, duracao_min, ativo)
-                VALUES (?,?,?,?,?,?)
+                (company_id, barber_id, service_id, label_custom, preco, duracao_min, ativo)
+                VALUES (?,?,?,?,?,?,?)
                 ON DUPLICATE KEY UPDATE
-                    preco       = VALUES(preco),
-                    duracao_min = VALUES(duracao_min),
-                    ativo       = VALUES(ativo),
-                    updated_at  = NOW()")
-                ->execute([$cid, $barberId, $svcId, $preco, $duracao, $ativo]);
+                    label_custom = VALUES(label_custom),
+                    preco        = VALUES(preco),
+                    duracao_min  = VALUES(duracao_min),
+                    ativo        = VALUES(ativo),
+                    updated_at   = NOW()")
+                ->execute([$cid, $barberId, $svcId, $label_custom, $preco, $duracao, $ativo]);
             $msg = '✅ Serviço atualizado com sucesso!';
         } catch (Throwable $e) {
             $msg = 'Erro ao salvar: '.$e->getMessage(); $msgType = 'error';
@@ -117,6 +120,7 @@ if ($selBarberId) {
                 s.duration_minutes     AS duracao_global,
                 o.preco                AS preco_override,
                 o.duracao_min          AS duracao_override,
+                o.label_custom         AS label_custom,
                 o.ativo                AS ativo_override,
                 (o.id IS NOT NULL)     AS tem_override
             FROM services s
@@ -291,7 +295,14 @@ include __DIR__ . '/views/partials/header.php';
         ?>
         <tr class="<?= !$ativoOvr ? 'inativo' : '' ?>" id="row-<?= $rowId ?>">
             <td>
-                <div style="font-weight:700;color:#0f172a;"><?= sanitize($svc['nome']) ?></div>
+                <div style="font-weight:700;color:#0f172a;">
+                    <?= sanitize($svc['label_custom'] ?: $svc['nome']) ?>
+                </div>
+                <?php if ($svc['label_custom']): ?>
+                <div style="font-size:.68rem;color:#94a3b8;text-decoration:line-through;">
+                    Global: <?= sanitize($svc['nome']) ?>
+                </div>
+                <?php endif; ?>
                 <?php if ($temOverride): ?>
                     <span class="bs-badge custom">✦ Personalizado</span>
                 <?php else: ?>
@@ -347,7 +358,14 @@ include __DIR__ . '/views/partials/header.php';
                         <input type="hidden" name="action"     value="save_override">
                         <input type="hidden" name="barber_id"  value="<?= $selBarberId ?>">
                         <input type="hidden" name="service_id" value="<?= $svc['id'] ?>">
-                        <div class="bs-editor-grid">
+                        <div class="bs-editor-grid" style="grid-template-columns:1fr 1fr 1fr 1fr auto;">
+                            <div>
+                                <label>Nome personalizado</label>
+                                <input type="text" name="label_custom"
+                                    value="<?= sanitize($svc['label_custom'] ?? '') ?>"
+                                    placeholder="<?= sanitize($svc['nome']) ?> (padrão)">
+                                <p style="font-size:.65rem;color:#94a3b8;margin:.2rem 0 0;">Vazio = usa o nome global</p>
+                            </div>
                             <div>
                                 <label>Preço personalizado (R$)</label>
                                 <input type="number" name="preco" step="0.01" min="0"

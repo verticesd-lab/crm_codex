@@ -27,9 +27,9 @@ function get_services_for_barber(PDO $pdo, int $companyId, int $barberId = 0): a
                 SELECT
                     s.id,
                     s.service_key,
-                    s.label                                             AS nome,
-                    COALESCE(o.preco,       s.price)                   AS preco,
-                    COALESCE(o.duracao_min, s.duration_minutes)        AS duracao_min,
+                    COALESCE(o.label_custom, s.label)                  AS nome,
+                    COALESCE(o.preco,        s.price)                  AS preco,
+                    COALESCE(o.duracao_min,  s.duration_minutes)       AS duracao_min,
                     s.price                                             AS preco_global,
                     s.duration_minutes                                  AS duracao_global,
                     (o.id IS NOT NULL AND o.preco       IS NOT NULL)   AS tem_preco_custom,
