@@ -31,7 +31,18 @@ try {
         UNIQUE KEY uq_barber_svc (company_id, barber_id, service_id),
         INDEX idx_barber (company_id, barber_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-} catch (Throwable $e) {}
+
+    $hasLabelCustom = $pdo->query(
+        "SHOW COLUMNS FROM barber_service_overrides LIKE 'label_custom'"
+    )->fetchColumn();
+
+    if (!$hasLabelCustom) {
+        $pdo->exec("ALTER TABLE barber_service_overrides
+            ADD COLUMN label_custom VARCHAR(120) NULL AFTER ativo");
+    }
+} catch (Throwable $e) {
+    error_log('Erro ao atualizar barber_service_overrides: '.$e->getMessage());
+}
 
 /* ── Descobre barber_id do usuário logado (se não for admin) ─ */
 $myBarberId = 0;
