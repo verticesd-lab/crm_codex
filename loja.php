@@ -140,7 +140,7 @@ $offersUrl = BASE_URL . '/ofertas.php?empresa=' . urlencode($slug);
 function store_public_media_url(?string $path): string {
     $url = image_url($path);
 
-    if ($url === '' || preg_match('~^https?://~i', $url)) {
+    if ($url === '') {
         return $url;
     }
 
@@ -159,6 +159,12 @@ function store_public_media_url(?string $path): string {
     };
 
     $originalPath = trim((string)$path);
+
+    // Apenas URLs originalmente absolutas são externas e permanecem intactas.
+    if (preg_match('~^https?://~i', $originalPath)) {
+        return $url;
+    }
+
     $normalizedUrl = $normalizeUploadPath($originalPath);
 
     // Assets públicos não são mídias de upload e nunca usam MEDIA_BASE_URL.
@@ -166,7 +172,16 @@ function store_public_media_url(?string $path): string {
         return '/assets/' . $assetMatch[1];
     }
 
-    $normalizedUrl ??= $normalizeUploadPath($url);
+    if ($normalizedUrl === null) {
+        $resolvedPath = $url;
+        if (preg_match('~^https?://~i', $url)) {
+            $resolvedParts = parse_url($url);
+            $resolvedPath = is_array($resolvedParts) ? (string)($resolvedParts['path'] ?? '') : '';
+        }
+
+        $normalizedUrl = $normalizeUploadPath($resolvedPath);
+    }
+
     if ($normalizedUrl === null) {
         return $url;
     }
