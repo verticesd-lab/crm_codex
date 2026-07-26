@@ -139,15 +139,46 @@ $offersUrl = BASE_URL . '/ofertas.php?empresa=' . urlencode($slug);
  */
 function store_public_media_url(?string $path): string {
     $url = image_url($path);
-    $mediaBaseUrl = trim((string)(getenv('MEDIA_BASE_URL') ?: ''));
 
-    if ($url === '' || $mediaBaseUrl === '' || !str_starts_with($url, '/uploads/')) {
+    if ($url === '' || preg_match('~^https?://~i', $url)) {
         return $url;
+    }
+
+    $normalizeUploadPath = static function (string $candidate): ?string {
+        $candidate = trim($candidate);
+        if (!preg_match('~^(?:\./|/)?uploads/(.+)$~', $candidate, $matches)) {
+            return null;
+        }
+
+        $relativePath = $matches[1];
+        if ($relativePath === '' || str_contains($relativePath, '\\') || preg_match('~(?:^|/)\.\.(?:/|$)~', $relativePath)) {
+            return null;
+        }
+
+        return '/uploads/' . $relativePath;
+    };
+
+    $originalPath = trim((string)$path);
+    $normalizedUrl = $normalizeUploadPath($originalPath);
+
+    // Assets públicos não são mídias de upload e nunca usam MEDIA_BASE_URL.
+    if ($normalizedUrl === null && preg_match('~^(?:\./|/)?assets/(.+)$~', $originalPath, $assetMatch)) {
+        return '/assets/' . $assetMatch[1];
+    }
+
+    $normalizedUrl ??= $normalizeUploadPath($url);
+    if ($normalizedUrl === null) {
+        return $url;
+    }
+
+    $mediaBaseUrl = trim((string)(getenv('MEDIA_BASE_URL') ?: ''));
+    if ($mediaBaseUrl === '') {
+        return $normalizedUrl;
     }
 
     $baseParts = parse_url($mediaBaseUrl);
     if (!is_array($baseParts)) {
-        return $url;
+        return $normalizedUrl;
     }
 
     $scheme = strtolower((string)($baseParts['scheme'] ?? ''));
@@ -159,10 +190,10 @@ function store_public_media_url(?string $path): string {
         || isset($baseParts['query'])
         || isset($baseParts['fragment'])
     ) {
-        return $url;
+        return $normalizedUrl;
     }
 
-    return rtrim($mediaBaseUrl, '/') . $url;
+    return rtrim($mediaBaseUrl, '/') . $normalizedUrl;
 }
 
 /**
