@@ -134,6 +134,38 @@ $msg   = 'Olá, vim da loja online!';
 $offersUrl = BASE_URL . '/ofertas.php?empresa=' . urlencode($slug);
 
 /**
+ * Resolve mídias públicas da loja sem alterar assets ou rotas da aplicação.
+ * MEDIA_BASE_URL é usada apenas para caminhos normalizados em /uploads/.
+ */
+function store_public_media_url(?string $path): string {
+    $url = image_url($path);
+    $mediaBaseUrl = trim((string)(getenv('MEDIA_BASE_URL') ?: ''));
+
+    if ($url === '' || $mediaBaseUrl === '' || !str_starts_with($url, '/uploads/')) {
+        return $url;
+    }
+
+    $baseParts = parse_url($mediaBaseUrl);
+    if (!is_array($baseParts)) {
+        return $url;
+    }
+
+    $scheme = strtolower((string)($baseParts['scheme'] ?? ''));
+    if (
+        !in_array($scheme, ['http', 'https'], true)
+        || empty($baseParts['host'])
+        || isset($baseParts['user'])
+        || isset($baseParts['pass'])
+        || isset($baseParts['query'])
+        || isset($baseParts['fragment'])
+    ) {
+        return $url;
+    }
+
+    return rtrim($mediaBaseUrl, '/') . $url;
+}
+
+/**
  * Helper: renderiza os chips de tamanho a partir da string "P,M,G,GG"
  * Retorna HTML pronto ou string vazia se não houver tamanhos.
  */
@@ -170,7 +202,7 @@ function render_sizes(string $sizesStr): string {
         <div class="store-container store-header-main">
             <a class="store-brand" href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>" aria-label="Página inicial de <?= sanitize($company['nome_fantasia']) ?>">
                 <?php if (!empty($company['logo'])): ?>
-                    <img src="<?= sanitize(image_url($company['logo'])) ?>" class="store-brand-logo" alt="Logo de <?= sanitize($company['nome_fantasia']) ?>">
+                    <img src="<?= sanitize(store_public_media_url($company['logo'])) ?>" class="store-brand-logo" alt="Logo de <?= sanitize($company['nome_fantasia']) ?>">
                 <?php else: ?>
                     <span class="store-brand-fallback" aria-hidden="true"><?= strtoupper(substr($company['nome_fantasia'], 0, 2)) ?></span>
                 <?php endif; ?>
@@ -246,7 +278,7 @@ function render_sizes(string $sizesStr): string {
                                 <div class="store-slide-media">
                                     <span class="store-slide-badge"><?= sanitize($item['categoria']) ?></span>
                                     <?php if (!empty($item['imagem'])): ?>
-                                        <img src="<?= sanitize(image_url($item['imagem'])) ?>" alt="<?= sanitize($item['nome']) ?>" <?= $idx === 0 ? '' : 'loading="lazy"' ?>>
+                                        <img src="<?= sanitize(store_public_media_url($item['imagem'])) ?>" alt="<?= sanitize($item['nome']) ?>" <?= $idx === 0 ? '' : 'loading="lazy"' ?>>
                                     <?php else: ?>
                                         <div class="store-slide-placeholder" aria-hidden="true">◇</div>
                                     <?php endif; ?>
@@ -363,7 +395,7 @@ function render_sizes(string $sizesStr): string {
                                         <div class="product-card-media">
                                             <span class="product-card-status">Destaque</span>
                                             <?php if (!empty($product['imagem'])): ?>
-                                                <img src="<?= sanitize(image_url($product['imagem'])) ?>" alt="<?= sanitize($product['nome']) ?>" loading="lazy">
+                                                <img src="<?= sanitize(store_public_media_url($product['imagem'])) ?>" alt="<?= sanitize($product['nome']) ?>" loading="lazy">
                                             <?php else: ?>
                                                 <span class="product-card-placeholder">Sem imagem</span>
                                             <?php endif; ?>
@@ -427,7 +459,7 @@ function render_sizes(string $sizesStr): string {
                                         <div class="product-card-media">
                                             <span class="product-card-status">Disponível</span>
                                             <?php if (!empty($product['imagem'])): ?>
-                                                <img src="<?= sanitize(image_url($product['imagem'])) ?>" alt="<?= sanitize($product['nome']) ?>" loading="lazy">
+                                                <img src="<?= sanitize(store_public_media_url($product['imagem'])) ?>" alt="<?= sanitize($product['nome']) ?>" loading="lazy">
                                             <?php else: ?>
                                                 <span class="product-card-placeholder">Sem imagem</span>
                                             <?php endif; ?>
