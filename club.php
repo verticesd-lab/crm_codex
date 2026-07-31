@@ -208,6 +208,9 @@ include __DIR__ . '/views/partials/header.php';
     <h1 style="font-size:1.25rem;font-weight:800;color:#0f172a;">⚡ <?= sanitize($nomeclube) ?> — Painel</h1>
     <div class="act-bar" style="margin-bottom:0;">
         <a href="club_cashier.php" class="act-btn primary">🧾 Abrir Caixa</a>
+        <?php if (is_admin()): ?>
+        <a href="club_transactions.php" class="act-btn slate">🔎 Conferir NEO</a>
+        <?php endif; ?>
         <a href="club_rules.php"   class="act-btn amber">⚙️ Regras</a>
         <a href="clube.php"        class="act-btn slate" target="_blank">👁 Página do Cliente ↗</a>
     </div>
