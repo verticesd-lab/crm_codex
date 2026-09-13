@@ -81,7 +81,11 @@ try {
             die(json_encode(["ok" => false, "reason" => "json_invalido"]));
         }
 
-        $vendaIdIdentificador = "DB_" . ($json['venda_id'] ?? time());
+        $vendaIdNeo = trim((string)($json['venda_id'] ?? ''));
+        if ($vendaIdNeo === '') {
+            die(json_encode(["ok" => false, "reason" => "venda_sem_id"]));
+        }
+        $vendaIdIdentificador = "DB_" . $vendaIdNeo;
         $valorTotal           = (float)($json['valor'] ?? 0);
         $nomeCliente          = $json['cliente'] ?? 'CONSUMIDOR';
         $telefone             = extrair_telefone_limpo($json['telefone'] ?? $json['whatsapp'] ?? '');
@@ -91,6 +95,13 @@ try {
     // ============================================================
     // 2. PROCESSAMENTO DO CASHBACK
     // ============================================================
+
+    if ($vendaIdIdentificador === '') {
+        die(json_encode(["ok" => false, "reason" => "venda_sem_id"]));
+    }
+    if ($valorTotal <= 0) {
+        die(json_encode(["ok" => false, "reason" => "valor_venda_invalido", "valor" => $valorTotal]));
+    }
 
     // A. Idempotência — evita duplicar cashback da mesma venda
     $check = $pdo->prepare("SELECT id FROM club_transactions WHERE referencia_id = ? AND company_id = ?");
@@ -199,11 +210,12 @@ try {
     }
 
     // G. Registra transação
+    $descricaoCashback = "Cashback automatico NEO - venda de R$ " . number_format($valorTotal, 2, ',', '.');
     $pdo->prepare("
         INSERT INTO club_transactions
             (company_id, client_id, wallet_id, tipo, valor, descricao, referencia_tipo, referencia_id, expira_em, created_at)
         VALUES (?, ?, ?, 'credito', ?, ?, 'venda', ?, ?, NOW())
-    ")->execute([$companyId, $client['id'], $walletId, $cashback, "Cashback automatico NEO", $vendaIdIdentificador, $validade]);
+    ")->execute([$companyId, $client['id'], $walletId, $cashback, $descricaoCashback, $vendaIdIdentificador, $validade]);
 
     $pdo->commit();
 
