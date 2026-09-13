@@ -527,8 +527,12 @@ if ($selectedBarberId > 0 && $slotsNeeded > 0) {
     }
 }
 
-// url base da pagina
-$selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
+// GETs publicos usam a rota amigavel; o POST legado permanece estavel.
+$friendlyAgendaRoute = uses_friendly_public_route($slug);
+$agendaUrl = public_route_url('agenda', $slug);
+$agendaPostUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
+$agendaAutocompleteUrl = public_route_url('agenda', $slug, ['action' => 'autocomplete_cliente']);
+$storeUrl = public_route_url('loja', $slug);
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -583,7 +587,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
         <div class="text-right space-y-1">
             <p class="text-xs text-slate-400">Loja</p>
             <p class="font-semibold"><?= sanitize($company['nome_fantasia']) ?></p>
-            <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+            <a href="<?= sanitize($storeUrl) ?>"
                class="inline-flex text-sm font-semibold text-emerald-300 hover:text-emerald-200 underline">
                 Ver produtos da loja
             </a>
@@ -613,8 +617,10 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
                     <h2 class="text-lg font-semibold">Escolha o dia</h2>
                     <p class="text-xs text-slate-300">Selecione a data para ver os horarios disponiveis.</p>
                 </div>
-                <form action="<?= sanitize($selfUrl) ?>" method="get" class="flex items-center gap-2">
+                <form action="<?= sanitize($agendaUrl) ?>" method="get" class="flex items-center gap-2">
+                    <?php if (!$friendlyAgendaRoute): ?>
                     <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
+                    <?php endif; ?>
                     <input
                         type="date"
                         name="data"
@@ -666,7 +672,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
 
                 <p class="text-[11px] text-slate-400">Para agendar, escolha o barbeiro e os servicos ao lado.</p>
 
-                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+                <a href="<?= sanitize($storeUrl) ?>"
                    class="inline-flex mt-2 items-center justify-center px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-xs font-semibold text-white">
                     👉 Ver produtos da For Men Store
                 </a>
@@ -678,7 +684,7 @@ $selfUrl = BASE_URL . '/agenda.php?empresa=' . urlencode($slug);
             <h2 class="text-lg font-semibold">Dados para agendamento</h2>
             <p class="text-sm text-slate-300">Escolha o barbeiro, selecione servicos e finalize seu horario.</p>
 
-            <form id="bookingForm" method="post" action="<?= sanitize($selfUrl) ?>" class="space-y-4">
+            <form id="bookingForm" method="post" action="<?= sanitize($agendaPostUrl) ?>" class="space-y-4">
                 <input type="hidden" name="data" value="<?= sanitize($selectedDateStr) ?>">
                 <input type="hidden" name="action" id="actionField" value="preview">
 
@@ -968,9 +974,6 @@ document.addEventListener('DOMContentLoaded', function () {
         const suggBox   = document.getElementById('clienteSuggestions');
         if (!nomeInput || !suggBox) return;
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const empresa   = urlParams.get('empresa') || '';
-
         let debounceTimer = null;
         let currentFocus  = -1;
 
@@ -1025,10 +1028,10 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         async function fetchSugg(q) {
-            if (!empresa || q.length < 2) { closeSugg(); return; }
+            if (q.length < 2) { closeSugg(); return; }
             try {
-                const url = 'agenda.php?empresa=' + encodeURIComponent(empresa)
-                          + '&action=autocomplete_cliente&q=' + encodeURIComponent(q);
+                const url = <?= json_encode($agendaAutocompleteUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>
+                          + '&q=' + encodeURIComponent(q);
                 const res = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
                 if (!res.ok) return;
                 const data = await res.json();

@@ -131,7 +131,7 @@ if (!isset($_SESSION[$cartKey])) {
 
 <div class="max-w-5xl mx-auto px-4 py-8 space-y-8">
     <header class="flex items-center justify-between">
-        <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>" class="text-sm text-slate-200/80 hover:underline">
+        <a href="<?= sanitize(public_route_url('loja', $slug)) ?>" class="text-sm text-slate-200/80 hover:underline">
             ← Voltar para a loja
         </a>
 
@@ -265,8 +265,10 @@ if (!isset($_SESSION[$cartKey])) {
                 <?= nl2br(sanitize($product['descricao'])) ?>
             </div>
 
-            <form method="get" action="<?= BASE_URL ?>/loja.php" class="space-y-2">
+            <form method="get" action="<?= sanitize(public_route_url('loja', $slug)) ?>" class="space-y-2">
+                <?php if (!uses_friendly_public_route($slug)): ?>
                 <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
+                <?php endif; ?>
                 <input type="hidden" name="add" value="<?= (int)$product['id'] ?>">
                 <button type="submit"
                         class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-3 rounded-xl hover:bg-brand-700 font-semibold">

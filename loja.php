@@ -29,6 +29,8 @@ if (!$company) {
 }
 
 $companyId = (int)$company['id'];
+$friendlyStoreRoute = uses_friendly_public_route($slug);
+$storeUrl = public_route_url('loja', $slug);
 
 /**
  * =====================================================
@@ -117,8 +119,7 @@ if (isset($_GET['add'])) {
     $productId = (int)$_GET['add'];
     $_SESSION[$cartKey][$productId] = ($_SESSION[$cartKey][$productId] ?? 0) + 1;
 
-    $backUrl = BASE_URL . '/loja.php?' . http_build_query([
-        'empresa'   => $slug,
+    $backUrl = public_route_url('loja', $slug, [
         'q'         => $search,
         'categoria' => $categoria,
         'page'      => $page,
@@ -246,7 +247,7 @@ function render_sizes(string $sizesStr): string {
 
     <header class="store-header">
         <div class="store-container store-header-main">
-            <a class="store-brand" href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>" aria-label="Página inicial de <?= sanitize($company['nome_fantasia']) ?>">
+            <a class="store-brand" href="<?= sanitize($storeUrl) ?>" aria-label="Página inicial de <?= sanitize($company['nome_fantasia']) ?>">
                 <?php if (!empty($company['logo'])): ?>
                     <img src="<?= sanitize(store_public_media_url($company['logo'])) ?>" class="store-brand-logo" alt="Logo de <?= sanitize($company['nome_fantasia']) ?>">
                 <?php else: ?>
@@ -387,9 +388,9 @@ function render_sizes(string $sizesStr): string {
                         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41 11 3.83V3H4v7h.83l9.58 9.59a2 2 0 0 0 2.82 0l3.36-3.36a2 2 0 0 0 0-2.82Z"/></svg>
                         Ofertas
                     </a>
-                    <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>" class="store-category-chip <?= $categoria === '' ? 'is-active' : '' ?>">Todas</a>
+                    <a href="<?= sanitize($storeUrl) ?>" class="store-category-chip <?= $categoria === '' ? 'is-active' : '' ?>">Todas</a>
                     <?php foreach ($categories as $cat): ?>
-                        <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>&categoria=<?= urlencode($cat) ?>" class="store-category-chip <?= $categoria === $cat ? 'is-active' : '' ?>"><?= sanitize($cat) ?></a>
+                        <a href="<?= sanitize(public_route_url('loja', $slug, ['categoria' => $cat])) ?>" class="store-category-chip <?= $categoria === $cat ? 'is-active' : '' ?>"><?= sanitize($cat) ?></a>
                     <?php endforeach; ?>
                 </div>
             </section>
@@ -398,8 +399,10 @@ function render_sizes(string $sizesStr): string {
                 <aside class="store-filter-panel" aria-labelledby="filter-title">
                     <h2 id="filter-title">Encontre seu produto</h2>
                     <p>Busque pelo nome ou refine pela categoria.</p>
-                    <form class="store-filter-form">
+                    <form action="<?= sanitize($storeUrl) ?>" class="store-filter-form">
+                        <?php if (!$friendlyStoreRoute): ?>
                         <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
+                        <?php endif; ?>
                         <input type="hidden" name="page" value="1">
                         <div class="store-field">
                             <label for="store-search">Produto</label>
@@ -419,7 +422,7 @@ function render_sizes(string $sizesStr): string {
                         <button class="store-filter-submit" type="submit">Aplicar filtros</button>
                     </form>
                     <?php if ($search !== '' || $categoria !== ''): ?>
-                        <a class="store-filter-reset" href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>">Limpar filtros</a>
+                        <a class="store-filter-reset" href="<?= sanitize($storeUrl) ?>">Limpar filtros</a>
                     <?php endif; ?>
                     <div class="store-filter-info"><?= (int)$totalProducts ?> produto<?= $totalProducts === 1 ? '' : 's' ?> encontrado<?= $totalProducts === 1 ? '' : 's' ?>. Finalização diretamente pelo WhatsApp.</div>
                 </aside>
@@ -465,14 +468,13 @@ function render_sizes(string $sizesStr): string {
                                             </div>
                                         </div>
                                     </a>
-                                    <a href="<?= BASE_URL ?>/loja.php?<?= http_build_query([
-                                        'empresa'   => $slug,
+                                    <a href="<?= sanitize(public_route_url('loja', $slug, [
                                         'q'         => $search,
                                         'categoria' => $categoria,
                                         'page'      => $page,
                                         'per_page'  => $perPage,
                                         'add'       => (int)$product['id']
-                                    ]) ?>" class="product-card-cta">
+                                    ])) ?>" class="product-card-cta">
                                         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                                         Adicionar ao carrinho
                                     </a>
@@ -529,14 +531,13 @@ function render_sizes(string $sizesStr): string {
                                             </div>
                                         </div>
                                     </a>
-                                    <a href="<?= BASE_URL ?>/loja.php?<?= http_build_query([
-                                        'empresa'   => $slug,
+                                    <a href="<?= sanitize(public_route_url('loja', $slug, [
                                         'q'         => $search,
                                         'categoria' => $categoria,
                                         'page'      => $page,
                                         'per_page'  => $perPage,
                                         'add'       => (int)$product['id']
-                                    ]) ?>" class="product-card-cta">
+                                    ])) ?>" class="product-card-cta">
                                         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                                         Adicionar ao carrinho
                                     </a>
@@ -550,13 +551,12 @@ function render_sizes(string $sizesStr): string {
 
                         <?php
                         $queryBase = [
-                            'empresa'   => $slug,
                             'q'         => $search,
                             'categoria' => $categoria,
                             'per_page'  => $perPage
                         ];
-                        $makeUrl = function ($p) use ($queryBase) {
-                            return BASE_URL . '/loja.php?' . http_build_query(array_merge($queryBase, ['page' => $p]));
+                        $makeUrl = function ($p) use ($queryBase, $slug) {
+                            return public_route_url('loja', $slug, array_merge($queryBase, ['page' => $p]));
                         };
                         ?>
 

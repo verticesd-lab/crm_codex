@@ -170,7 +170,7 @@ if (isset($_GET['add'])) {
         <p class="text-5xl">🏁</p>
         <h1 class="text-3xl font-bold">Esta oferta foi encerrada</h1>
         <p class="text-slate-400">Fique de olho nas próximas promoções.</p>
-        <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+        <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
            class="inline-block mt-4 px-6 py-2.5 rounded-full bg-brand-600 hover:bg-brand-700 font-semibold">
             Ver catálogo completo →
         </a>
@@ -213,7 +213,7 @@ if (isset($_GET['add'])) {
                    class="inline-flex items-center gap-2 bg-emerald-500 text-slate-900 px-4 py-2 rounded-full shadow-lg shadow-emerald-500/30 hover:bg-emerald-400 font-semibold text-sm">
                     Carrinho (<?= (int)array_sum($_SESSION[$cartKey]) ?>)
                 </a>
-                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+                <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
                    class="text-sm text-slate-400 hover:text-white border border-white/10 hover:border-white/30 px-4 py-2 rounded-full">
                     ← Catálogo completo
                 </a>
@@ -377,7 +377,7 @@ if (isset($_GET['add'])) {
                     $catEsc     = htmlspecialchars($p['categoria'] ?? '', ENT_QUOTES);
                     $waMsg      = urlencode('Olá! Tenho interesse no ' . $p['nome'] . ' por ' . format_currency($p['preco_oferta']) . ' da ' . $flashTitle . '. Ainda disponível?');
                     $productImage = !empty($p['imagem']) ? image_url($p['imagem']) : '';
-                    $cartUrl = BASE_URL . '/loja.php?' . http_build_query(['empresa'=>$slug,'add'=>(int)$p['id']]);
+                    $cartUrl = public_route_url('loja', $slug, ['add' => (int)$p['id']]);
                     $stockText = '';
                     if ($estq !== null) {
                         $stockText = $estq <= 5 ? "Ultimas $estq unidades!" : ($estq <= 15 ? "Restam $estq unidades" : "$estq disponiveis");
@@ -482,7 +482,7 @@ if (isset($_GET['add'])) {
         <div class="bg-white/5 border border-white/10 rounded-2xl p-5 text-center text-sm text-slate-400 space-y-1">
             <p>🚚 Entrega disponível · 📲 Pagamento via Pix, cartão ou dinheiro</p>
             <p class="text-xs pt-1">
-                <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>" class="text-brand-500 hover:underline">
+                <a href="<?= sanitize(public_route_url('loja', $slug)) ?>" class="text-brand-500 hover:underline">
                     ← Ver catálogo completo
                 </a>
             </p>

@@ -211,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['cart_action']) && !em
         <div class="text-right">
             <p class="text-xs text-slate-400">Loja</p>
             <p class="font-semibold"><?= sanitize($company['nome_fantasia']) ?></p>
-            <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+            <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
                class="inline-flex text-sm text-emerald-300 hover:text-emerald-200 underline mt-1">
                 ← Voltar à loja
             </a>
@@ -230,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['cart_action']) && !em
             <p class="text-sm text-slate-300">
                 Adicione produtos na loja para fazer o pedido pelo WhatsApp.
             </p>
-            <a href="<?= BASE_URL ?>/loja.php?empresa=<?= urlencode($slug) ?>"
+            <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
                class="inline-flex items-center justify-center px-5 py-2 rounded-full bg-brand-600 hover:bg-brand-700 text-sm font-semibold">
                 Voltar para a loja
             </a>

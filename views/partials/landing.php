@@ -168,7 +168,7 @@ $barberWhatsAppLink = lp_whatsapp_link($whatsapp_number, 'Ola! Quero agendar na 
 $catalogUrl = $catalogWhatsAppLink;
 $catalogUsesStore = false;
 if ($company_slug !== '') {
-    $catalogUrl = lp_public_url('loja.php') . '?empresa=' . rawurlencode($company_slug);
+    $catalogUrl = public_route_url('loja', $company_slug);
     $catalogUsesStore = true;
 }
 
