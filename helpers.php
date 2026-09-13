@@ -353,6 +353,108 @@ function redirect(string $path): void {
 }
 
 /**
+ * Le uma variavel de ambiente tambem quando o runtime a expoe somente em
+ * $_ENV/$_SERVER (comum em proxies e containers PHP).
+ */
+function public_env(string $key): string {
+    $value = getenv($key);
+    if ($value === false || $value === null) {
+        $value = $_ENV[$key] ?? ($_SERVER[$key] ?? '');
+    }
+
+    return trim((string)$value);
+}
+
+function public_company_slug(): string {
+    return public_env('PUBLIC_COMPANY_SLUG');
+}
+
+function public_request_hostname(string $value): string {
+    $value = trim(explode(',', $value)[0]);
+    if ($value === '') return '';
+
+    if (!str_contains($value, '://')) {
+        $value = 'http://' . $value;
+    }
+
+    return strtolower(rtrim((string)(parse_url($value, PHP_URL_HOST) ?: ''), '.'));
+}
+
+function public_host_authority(string $value): string {
+    $value = trim(explode(',', $value)[0]);
+    if ($value === '') return '';
+
+    if (!str_contains($value, '://')) {
+        $value = 'http://' . $value;
+    }
+
+    $host = (string)(parse_url($value, PHP_URL_HOST) ?: '');
+    if ($host === '') return '';
+
+    $port = parse_url($value, PHP_URL_PORT);
+    return $host . ($port !== null ? ':' . $port : '');
+}
+
+/**
+ * Mantem o host atual em previews. Quando os tres hosts estao configurados,
+ * links abertos a partir do painel/legado apontam para o dominio publico.
+ */
+function public_base_url(): string {
+    $publicHostValue = public_env('PUBLIC_HOST');
+    $publicHost = public_request_hostname($publicHostValue);
+    $adminHost = public_request_hostname(public_env('ADMIN_HOST'));
+    $legacyHost = public_request_hostname(public_env('LEGACY_HOST'));
+    $requestHost = public_request_hostname((string)($_SERVER['HTTP_X_FORWARDED_HOST'] ?? $_SERVER['HTTP_HOST'] ?? ''));
+
+    if (
+        $publicHost !== ''
+        && $adminHost !== ''
+        && $legacyHost !== ''
+        && in_array($requestHost, [$adminHost, $legacyHost], true)
+    ) {
+        $publicAuthority = public_host_authority($publicHostValue);
+        if ($publicAuthority !== '') {
+            return crm_request_scheme() . '://' . $publicAuthority;
+        }
+    }
+
+    return rtrim((string)BASE_URL, '/');
+}
+
+function uses_friendly_public_route(?string $companySlug): bool {
+    $configuredSlug = public_company_slug();
+    return $configuredSlug !== ''
+        && $companySlug !== null
+        && hash_equals($configuredSlug, trim($companySlug));
+}
+
+/**
+ * Gera somente as rotas amigaveis explicitamente suportadas pelo router.
+ * Para outra empresa (ou sem configuracao), conserva a URL multiempresa.
+ */
+function public_route_url(string $route, ?string $companySlug = null, array $query = []): string {
+    $routes = [
+        'landing' => ['friendly' => '/', 'legacy' => '/landing.php'],
+        'loja' => ['friendly' => '/loja', 'legacy' => '/loja.php'],
+        'agenda' => ['friendly' => '/agenda', 'legacy' => '/agenda.php'],
+    ];
+
+    if (!isset($routes[$route])) {
+        throw new InvalidArgumentException('Rota publica desconhecida.');
+    }
+
+    $friendly = uses_friendly_public_route($companySlug);
+    $path = $routes[$route][$friendly ? 'friendly' : 'legacy'];
+
+    if (!$friendly && $companySlug !== null && trim($companySlug) !== '') {
+        $query = ['empresa' => trim($companySlug)] + $query;
+    }
+
+    $queryString = http_build_query($query);
+    return public_base_url() . $path . ($queryString !== '' ? '?' . $queryString : '');
+}
+
+/**
  * ========= IMAGENS / UPLOADS =========
  * Monta URL pública de imagem a partir de um caminho salvo no banco.
  */

@@ -5,6 +5,10 @@ $theme        = current_theme();
 $guestCompany = $GLOBALS['__GUEST_COMPANY__'] ?? null;
 
 $companyName = $_SESSION['company_name'] ?? ($guestCompany['nome_fantasia'] ?? APP_NAME);
+$publicLinkCompanySlug = (string)($_SESSION['company_slug'] ?? '');
+$landingPublicUrl = public_route_url('landing', $publicLinkCompanySlug);
+$agendaPublicUrl = public_route_url('agenda', $publicLinkCompanySlug);
+$storePublicUrl = public_route_url('loja', $publicLinkCompanySlug);
 
 // favicon: tenta sessão/empresa; fallback pro logo atual
 $favicon = $_SESSION['company_favicon'] ?? ($guestCompany['favicon'] ?? ($guestCompany['logo'] ?? ''));
@@ -104,14 +108,14 @@ $faviconUrl = !empty($favicon) ? normalize_asset_url($favicon) : '';
                         &#128260; Reativar
                     </a>
 
-                    <a href="<?= BASE_URL ?>/landing.php" target="_blank" rel="noopener"
+                    <a href="<?= sanitize($landingPublicUrl) ?>" target="_blank" rel="noopener"
                        style="display:inline-flex;align-items:center;gap:.35rem;padding:.38rem .85rem;border-radius:8px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.78rem;font-weight:600;color:#374151;text-decoration:none;transition:box-shadow .15s;"
                        onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.13)'"
                        onmouseout="this.style.boxShadow='0 1px 4px rgba(0,0,0,.07)'">
                         &#127760; Landing Page &#8599;
                     </a>
 
-                    <a href="<?= BASE_URL ?>/agenda.php?empresa=<?= urlencode($_SESSION['company_slug'] ?? '') ?>" target="_blank" rel="noopener"
+                    <a href="<?= sanitize($agendaPublicUrl) ?>" target="_blank" rel="noopener"
                        style="display:inline-flex;align-items:center;gap:.35rem;padding:.38rem .85rem;border-radius:8px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.78rem;font-weight:600;color:#374151;text-decoration:none;transition:box-shadow .15s;"
                        onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.13)'"
                        onmouseout="this.style.boxShadow='0 1px 4px rgba(0,0,0,.07)'">
@@ -119,7 +123,7 @@ $faviconUrl = !empty($favicon) ? normalize_asset_url($favicon) : '';
                     </a>
 
                     <a class="text-sm text-indigo-600 hover:underline"
-                       href="<?= BASE_URL ?>/loja.php?empresa=<?= sanitize($_SESSION['company_slug'] ?? '') ?>"
+                       href="<?= sanitize($storePublicUrl) ?>"
                        target="_blank" rel="noopener">
                         Ver loja pública
                     </a>

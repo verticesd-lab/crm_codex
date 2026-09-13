@@ -12,7 +12,7 @@ $company = $stmt->fetch();
 
 $whats = trim($company['whatsapp_principal'] ?? '');
 $insta = trim($company['instagram_usuario'] ?? '');
-$storeLink = '/loja.php?empresa=' . urlencode($company['slug']);
+$storeLink = public_route_url('loja', (string)$company['slug']);
 $promoLink = '/promotions.php';
 $whatsLink = $whats ? 'https://api.whatsapp.com/send?phone=' . urlencode($whats) . '&text=Ola%2C%20cheguei%20pelo%20painel!' : null;
 $instaLink = $insta ? 'https://instagram.com/' . ltrim($insta, '@') : null;

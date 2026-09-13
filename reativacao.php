@@ -1995,8 +1995,10 @@ async function saveAllMessages() {
 /* ═══════════════════════════════════════════════════
    PROMOÇÕES
 ═══════════════════════════════════════════════════ */
-const PROMO_COMPANY_SLUG = <?= json_encode($_SESSION['company_slug'] ?? 'minhaloja', JSON_UNESCAPED_UNICODE) ?>;
+const PROMO_COMPANY_SLUG = <?= json_encode($_SESSION['company_slug'] ?? '', JSON_UNESCAPED_UNICODE) ?>;
 const PROMO_BASE_URL = <?= json_encode(rtrim(BASE_URL ?: '', '/'), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+const PROMO_PUBLIC_STORE_URL = <?= json_encode(public_route_url('loja', (string)($_SESSION['company_slug'] ?? '')), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+const PROMO_PUBLIC_AGENDA_URL = <?= json_encode(public_route_url('agenda', (string)($_SESSION['company_slug'] ?? '')), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
 let PROMO_LEGACY = {
   initialized: false,
@@ -2021,11 +2023,11 @@ function promoBaseUrl() {
 }
 
 function promoLojaLink() {
-  return `${promoBaseUrl()}/loja.php?empresa=${encodeURIComponent(PROMO_COMPANY_SLUG || 'minhaloja')}`;
+  return PROMO_PUBLIC_STORE_URL;
 }
 
 function promoAgendaLink() {
-  return `${promoBaseUrl()}/agenda.php?empresa=${encodeURIComponent(PROMO_COMPANY_SLUG || 'minhaloja')}`;
+  return PROMO_PUBLIC_AGENDA_URL;
 }
 
 async function promoInit() {
@@ -2349,7 +2351,7 @@ async function promoConfirmLote() {
   }
 }
 
-const AGENDA_LINK = 'https://crm.formenstore.com.br/agenda.php?empresa=minhaloja';
+const AGENDA_LINK = PROMO_PUBLIC_AGENDA_URL;
 
 // Mensagens carregadas do banco (com fallback nos defaults)
 let PB_MSGS = [
@@ -2676,8 +2678,8 @@ async function pbConfirmLote() {
 /* ══════════════════════════════════
    PROMOÇÕES
 ══════════════════════════════════ */
-const PROMO_LINK_LOJA   = 'https://crm.formenstore.com.br/loja.php?empresa=minhaloja';
-const PROMO_LINK_AGENDA = 'https://crm.formenstore.com.br/agenda.php?empresa=minhaloja';
+const PROMO_LINK_LOJA   = PROMO_PUBLIC_STORE_URL;
+const PROMO_LINK_AGENDA = PROMO_PUBLIC_AGENDA_URL;
 
 let PROMO = {
   clients:    [],
