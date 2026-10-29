@@ -44,7 +44,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $selectedDateStr)) {
 $timeSlots = agenda_generate_time_slots($OPEN_TIME, $CLOSE_TIME, $SLOT_INTERVAL_MINUTES);
 
 agenda_seed_default_barbers($pdo, $companyId);
-$barbers = agenda_get_barbers($pdo, $companyId, true);
+$barbers = agenda_get_barbers($pdo, $companyId, false);
 
 /**
  * Serviços (preferir banco + fallback)
@@ -65,7 +65,7 @@ foreach ($servicesCatalog as $key => $v) {
 $servicesByBarber = [];
 foreach ($barbers as $barber) {
     $barberId = (int)($barber['id'] ?? 0);
-    if ($barberId <= 0) continue;
+    if ($barberId <= 0 || (int)$barber['is_active'] !== 1) continue;
 
     $servicesByBarber[$barberId] = [];
     foreach (get_services_for_barber($pdo, $companyId, $barberId) as $service) {
@@ -159,7 +159,13 @@ include __DIR__ . '/views/partials/header.php';
         <div class="border-b p-3 font-semibold">Hora</div>
         <?php foreach ($barbers as $barber): ?>
           <div class="border-b p-3 font-semibold text-center">
-            <?= sanitize($barber['name']) ?>
+            <?php if ((int)$barber['is_active'] === 1): ?>
+              <?= sanitize($barber['name']) ?>
+            <?php else: ?>
+              Vaga dispon&iacute;vel
+              <p class="text-xs font-normal text-slate-500">Aguardando novo barbeiro</p>
+              <p class="text-xs font-normal text-slate-500">Hist&oacute;rico: <?= sanitize($barber['name']) ?></p>
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
 
@@ -178,7 +184,8 @@ include __DIR__ . '/views/partials/header.php';
               $isBlockedBarber  = isset($blockedByBarber[$barberId]) && isset($blockedByBarber[$barberId][$slot]);
               $isBlocked = $isBlockedGeneral || $isBlockedBarber;
 
-              $bg = 'bg-emerald-50';
+              $isActive = (int)$barber['is_active'] === 1;
+              $bg = $isActive ? 'bg-emerald-50' : 'bg-slate-100';
               if ($isBlocked) $bg = 'bg-amber-100';
               if ($entry) $bg = 'bg-rose-100';
             ?>
@@ -250,6 +257,8 @@ include __DIR__ . '/views/partials/header.php';
                   <p class="text-slate-600">Em atendimento</p>
                 <?php endif; ?>
 
+              <?php elseif (!$isActive): ?>
+                <p class="text-slate-500">Reservado para futuro profissional</p>
               <?php else: ?>
                 <!-- LIVRE -->
                 <div class="flex flex-col gap-2">

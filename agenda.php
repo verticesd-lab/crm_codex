@@ -693,10 +693,10 @@ $storeUrl = public_route_url('loja', $slug);
                         Barbeiro desejado <span class="text-red-400">*</span>
                     </label>
                     <div class="grid grid-cols-2 gap-2">
-                        <?php if (empty($allBarbers)): ?>
+                        <?php if (empty($activeBarbers)): ?>
                             <p class="text-xs text-slate-400 col-span-full">Nenhum barbeiro cadastrado para esta empresa.</p>
                         <?php else: ?>
-                            <?php foreach ($allBarbers as $barber): ?>
+                            <?php foreach ($activeBarbers as $barber): ?>
                                 <?php
                                 $barberId = (int)$barber['id'];
                                 $isActive = (int)$barber['is_active'] === 1;

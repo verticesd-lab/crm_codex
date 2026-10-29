@@ -73,6 +73,14 @@ if ($date === '' || $timeHm === '' || $barberId <= 0 || $customerName === '' || 
 
 $timeDb = $timeHm . ':00';
 
+// Vagas e profissionais desligados nao podem receber novos agendamentos.
+$barberStmt = $pdo->prepare('SELECT id FROM barbers WHERE id = ? AND company_id = ? AND is_active = 1');
+$barberStmt->execute([$barberId, $companyId]);
+if (!$barberStmt->fetchColumn()) {
+    http_response_code(422);
+    exit('Barbeiro indisponivel para novos agendamentos.');
+}
+
 /**
  * Catálogo de serviços com preço e duração do barbeiro selecionado.
  */
