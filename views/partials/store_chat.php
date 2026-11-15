@@ -17,15 +17,15 @@ $chatTopics = [
     'Pagamento' => 'O pagamento é combinado e finalizado diretamente com o atendente pelo WhatsApp.',
     'Trocas' => $chatHandoff,
     'Ofertas' => 'As ofertas da semana ficam na página de Ofertas: ' . $chatOffersUrl,
-    'Horário e endereço' => $chatHandoff,
+    'Endereço' => $chatHandoff,
 ];
 
 // ponytail: dados da For Men Store (empresa 1, mesma convenção de landing.php) fixos aqui;
 // viram campos em Configurações se outras lojas precisarem de respostas próprias.
 if ((int)($company['id'] ?? 0) === 1) {
-    $chatTopics['Entrega e retirada'] = 'Temos entrega disponível, e você também pode reservar pelo WhatsApp e retirar na loja. Prazo e valor da entrega são combinados com o atendente.';
-    $chatTopics['Pagamento'] = 'Aceitamos Pix, cartão ou dinheiro. O pagamento é combinado e finalizado diretamente com o atendente pelo WhatsApp.';
-    $chatTopics['Horário e endereço'] = 'Atendemos de segunda a sábado, das 8h30 às 19h. Avenida Goiânia, 1913 - Parque Residencial Buriti, Rondonópolis - MT.';
+    $chatTopics['Entrega e retirada'] = 'Enviamos para todo o Brasil, e você também pode reservar pelo WhatsApp e retirar na loja. Prazo e valor do envio são combinados com o atendente.';
+    $chatTopics['Pagamento'] = 'Aceitamos Pix, cartão ou dinheiro, e parcelamos sem juros. A quantidade de parcelas varia conforme o produto, o valor e as promoções do dia, então confirme com o atendente pelo WhatsApp.';
+    $chatTopics['Endereço'] = 'Estamos na Rua Ângelo Gajardoni, 1314-A, Centro, no coração de Pontes e Lacerda - MT.';
 }
 
 $chatWaUrl = $chatWhats ? 'https://wa.me/' . $chatWhats . '?text=' . rawurlencode('Olá, vim da loja online!') : '';
