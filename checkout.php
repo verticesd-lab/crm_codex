@@ -171,175 +171,102 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['cart_action']) && !em
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>Checkout - <?= sanitize($company['nome_fantasia']) ?></title>
+    <title>Carrinho - <?= sanitize($company['nome_fantasia']) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
-
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
-                    colors: {
-                        brand: { 500: '#d7ff3e', 600: '#d7ff3e', 700: '#e6ff7a' }
-                    }
-                }
-            }
-        }
-    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;1,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/loja-v2.css">
 </head>
+<body class="store-body">
+    <?php $cartKey = "cart_" . $company["slug"]; include __DIR__ . "/views/partials/store_header_simple.php"; ?>
 
-<body class="bg-slate-950 text-white min-h-screen">
-<div class="absolute inset-0 -z-10 overflow-hidden">
-    <div class="absolute -top-24 -left-10 h-80 w-80 bg-brand-600/30 rounded-full blur-3xl"></div>
-    <div class="absolute top-20 right-0 h-96 w-96 bg-emerald-500/20 rounded-full blur-3xl"></div>
-</div>
+    <main class="store-main store-container">
+        <a class="store-back" href="<?= sanitize(public_route_url("loja", $slug)) ?>">← Voltar para a loja</a>
 
-<div class="max-w-5xl mx-auto px-4 py-8 space-y-6">
-
-    <!-- Cabeçalho -->
-    <header class="flex items-center justify-between gap-4">
-        <div>
-            <p class="text-xs uppercase tracking-[0.2em] text-emerald-200/80">Checkout</p>
-            <h1 class="text-3xl font-bold tracking-tight">Finalizar pedido</h1>
-            <p class="text-sm text-slate-300 mt-1">
-                Revise seus itens e envie o pedido para o WhatsApp da loja.
-            </p>
+        <div class="store-section-head">
+            <div>
+                <span class="store-section-kicker">Seu carrinho</span>
+                <h1 class="store-section-title">Finalizar pedido</h1>
+            </div>
+            <p class="store-section-note">Revise seus itens e envie o pedido para o WhatsApp da loja.</p>
         </div>
 
-        <div class="text-right">
-            <p class="text-xs text-slate-400">Loja</p>
-            <p class="font-semibold"><?= sanitize($company['nome_fantasia']) ?></p>
-            <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
-               class="inline-flex text-sm text-emerald-300 hover:text-emerald-200 underline mt-1">
-                ← Voltar à loja
-            </a>
-        </div>
-    </header>
+        <?php if (!empty($erro)): ?>
+            <div class="store-alert" role="alert"><?= sanitize($erro) ?></div>
+        <?php endif; ?>
 
-    <?php if (!empty($erro)): ?>
-        <div class="bg-red-500/10 border border-red-500/40 text-red-100 px-4 py-3 rounded-xl text-sm">
-            <?= sanitize($erro) ?>
-        </div>
-    <?php endif; ?>
+        <?php if (empty($items)): ?>
+            <div class="store-empty">
+                <strong>Seu carrinho está vazio</strong>
+                <span>Adicione produtos na loja para fazer o pedido pelo WhatsApp.</span>
+                <a class="store-button store-button-primary" href="<?= sanitize(public_route_url("loja", $slug)) ?>">Voltar para a loja</a>
+            </div>
+        <?php else: ?>
+            <div class="store-cart-layout">
+                <section class="store-panel" aria-labelledby="cart-items-title">
+                    <div class="store-section-head">
+                        <h2 id="cart-items-title">Seus itens</h2>
+                        <p class="store-section-note"><?= count($items) ?> produto(s)</p>
+                    </div>
 
-    <?php if (empty($items)): ?>
-        <div class="bg-white/5 border border-white/10 rounded-2xl p-6 text-center space-y-3">
-            <p class="text-lg font-semibold">Seu carrinho está vazio</p>
-            <p class="text-sm text-slate-300">
-                Adicione produtos na loja para fazer o pedido pelo WhatsApp.
-            </p>
-            <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
-               class="inline-flex items-center justify-center px-5 py-2 rounded-full bg-brand-600 !text-slate-950 hover:bg-brand-700 text-sm font-semibold">
-                Voltar para a loja
-            </a>
-        </div>
-    <?php else: ?>
-
-        <div class="grid grid-cols-1 lg:grid-cols-[1.4fr,1fr] gap-6 items-start">
-
-            <!-- Resumo do pedido -->
-            <section class="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 shadow-xl">
-                <div class="flex items-center justify-between">
-                    <h2 class="text-lg font-semibold">Seus itens</h2>
-                    <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-200 border border-emerald-500/30">
-                        <?= count($items) ?> produto(s)
-                    </span>
-                </div>
-
-                <div class="divide-y divide-white/10">
                     <?php foreach ($items as $item): ?>
-                        <div class="py-3 flex items-start justify-between gap-3">
-                            <div class="min-w-0">
-                                <p class="font-medium break-words">
-                                    <?= sanitize($item['nome']) ?>
-                                </p>
-                                <p class="text-xs text-slate-300 mt-1">
-                                    <?= (int)$item['quantidade'] ?> x <?= format_currency($item['preco']) ?>
-                                </p>
-
-                                <!-- ✅ Remover item -->
-                                <form method="POST" class="mt-2">
+                        <div class="store-cart-item">
+                            <div>
+                                <p class="store-cart-item-name"><?= sanitize($item["nome"]) ?></p>
+                                <p class="store-product-note"><?= (int)$item["quantidade"] ?> x <?= format_currency($item["preco"]) ?></p>
+                                <form method="POST" data-confirm="Remover este produto do carrinho?">
                                     <input type="hidden" name="cart_action" value="remove_item">
-                                    <input type="hidden" name="product_id" value="<?= (int)$item['id'] ?>">
-                                    <button
-                                        type="submit"
-                                        class="text-[11px] text-red-300 hover:text-red-200 underline"
-                                        onclick="return confirm('Remover este produto do carrinho?')"
-                                    >
-                                        Remover
-                                    </button>
+                                    <input type="hidden" name="product_id" value="<?= (int)$item["id"] ?>">
+                                    <button type="submit" class="store-cart-remove">Remover</button>
                                 </form>
                             </div>
-
-                            <p class="font-semibold text-emerald-300 whitespace-nowrap">
-                                <?= format_currency($item['subtotal']) ?>
-                            </p>
+                            <p class="store-cart-item-price"><?= format_currency($item["subtotal"]) ?></p>
                         </div>
                     <?php endforeach; ?>
-                </div>
 
-                <div class="border-t border-white/10 pt-4 flex items-center justify-between">
-                    <div>
-                        <p class="text-sm text-slate-300">Total do pedido</p>
-                        <p class="text-2xl font-bold text-emerald-300">
-                            <?= format_currency($total) ?>
-                        </p>
+                    <div class="store-cart-total">
+                        <div>
+                            <span class="sizes-label">Total do pedido</span>
+                            <p class="store-product-price"><?= format_currency($total) ?></p>
+                        </div>
+                        <p class="store-product-note">O pagamento será combinado e finalizado diretamente com o atendente pelo WhatsApp.</p>
                     </div>
-                    <p class="text-xs text-slate-400 max-w-xs text-right">
-                        O pagamento será combinado e finalizado diretamente com o atendente pelo WhatsApp.
-                    </p>
-                </div>
-            </section>
+                </section>
 
-            <!-- Formulário -->
-            <section class="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 shadow-xl">
-                <h2 class="text-lg font-semibold">Seus dados</h2>
-                <p class="text-sm text-slate-300">
-                    Preencha seus dados para identificarmos seu pedido no WhatsApp.
-                </p>
+                <section class="store-panel" aria-labelledby="cart-form-title">
+                    <h2 id="cart-form-title">Seus dados</h2>
+                    <p class="store-product-note">Preencha seus dados para identificarmos seu pedido no WhatsApp.</p>
 
-                <form method="POST" class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-slate-200 mb-1">Nome</label>
-                        <input type="text" name="nome"
-                               class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                               placeholder="Seu nome completo">
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-slate-200 mb-1">Telefone / WhatsApp</label>
-                        <input type="text" name="telefone"
-                               class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                               placeholder="(00) 00000-0000">
-                        <p class="text-[11px] text-slate-400 mt-1">
-                            Usaremos esse número apenas para contato sobre este pedido.
-                        </p>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-slate-200 mb-1">Observações</label>
-                        <textarea name="observacoes" rows="3"
-                                  class="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                                  placeholder="Ex.: tamanho, cor, ajuste de barra, forma de entrega, etc."></textarea>
-                    </div>
-
-                    <div class="pt-2 space-y-2">
-                        <button type="submit"
-                                class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 text-slate-900 font-semibold text-sm px-4 py-3 hover:bg-emerald-400 shadow-lg shadow-emerald-500/30">
-                            Finalizar pelo WhatsApp
-                        </button>
-                        <p class="text-[11px] text-slate-400 text-center">
-                            Ao clicar em “Finalizar pelo WhatsApp”, vamos abrir uma conversa com a loja já com o resumo do seu pedido.
-                        </p>
-                    </div>
-                </form>
-            </section>
-
-        </div>
-    <?php endif; ?>
-</div>
+                    <form method="POST" class="store-filter-form">
+                        <div class="store-field">
+                            <label for="cart-nome">Nome</label>
+                            <input class="store-input" id="cart-nome" type="text" name="nome" placeholder="Seu nome completo" autocomplete="name">
+                        </div>
+                        <div class="store-field">
+                            <label for="cart-telefone">Telefone / WhatsApp</label>
+                            <input class="store-input" id="cart-telefone" type="tel" name="telefone" placeholder="(00) 00000-0000" autocomplete="tel">
+                            <span class="store-product-note">Usaremos esse número apenas para contato sobre este pedido.</span>
+                        </div>
+                        <div class="store-field">
+                            <label for="cart-obs">Observações</label>
+                            <textarea class="store-input" id="cart-obs" name="observacoes" rows="3" placeholder="Ex.: tamanho, cor, ajuste de barra, forma de entrega, etc."></textarea>
+                        </div>
+                        <button type="submit" class="store-button store-button-whatsapp">Finalizar pelo WhatsApp</button>
+                        <p class="store-product-note">Ao finalizar, abrimos uma conversa com a loja já com o resumo do seu pedido.</p>
+                    </form>
+                </section>
+            </div>
+        <?php endif; ?>
+    </main>
+    <script>
+        document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+            form.addEventListener("submit", function (event) {
+                if (!window.confirm(form.dataset.confirm)) event.preventDefault();
+            });
+        });
+    </script>
 
 <?php $chatHideOrder = true; include __DIR__ . '/views/partials/store_chat.php'; ?>
 </body>
