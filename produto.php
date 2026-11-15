@@ -101,53 +101,46 @@ if (!isset($_SESSION[$cartKey])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
-
     <title><?= sanitize($product['nome']) ?> - <?= sanitize($company['nome_fantasia']) ?></title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
-                    colors: {
-                        brand: {
-                            500: '#d7ff3e',
-                            600: '#d7ff3e',
-                            700: '#e6ff7a',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;1,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/loja-v2.css">
 </head>
-<body class="bg-slate-950 text-white min-h-screen">
-<div class="absolute inset-0 -z-10 overflow-hidden">
-    <div class="absolute -top-24 -left-10 h-80 w-80 bg-brand-600/30 rounded-full blur-3xl"></div>
-    <div class="absolute top-20 right-0 h-96 w-96 bg-emerald-500/20 rounded-full blur-3xl"></div>
-</div>
+<body class="store-body">
+    <div class="store-announcement">Catálogo oficial • Atendimento rápido pelo WhatsApp</div>
 
-<div class="max-w-5xl mx-auto px-4 py-8 space-y-8">
-    <header class="flex items-center justify-between">
-        <a href="<?= sanitize(public_route_url('loja', $slug)) ?>" class="text-sm text-slate-200/80 hover:underline">
-            ← Voltar para a loja
-        </a>
-
-        <a href="<?= BASE_URL ?>/checkout.php?empresa=<?= urlencode($slug) ?>"
-           class="inline-flex items-center gap-2 bg-emerald-500 text-slate-900 px-4 py-2 rounded-full shadow-lg shadow-emerald-500/30 hover:bg-emerald-400">
-            Carrinho (<?= array_sum($_SESSION[$cartKey]) ?>)
-        </a>
+    <header class="store-header">
+        <div class="store-container store-header-main">
+            <a class="store-brand" href="<?= sanitize(public_route_url('loja', $slug)) ?>" aria-label="Página inicial de <?= sanitize($company['nome_fantasia']) ?>">
+                <?php if (!empty($company['logo'])): ?>
+                    <img src="<?= sanitize(image_url($company['logo'])) ?>" class="store-brand-logo" alt="Logo de <?= sanitize($company['nome_fantasia']) ?>">
+                <?php endif; ?>
+                <span class="store-brand-copy">
+                    <span class="store-brand-kicker">Catálogo oficial</span>
+                    <span class="store-brand-name"><?= sanitize($company['nome_fantasia']) ?></span>
+                </span>
+            </a>
+            <span></span>
+            <div class="store-header-actions">
+                <a class="store-cart" href="<?= BASE_URL ?>/checkout.php?empresa=<?= urlencode($slug) ?>">
+                    Carrinho
+                    <span class="store-cart-count"><?= (int)array_sum($_SESSION[$cartKey]) ?></span>
+                </a>
+            </div>
+        </div>
     </header>
 
-    <main class="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+    <main class="store-main store-container">
+        <a class="store-back" href="<?= sanitize(public_route_url('loja', $slug)) ?>">← Voltar para a loja</a>
 
+        <div class="store-product">
         <!-- ── Carrossel de fotos ── -->
         <div id="carousel-wrap">
 
             <!-- Container principal: posição relativa, sem altura forçada -->
-            <div style="position:relative; border-radius:16px; overflow:hidden; background:#0f172a; border:1px solid rgba(255,255,255,.1);">
+            <div style="position:relative; border-radius:2px; overflow:hidden; background:#17191c; border:1px solid rgba(255,255,255,.1);">
 
                 <!-- Slides: display block/none — sem absolute, sem h-full -->
                 <?php foreach ($images as $idx => $img): ?>
@@ -155,7 +148,7 @@ if (!isset($_SESSION[$cartKey])) {
                      style="<?= $idx === 0 ? 'display:block' : 'display:none' ?>">
                     <img src="<?= sanitize($img) ?>"
                          alt="<?= sanitize($product['nome']) ?>"
-                         style="width:100%; max-height:480px; height:auto; object-fit:contain; display:block; background:#0f172a;">
+                         style="width:100%; max-height:480px; height:auto; object-fit:contain; display:block; background:#17191c;">
                 </div>
                 <?php endforeach; ?>
 
@@ -207,10 +200,10 @@ if (!isset($_SESSION[$cartKey])) {
             <div style="display:flex; gap:8px; margin-top:10px; overflow-x:auto; padding-bottom:4px;">
                 <?php foreach ($images as $idx => $img): ?>
                 <button class="car-thumb" data-thumb="<?= $idx ?>"
-                        style="flex-shrink:0; width:60px; height:60px; border-radius:10px;
+                        style="flex-shrink:0; width:60px; height:60px; border-radius:2px;
                                overflow:hidden; padding:0; cursor:pointer;
                                border:2px solid <?= $idx===0 ? '#d7ff3e' : 'rgba(255,255,255,.2)' ?>;
-                               box-shadow:<?= $idx===0 ? '0 0 0 3px rgba(124,58,237,.35)' : 'none' ?>;
+                               box-shadow:<?= $idx===0 ? '0 0 0 3px rgba(215,255,62,.3)' : 'none' ?>;
                                transition:border-color .15s;">
                     <img src="<?= sanitize($img) ?>"
                          style="width:100%; height:100%; object-fit:cover; display:block;"
@@ -222,67 +215,41 @@ if (!isset($_SESSION[$cartKey])) {
 
         </div>
 
-        <div class="space-y-4">
-            <div class="space-y-1">
-                <p class="text-xs uppercase tracking-wide text-emerald-200/80">
-                    <?= sanitize($product['categoria'] ?? 'Produto') ?>
-                </p>
-                <h1 class="text-2xl md:text-3xl font-bold leading-tight">
-                    <?= sanitize($product['nome']) ?>
-                </h1>
-            </div>
+            <div class="store-product-info">
+                <span class="store-section-kicker"><?= sanitize($product['categoria'] ?? 'Produto') ?></span>
+                <h1 class="store-product-title"><?= sanitize($product['nome']) ?></h1>
+                <p class="store-product-price"><?= format_currency($product['preco']) ?></p>
 
-            <p class="text-2xl font-bold text-emerald-300">
-                <?= format_currency($product['preco']) ?>
-            </p>
-
-            <?php if ($hasAvailableSizes): ?>
-                <div class="mt-3 space-y-1">
-                    <p class="text-xs font-semibold text-emerald-300 uppercase tracking-[0.2em]">
-                        Tamanhos disponíveis
-                    </p>
-                    <div class="flex flex-wrap gap-2 mt-1">
-                        <?php foreach ($variants as $v): ?>
-                            <?php $qtd = (int)($v['quantity'] ?? 0); ?>
-                            <?php if ($qtd <= 0) continue; ?>
-                            <span
-                                class="px-3 py-1 rounded-full text-xs font-medium
-                                       bg-emerald-500/15 text-emerald-100 border border-emerald-400/60">
-                                <?= sanitize($v['size']) ?>
-                                <span class="text-[9px] ml-1 opacity-80">
-                                    (<?= $qtd ?> em estoque)
-                                </span>
-                            </span>
-                        <?php endforeach; ?>
+                <?php if ($hasAvailableSizes): ?>
+                    <div class="sizes-block">
+                        <span class="sizes-label">Tamanhos disponíveis</span>
+                        <div class="sizes-row">
+                            <?php foreach ($variants as $v): ?>
+                                <?php $qtd = (int)($v['quantity'] ?? 0); ?>
+                                <?php if ($qtd <= 0) continue; ?>
+                                <span class="sz-pill sz-pill-lg"><?= sanitize($v['size']) ?> <small>(<?= $qtd ?> em estoque)</small></span>
+                            <?php endforeach; ?>
+                        </div>
+                        <p class="store-product-note">Estoque exibido com base na loja física.</p>
                     </div>
-                    <p class="text-[11px] text-slate-400">
-                        Estoque exibido com base na loja física.
-                    </p>
-                </div>
-            <?php endif; ?>
-
-            <div class="prose prose-invert max-w-none text-sm text-slate-200/90">
-                <?= nl2br(sanitize($product['descricao'])) ?>
-            </div>
-
-            <form method="get" action="<?= sanitize(public_route_url('loja', $slug)) ?>" class="space-y-2">
-                <?php if (!uses_friendly_public_route($slug)): ?>
-                <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
                 <?php endif; ?>
-                <input type="hidden" name="add" value="<?= (int)$product['id'] ?>">
-                <button type="submit"
-                        class="inline-flex items-center justify-center w-full bg-brand-600 !text-slate-950 text-white px-4 py-3 rounded-xl hover:bg-brand-700 font-semibold">
-                    Adicionar ao carrinho
-                </button>
-            </form>
 
-            <p class="text-xs text-slate-400">
-                O pagamento ainda é concluído via WhatsApp.
-                Você adiciona os produtos ao carrinho e finaliza diretamente com o atendente.
-            </p>
+                <div class="store-product-description"><?= nl2br(sanitize($product['descricao'])) ?></div>
+
+                <form method="get" action="<?= sanitize(public_route_url('loja', $slug)) ?>">
+                    <?php if (!uses_friendly_public_route($slug)): ?>
+                    <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
+                    <?php endif; ?>
+                    <input type="hidden" name="add" value="<?= (int)$product['id'] ?>">
+                    <button type="submit" class="store-button store-button-primary store-product-add">Adicionar ao carrinho</button>
+                </form>
+
+                <p class="store-product-note">
+                    O pagamento é concluído via WhatsApp: você adiciona os produtos ao carrinho e finaliza diretamente com o atendente.
+                </p>
+            </div>
         </div>
     </main>
-</div>
 
 <script>
 (function () {
@@ -310,7 +277,7 @@ if (!isset($_SESSION[$cartKey])) {
         dots[current].style.background   = '#fff';
         dots[current].style.transform    = 'scale(1.3)';
         thumbs[current].style.borderColor = '#d7ff3e';
-        thumbs[current].style.boxShadow   = '0 0 0 3px rgba(124,58,237,.35)';
+        thumbs[current].style.boxShadow   = '0 0 0 3px rgba(215,255,62,.3)';
 
         if (counter) counter.textContent = (current + 1) + ' / ' + total;
     }
