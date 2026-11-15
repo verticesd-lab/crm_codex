@@ -100,13 +100,32 @@ $featured = $featuredStmt->fetchAll();
 
 // Categorias
 $categoriesStmt = $pdo->prepare('
-    SELECT DISTINCT categoria
+    SELECT categoria, COUNT(*) AS total, MAX(imagem) AS imagem
     FROM products
     WHERE company_id = ? AND ativo = 1 AND categoria IS NOT NULL AND categoria <> ""
-    ORDER BY categoria
+    GROUP BY categoria
+    ORDER BY total DESC, categoria
 ');
 $categoriesStmt->execute([$companyId]);
-$categories = $categoriesStmt->fetchAll(PDO::FETCH_COLUMN);
+$categoryRows = $categoriesStmt->fetchAll();
+$categories = array_column($categoryRows, 'categoria');
+
+// Linha Premium: categorias de alto padrão, reconhecidas pelo nome.
+// ponytail: regex fixa; vira flag no cadastro se as categorias premium mudarem muito.
+$isPremiumCategory = static fn (string $cat): bool => (bool)preg_match('/perfum|rel[oó]gio|acess[oó]rio/iu', $cat);
+$premiumCategories = array_values(array_filter($categories, $isPremiumCategory));
+$premiumProducts = [];
+if ($premiumCategories && $search === '' && $categoria === '') {
+    $marks = implode(',', array_fill(0, count($premiumCategories), '?'));
+    $premiumStmt = $pdo->prepare("
+        SELECT * FROM products
+        WHERE company_id = ? AND ativo = 1 AND categoria IN ($marks)
+        ORDER BY destaque DESC, created_at DESC
+        LIMIT 3
+    ");
+    $premiumStmt->execute(array_merge([$companyId], $premiumCategories));
+    $premiumProducts = $premiumStmt->fetchAll();
+}
 
 // Carrinho por empresa
 $cartKey = 'cart_' . $company['slug'];
@@ -238,7 +257,7 @@ function render_sizes(string $sizesStr): string {
     <meta name="description" content="Catálogo oficial de <?= sanitize($company['nome_fantasia']) ?>. Confira produtos, ofertas e finalize seu atendimento pelo WhatsApp.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;1,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/loja-v2.css">
     <script src="<?= BASE_URL ?>/assets/js/loja-v2.js" defer></script>
 </head>
@@ -259,12 +278,15 @@ function render_sizes(string $sizesStr): string {
                 </span>
             </a>
 
-            <nav class="store-nav" aria-label="Navegação principal">
-                <a class="store-nav-link" href="#featured">Destaques</a>
-                <a class="store-nav-link" href="#products">Produtos</a>
-                <a class="store-nav-link is-promo" href="<?= $offersUrl ?>">Ofertas</a>
-                <a class="store-nav-link" href="<?= BASE_URL ?>/promo.php?empresa=<?= urlencode($slug) ?>">Promoções</a>
-            </nav>
+            <form class="store-search" action="<?= sanitize($storeUrl) ?>" role="search">
+                <?php if (!$friendlyStoreRoute): ?>
+                    <input type="hidden" name="empresa" value="<?= sanitize($slug) ?>">
+                <?php endif; ?>
+                <input type="search" name="q" value="<?= sanitize($search) ?>" placeholder="Buscar produto" aria-label="Buscar produto">
+                <button type="submit" aria-label="Buscar">
+                    <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                </button>
+            </form>
 
             <div class="store-header-actions">
                 <?php if (!empty($company['instagram_usuario'])): ?>
@@ -282,6 +304,14 @@ function render_sizes(string $sizesStr): string {
                 </a>
             </div>
         </div>
+        <nav class="store-container store-nav" aria-label="Navegação principal">
+            <a class="store-nav-link is-promo" href="<?= $offersUrl ?>">Ofertas</a>
+            <a class="store-nav-link" href="<?= BASE_URL ?>/promo.php?empresa=<?= urlencode($slug) ?>">Promoções</a>
+            <a class="store-nav-link" href="#featured">Destaques</a>
+            <?php foreach ($categories as $cat): ?>
+                <a class="store-nav-link <?= $isPremiumCategory($cat) ? 'is-premium' : '' ?>" href="<?= sanitize(public_route_url('loja', $slug, ['categoria' => $cat])) ?>"><?= sanitize($cat) ?></a>
+            <?php endforeach; ?>
+        </nav>
         <nav class="store-container store-mobile-menu" id="store-mobile-menu" aria-label="Navegação móvel">
             <a class="store-nav-link" href="#featured">Destaques</a>
             <a class="store-nav-link" href="#products">Produtos</a>
@@ -298,7 +328,7 @@ function render_sizes(string $sizesStr): string {
             <section class="store-hero" aria-labelledby="store-hero-title">
                 <div class="store-hero-copy">
                     <span class="store-eyebrow">Novidades e destaques</span>
-                    <h1 id="store-hero-title">Seu próximo favorito <span>está aqui.</span></h1>
+                    <h1 id="store-hero-title">Vista o seu <span>melhor jogo.</span></h1>
                     <p class="store-hero-description">Descubra a seleção de <?= sanitize($company['nome_fantasia']) ?>, escolha seus produtos e finalize com atendimento direto e personalizado.</p>
                     <div class="store-hero-actions">
                         <a class="store-button store-button-primary" href="#featured">
@@ -381,16 +411,19 @@ function render_sizes(string $sizesStr): string {
                         <span class="store-section-kicker">Encontre mais rápido</span>
                         <h2 class="store-section-title" id="categories-title">Compre por categoria</h2>
                     </div>
-                    <p class="store-section-note">Deslize para explorar todas as opções</p>
+                    <?php if ($categoria !== ''): ?>
+                        <a class="store-section-note" href="<?= sanitize($storeUrl) ?>">Ver todas as categorias</a>
+                    <?php endif; ?>
                 </div>
-                <div class="store-category-list">
-                    <a href="<?= $offersUrl ?>" class="store-category-chip is-offer">
-                        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41 11 3.83V3H4v7h.83l9.58 9.59a2 2 0 0 0 2.82 0l3.36-3.36a2 2 0 0 0 0-2.82Z"/></svg>
-                        Ofertas
-                    </a>
-                    <a href="<?= sanitize($storeUrl) ?>" class="store-category-chip <?= $categoria === '' ? 'is-active' : '' ?>">Todas</a>
-                    <?php foreach ($categories as $cat): ?>
-                        <a href="<?= sanitize(public_route_url('loja', $slug, ['categoria' => $cat])) ?>" class="store-category-chip <?= $categoria === $cat ? 'is-active' : '' ?>"><?= sanitize($cat) ?></a>
+                <div class="store-tiles">
+                    <?php foreach ($categoryRows as $row): ?>
+                        <a href="<?= sanitize(public_route_url('loja', $slug, ['categoria' => $row['categoria']])) ?>" class="store-tile <?= $isPremiumCategory($row['categoria']) ? 'is-premium' : '' ?> <?= $categoria === $row['categoria'] ? 'is-active' : '' ?>">
+                            <?php if (!empty($row['imagem'])): ?>
+                                <img src="<?= sanitize(store_public_media_url($row['imagem'])) ?>" alt="" loading="lazy">
+                            <?php endif; ?>
+                            <span class="store-tile-count"><?= (int)$row['total'] ?> <?= (int)$row['total'] === 1 ? 'item' : 'itens' ?></span>
+                            <span class="store-tile-name"><?= sanitize($row['categoria']) ?></span>
+                        </a>
                     <?php endforeach; ?>
                 </div>
             </section>
@@ -439,46 +472,7 @@ function render_sizes(string $sizesStr): string {
 
                         <div class="store-products-grid">
                             <?php foreach ($featured ?: array_slice($products, 0, 3) as $product): ?>
-                                <article class="product-card">
-                                    <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="product-card-link">
-                                        <div class="product-card-media">
-                                            <span class="product-card-status">Destaque</span>
-                                            <?php if (!empty($product['imagem'])): ?>
-                                                <img src="<?= sanitize(store_public_media_url($product['imagem'])) ?>" alt="<?= sanitize($product['nome']) ?>" loading="lazy">
-                                            <?php else: ?>
-                                                <span class="product-card-placeholder">Sem imagem</span>
-                                            <?php endif; ?>
-                                        </div>
-                                        <div class="product-card-body">
-                                            <p class="product-card-category"><?= sanitize($product['categoria']) ?></p>
-                                            <h3 class="product-card-title"><?= sanitize($product['nome']) ?></h3>
-                                            <p class="product-card-description"><?= sanitize($product['descricao']) ?></p>
-                                            <?php if (!empty($product['sizes'])): ?>
-                                                <div class="sizes-block">
-                                                    <span class="sizes-label">Tamanhos disponíveis</span>
-                                                    <?= render_sizes((string)$product['sizes']) ?>
-                                                </div>
-                                            <?php endif; ?>
-                                            <div class="product-card-footer">
-                                                <span>
-                                                    <span class="product-card-price-label">Por</span>
-                                                    <span class="product-card-price"><?= format_currency($product['preco']) ?></span>
-                                                </span>
-                                                <span class="product-card-detail">Ver detalhes →</span>
-                                            </div>
-                                        </div>
-                                    </a>
-                                    <a href="<?= sanitize(public_route_url('loja', $slug, [
-                                        'q'         => $search,
-                                        'categoria' => $categoria,
-                                        'page'      => $page,
-                                        'per_page'  => $perPage,
-                                        'add'       => (int)$product['id']
-                                    ])) ?>" class="product-card-cta">
-                                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                                        Adicionar ao carrinho
-                                    </a>
-                                </article>
+                                <?php $cardStatus = 'Destaque'; include __DIR__ . '/views/partials/store_product_card.php'; ?>
                             <?php endforeach; ?>
 
                             <?php if (empty($featured) && empty($products)): ?>
@@ -486,6 +480,23 @@ function render_sizes(string $sizesStr): string {
                             <?php endif; ?>
                         </div>
                     </section>
+
+                    <?php if ($premiumProducts): ?>
+                        <section class="store-section store-premium" aria-labelledby="premium-title">
+                            <div class="store-section-head">
+                                <div>
+                                    <span class="store-section-kicker">Alto padrão</span>
+                                    <h2 class="store-section-title" id="premium-title">Linha Premium</h2>
+                                </div>
+                                <p class="store-section-note"><?= sanitize(implode(' · ', $premiumCategories)) ?></p>
+                            </div>
+                            <div class="store-products-grid">
+                                <?php foreach ($premiumProducts as $product): ?>
+                                    <?php $cardStatus = 'Premium'; include __DIR__ . '/views/partials/store_product_card.php'; ?>
+                                <?php endforeach; ?>
+                            </div>
+                        </section>
+                    <?php endif; ?>
 
                     <section class="store-section" id="products" aria-labelledby="products-title">
                         <div class="store-section-head">
@@ -502,46 +513,7 @@ function render_sizes(string $sizesStr): string {
 
                         <div class="store-products-grid">
                             <?php foreach ($products as $product): ?>
-                                <article class="product-card">
-                                    <a href="<?= BASE_URL ?>/produto.php?empresa=<?= urlencode($slug) ?>&id=<?= (int)$product['id'] ?>" class="product-card-link">
-                                        <div class="product-card-media">
-                                            <span class="product-card-status">Disponível</span>
-                                            <?php if (!empty($product['imagem'])): ?>
-                                                <img src="<?= sanitize(store_public_media_url($product['imagem'])) ?>" alt="<?= sanitize($product['nome']) ?>" loading="lazy">
-                                            <?php else: ?>
-                                                <span class="product-card-placeholder">Sem imagem</span>
-                                            <?php endif; ?>
-                                        </div>
-                                        <div class="product-card-body">
-                                            <p class="product-card-category"><?= sanitize($product['categoria']) ?></p>
-                                            <h3 class="product-card-title"><?= sanitize($product['nome']) ?></h3>
-                                            <p class="product-card-description"><?= sanitize($product['descricao']) ?></p>
-                                            <?php if (!empty($product['sizes'])): ?>
-                                                <div class="sizes-block">
-                                                    <span class="sizes-label">Tamanhos disponíveis</span>
-                                                    <?= render_sizes((string)$product['sizes']) ?>
-                                                </div>
-                                            <?php endif; ?>
-                                            <div class="product-card-footer">
-                                                <span>
-                                                    <span class="product-card-price-label">Por</span>
-                                                    <span class="product-card-price"><?= format_currency($product['preco']) ?></span>
-                                                </span>
-                                                <span class="product-card-detail">Ver detalhes →</span>
-                                            </div>
-                                        </div>
-                                    </a>
-                                    <a href="<?= sanitize(public_route_url('loja', $slug, [
-                                        'q'         => $search,
-                                        'categoria' => $categoria,
-                                        'page'      => $page,
-                                        'per_page'  => $perPage,
-                                        'add'       => (int)$product['id']
-                                    ])) ?>" class="product-card-cta">
-                                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                                        Adicionar ao carrinho
-                                    </a>
-                                </article>
+                                <?php $cardStatus = 'Disponível'; include __DIR__ . '/views/partials/store_product_card.php'; ?>
                             <?php endforeach; ?>
 
                             <?php if (empty($products)): ?>
@@ -608,11 +580,6 @@ function render_sizes(string $sizesStr): string {
         </div>
     </footer>
 
-    <?php if ($whats): ?>
-        <a href="https://wa.me/<?= $whats ?>?text=<?= urlencode($msg) ?>" target="_blank" rel="noopener" class="store-whatsapp-float" aria-label="Falar no WhatsApp">
-            <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2a9.84 9.84 0 0 0-8.47 14.84L2 22l5.3-1.54A9.95 9.95 0 1 0 12.04 2Zm5.81 13.96c-.25.7-1.45 1.34-2 1.42-.51.08-1.16.11-1.87-.11-.43-.14-.99-.32-1.7-.63-2.99-1.29-4.94-4.29-5.09-4.49-.15-.2-1.22-1.62-1.22-3.09 0-1.47.77-2.19 1.04-2.49.27-.3.6-.37.8-.37h.57c.18.01.43-.07.67.51.25.6.85 2.08.92 2.23.08.15.13.32.03.52-.1.2-.15.32-.3.5-.15.17-.31.39-.45.52-.15.15-.3.31-.13.61.17.3.77 1.28 1.66 2.07 1.14 1.02 2.1 1.34 2.4 1.49.3.15.47.12.65-.08.17-.2.77-.87.97-1.17.2-.3.4-.25.67-.15.28.1 1.75.83 2.05.98.3.15.5.22.57.35.08.12.08.72-.17 1.42Z"/></svg>
-            WhatsApp
-        </a>
-    <?php endif; ?>
+<?php include __DIR__ . '/views/partials/store_chat.php'; ?>
 </body>
 </html>

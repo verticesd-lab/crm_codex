@@ -103,14 +103,26 @@ if (isset($_GET['add'])) {
     <link rel="icon" type="image/png" href="<?= BASE_URL ?>/assets/favicon.png">
     <title>⚡ Ofertas — <?= sanitize($company['nome_fantasia']) ?></title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;1,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/loja-v2.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
+        // Sport Luxe: reaproveita as classes existentes trocando a paleta, as fontes e os cantos.
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
+                    fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'] },
+                    borderRadius: { lg: '2px', xl: '2px', '2xl': '4px', '3xl': '4px', full: '2px' },
                     colors: {
-                        brand: { 500:'#7c3aed', 600:'#6d28d9', 700:'#5b21b6' }
+                        brand: { 500: '#d7ff3e', 600: '#d7ff3e', 700: '#e6ff7a' },
+                        amber: { 300: '#e6ff7a', 400: '#d7ff3e', 500: '#d7ff3e', 600: '#b8e020' },
+                        emerald: { 300: '#f4f4f1', 400: '#f4f4f1', 500: '#f4f4f1' },
+                        slate: {
+                            100: '#f4f4f1', 200: '#dfe0e2', 300: '#c7c9cc', 400: '#9aa0a6', 500: '#70757b',
+                            600: '#4a4f55', 700: '#2b2f34', 800: '#1f2226', 900: '#17191c', 950: '#0e0f11'
+                        }
                     }
                 }
             }
@@ -119,6 +131,7 @@ if (isset($_GET['add'])) {
 
     <style>
         /* ── Ticker ───────────────────────── */
+        h1, h2, h3, .font-black { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; text-transform: uppercase; }
         .ticker-wrap { overflow: hidden; white-space: nowrap; }
         .ticker-inner { display: inline-block; animation: ticker 28s linear infinite; }
         @keyframes ticker { from{transform:translateX(0)} to{transform:translateX(-50%)} }
@@ -130,10 +143,10 @@ if (isset($_GET['add'])) {
         .stock-fill { height:100%; border-radius:9999px; transition: width 1.2s ease; }
 
         /* ── Card glow on hover ───────────── */
-        .offer-card:hover { box-shadow: 0 0 0 1.5px rgba(245,158,11,.3), 0 8px 32px rgba(0,0,0,.4); }
+        .offer-card:hover { box-shadow: 0 0 0 1.5px rgba(215,255,62,.35), 0 8px 32px rgba(0,0,0,.4); }
 
         /* ── Price strikethrough ──────────── */
-        .de { text-decoration:line-through; color:#475569; }
+        .de { text-decoration:line-through; color:#70757b; }
 
         /* ── Pulse (live badge) ───────────── */
         @keyframes pulse-ring {
@@ -143,26 +156,20 @@ if (isset($_GET['add'])) {
         .pulse-badge { animation: pulse-ring 2s ease-in-out infinite; }
 
         /* ── Float button ─────────────────── */
-        .float-btn { transition: transform .2s; }
-        .float-btn:hover { transform: scale(1.08); }
 
         /* ── Filter btn states ────────────── */
         .filter-btn.active {
-            background: #f59e0b;
-            border-color: #f59e0b;
-            color: #0f172a;
+            background: #d7ff3e;
+            border-color: #d7ff3e;
+            color: #0e0f11;
         }
 
         .open-product-modal { cursor: zoom-in; }
     </style>
 </head>
 <body class="bg-slate-950 text-white min-h-screen font-sans">
+    <?php include __DIR__ . '/views/partials/store_header_simple.php'; ?>
 
-    <!-- BG blobs (idêntico ao loja.php) -->
-    <div class="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
-        <div class="absolute -top-24 -left-10 h-80 w-80 bg-brand-600/30 rounded-full blur-3xl"></div>
-        <div class="absolute top-20 right-0 h-96 w-96 bg-amber-500/15 rounded-full blur-3xl"></div>
-    </div>
 
 <?php if (!$flashAtivo): ?>
     <!-- ── OFERTA ENCERRADA ──────────────────────────────────── -->
@@ -171,7 +178,7 @@ if (isset($_GET['add'])) {
         <h1 class="text-3xl font-bold">Esta oferta foi encerrada</h1>
         <p class="text-slate-400">Fique de olho nas próximas promoções.</p>
         <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
-           class="inline-block mt-4 px-6 py-2.5 rounded-full bg-brand-600 hover:bg-brand-700 font-semibold">
+           class="inline-block mt-4 px-6 py-2.5 rounded-full bg-brand-600 !text-slate-950 hover:bg-brand-700 font-semibold">
             Ver catálogo completo →
         </a>
     </div>
@@ -193,32 +200,7 @@ if (isset($_GET['add'])) {
     <div class="max-w-6xl mx-auto px-4 py-8 space-y-8">
 
         <!-- ── HEADER (mesmo padrão loja.php) ────────────────── -->
-        <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div class="flex items-center gap-4">
-                <?php if (!empty($company['logo'])): ?>
-                    <img src="<?= sanitize(image_url($company['logo'])) ?>"
-                         class="h-12 w-12 rounded-full border border-white/20 object-cover">
-                <?php else: ?>
-                    <div class="h-12 w-12 rounded-full bg-brand-600 flex items-center justify-center text-base font-bold">
-                        <?= strtoupper(substr($company['nome_fantasia'], 0, 2)) ?>
-                    </div>
-                <?php endif; ?>
-                <div>
-                    <p class="text-xs text-slate-400 uppercase tracking-widest">Oferta especial</p>
-                    <h1 class="text-2xl font-bold tracking-tight"><?= sanitize($company['nome_fantasia']) ?></h1>
-                </div>
-            </div>
-            <div class="flex items-center gap-3">
-                <a href="<?= BASE_URL ?>/checkout.php?empresa=<?= urlencode($slug) ?>"
-                   class="inline-flex items-center gap-2 bg-emerald-500 text-slate-900 px-4 py-2 rounded-full shadow-lg shadow-emerald-500/30 hover:bg-emerald-400 font-semibold text-sm">
-                    Carrinho (<?= (int)array_sum($_SESSION[$cartKey]) ?>)
-                </a>
-                <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
-                   class="text-sm text-slate-400 hover:text-white border border-white/10 hover:border-white/30 px-4 py-2 rounded-full">
-                    ← Catálogo completo
-                </a>
-            </div>
-        </header>
+        <a class="store-back" href="<?= sanitize(public_route_url('loja', $slug)) ?>">← Voltar para a loja</a>
 
         <!-- ── HERO BANNER ───────────────────────────────────── -->
         <div class="relative bg-white/5 border border-white/10 rounded-2xl overflow-hidden shadow-xl">
@@ -276,7 +258,7 @@ if (isset($_GET['add'])) {
 
                 <?php if ($whats): ?>
                 <a href="#produtos"
-                   class="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-bold px-6 py-2.5 rounded-full shadow-lg shadow-brand-600/30 mt-2">
+                   class="inline-flex items-center gap-2 bg-brand-600 !text-slate-950 hover:bg-brand-700 text-white font-bold px-6 py-2.5 rounded-full shadow-lg shadow-brand-600/30 mt-2">
                     Ver ofertas ↓
                 </a>
                 <?php endif; ?>
@@ -467,7 +449,7 @@ if (isset($_GET['add'])) {
                             </a>
                             <?php endif; ?>
                             <a href="<?= sanitize($cartUrl) ?>"
-                               class="inline-flex items-center justify-center w-full border border-brand-600 text-brand-500 hover:bg-brand-600 hover:text-white font-semibold text-sm py-2 rounded-lg transition">
+                               class="inline-flex items-center justify-center w-full border border-brand-600 text-brand-500 hover:bg-brand-600 hover:text-slate-950 font-semibold text-sm py-2 rounded-lg transition">
                                 + Adicionar ao carrinho
                             </a>
                         </div>
@@ -548,7 +530,7 @@ if (isset($_GET['add'])) {
                         </a>
                         <a id="modal-product-cart"
                            href="#"
-                           class="inline-flex items-center justify-center rounded-lg border border-brand-600 px-4 py-3 text-sm font-semibold text-brand-500 transition hover:bg-brand-600 hover:text-white">
+                           class="inline-flex items-center justify-center rounded-lg border border-brand-600 px-4 py-3 text-sm font-semibold text-brand-500 transition hover:bg-brand-600 hover:text-slate-950">
                             + Adicionar ao carrinho
                         </a>
                     </div>
@@ -558,14 +540,7 @@ if (isset($_GET['add'])) {
     </div>
 
     <!-- ── FLOATING WHATSAPP ─────────────────────────────────── -->
-    <?php if ($whats): ?>
-    <a href="https://wa.me/<?= $whats ?>?text=<?= urlencode('Olá! Vim da oferta ' . $flashTitle . ' e quero saber mais!') ?>"
-       target="_blank" rel="noopener"
-       class="float-btn fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold px-5 py-3 rounded-full shadow-lg shadow-emerald-500/40">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.117 1.526 5.845L0 24l6.334-1.498A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.896 0-3.67-.505-5.2-1.386l-.374-.217-3.758.888.928-3.637-.243-.388A9.96 9.96 0 012 12C2 6.486 6.486 2 12 2s10 4.486 10 10-4.486 10-10 10z"/></svg>
-        WhatsApp
-    </a>
-    <?php endif; ?>
+<?php include __DIR__ . '/views/partials/store_chat.php'; ?>
 
 <?php endif; // flashAtivo ?>
 
