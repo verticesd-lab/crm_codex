@@ -110,7 +110,7 @@ if (isset($_GET['add'])) {
                 extend: {
                     fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
                     colors: {
-                        brand: { 500:'#7c3aed', 600:'#6d28d9', 700:'#5b21b6' }
+                        brand: { 500:'#d7ff3e', 600:'#d7ff3e', 700:'#e6ff7a' }
                     }
                 }
             }
@@ -143,8 +143,6 @@ if (isset($_GET['add'])) {
         .pulse-badge { animation: pulse-ring 2s ease-in-out infinite; }
 
         /* ── Float button ─────────────────── */
-        .float-btn { transition: transform .2s; }
-        .float-btn:hover { transform: scale(1.08); }
 
         /* ── Filter btn states ────────────── */
         .filter-btn.active {
@@ -171,7 +169,7 @@ if (isset($_GET['add'])) {
         <h1 class="text-3xl font-bold">Esta oferta foi encerrada</h1>
         <p class="text-slate-400">Fique de olho nas próximas promoções.</p>
         <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
-           class="inline-block mt-4 px-6 py-2.5 rounded-full bg-brand-600 hover:bg-brand-700 font-semibold">
+           class="inline-block mt-4 px-6 py-2.5 rounded-full bg-brand-600 !text-slate-950 hover:bg-brand-700 font-semibold">
             Ver catálogo completo →
         </a>
     </div>
@@ -199,7 +197,7 @@ if (isset($_GET['add'])) {
                     <img src="<?= sanitize(image_url($company['logo'])) ?>"
                          class="h-12 w-12 rounded-full border border-white/20 object-cover">
                 <?php else: ?>
-                    <div class="h-12 w-12 rounded-full bg-brand-600 flex items-center justify-center text-base font-bold">
+                    <div class="h-12 w-12 rounded-full bg-brand-600 !text-slate-950 flex items-center justify-center text-base font-bold">
                         <?= strtoupper(substr($company['nome_fantasia'], 0, 2)) ?>
                     </div>
                 <?php endif; ?>
@@ -276,7 +274,7 @@ if (isset($_GET['add'])) {
 
                 <?php if ($whats): ?>
                 <a href="#produtos"
-                   class="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-bold px-6 py-2.5 rounded-full shadow-lg shadow-brand-600/30 mt-2">
+                   class="inline-flex items-center gap-2 bg-brand-600 !text-slate-950 hover:bg-brand-700 text-white font-bold px-6 py-2.5 rounded-full shadow-lg shadow-brand-600/30 mt-2">
                     Ver ofertas ↓
                 </a>
                 <?php endif; ?>
@@ -467,7 +465,7 @@ if (isset($_GET['add'])) {
                             </a>
                             <?php endif; ?>
                             <a href="<?= sanitize($cartUrl) ?>"
-                               class="inline-flex items-center justify-center w-full border border-brand-600 text-brand-500 hover:bg-brand-600 hover:text-white font-semibold text-sm py-2 rounded-lg transition">
+                               class="inline-flex items-center justify-center w-full border border-brand-600 text-brand-500 hover:bg-brand-600 hover:text-slate-950 font-semibold text-sm py-2 rounded-lg transition">
                                 + Adicionar ao carrinho
                             </a>
                         </div>
@@ -548,7 +546,7 @@ if (isset($_GET['add'])) {
                         </a>
                         <a id="modal-product-cart"
                            href="#"
-                           class="inline-flex items-center justify-center rounded-lg border border-brand-600 px-4 py-3 text-sm font-semibold text-brand-500 transition hover:bg-brand-600 hover:text-white">
+                           class="inline-flex items-center justify-center rounded-lg border border-brand-600 px-4 py-3 text-sm font-semibold text-brand-500 transition hover:bg-brand-600 hover:text-slate-950">
                             + Adicionar ao carrinho
                         </a>
                     </div>
@@ -558,14 +556,7 @@ if (isset($_GET['add'])) {
     </div>
 
     <!-- ── FLOATING WHATSAPP ─────────────────────────────────── -->
-    <?php if ($whats): ?>
-    <a href="https://wa.me/<?= $whats ?>?text=<?= urlencode('Olá! Vim da oferta ' . $flashTitle . ' e quero saber mais!') ?>"
-       target="_blank" rel="noopener"
-       class="float-btn fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold px-5 py-3 rounded-full shadow-lg shadow-emerald-500/40">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.117 1.526 5.845L0 24l6.334-1.498A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.896 0-3.67-.505-5.2-1.386l-.374-.217-3.758.888.928-3.637-.243-.388A9.96 9.96 0 012 12C2 6.486 6.486 2 12 2s10 4.486 10 10-4.486 10-10 10z"/></svg>
-        WhatsApp
-    </a>
-    <?php endif; ?>
+<?php include __DIR__ . '/views/partials/store_chat.php'; ?>
 
 <?php endif; // flashAtivo ?>
 

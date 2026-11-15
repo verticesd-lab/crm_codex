@@ -182,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['cart_action']) && !em
                 extend: {
                     fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
                     colors: {
-                        brand: { 500: '#7c3aed', 600: '#6d28d9', 700: '#5b21b6' }
+                        brand: { 500: '#d7ff3e', 600: '#d7ff3e', 700: '#e6ff7a' }
                     }
                 }
             }
@@ -231,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['cart_action']) && !em
                 Adicione produtos na loja para fazer o pedido pelo WhatsApp.
             </p>
             <a href="<?= sanitize(public_route_url('loja', $slug)) ?>"
-               class="inline-flex items-center justify-center px-5 py-2 rounded-full bg-brand-600 hover:bg-brand-700 text-sm font-semibold">
+               class="inline-flex items-center justify-center px-5 py-2 rounded-full bg-brand-600 !text-slate-950 hover:bg-brand-700 text-sm font-semibold">
                 Voltar para a loja
             </a>
         </div>
@@ -341,5 +341,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['cart_action']) && !em
     <?php endif; ?>
 </div>
 
+<?php $chatHideOrder = true; include __DIR__ . '/views/partials/store_chat.php'; ?>
 </body>
 </html>

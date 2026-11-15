@@ -113,9 +113,9 @@ if (!isset($_SESSION[$cartKey])) {
                     fontFamily: { sans: ['"Space Grotesk"', 'Inter', 'ui-sans-serif', 'system-ui'] },
                     colors: {
                         brand: {
-                            500: '#7c3aed',
-                            600: '#6d28d9',
-                            700: '#5b21b6',
+                            500: '#d7ff3e',
+                            600: '#d7ff3e',
+                            700: '#e6ff7a',
                         }
                     }
                 }
@@ -209,7 +209,7 @@ if (!isset($_SESSION[$cartKey])) {
                 <button class="car-thumb" data-thumb="<?= $idx ?>"
                         style="flex-shrink:0; width:60px; height:60px; border-radius:10px;
                                overflow:hidden; padding:0; cursor:pointer;
-                               border:2px solid <?= $idx===0 ? '#7c3aed' : 'rgba(255,255,255,.2)' ?>;
+                               border:2px solid <?= $idx===0 ? '#d7ff3e' : 'rgba(255,255,255,.2)' ?>;
                                box-shadow:<?= $idx===0 ? '0 0 0 3px rgba(124,58,237,.35)' : 'none' ?>;
                                transition:border-color .15s;">
                     <img src="<?= sanitize($img) ?>"
@@ -271,7 +271,7 @@ if (!isset($_SESSION[$cartKey])) {
                 <?php endif; ?>
                 <input type="hidden" name="add" value="<?= (int)$product['id'] ?>">
                 <button type="submit"
-                        class="inline-flex items-center justify-center w-full bg-brand-600 text-white px-4 py-3 rounded-xl hover:bg-brand-700 font-semibold">
+                        class="inline-flex items-center justify-center w-full bg-brand-600 !text-slate-950 text-white px-4 py-3 rounded-xl hover:bg-brand-700 font-semibold">
                     Adicionar ao carrinho
                 </button>
             </form>
@@ -309,7 +309,7 @@ if (!isset($_SESSION[$cartKey])) {
         slides[current].style.display    = 'block';
         dots[current].style.background   = '#fff';
         dots[current].style.transform    = 'scale(1.3)';
-        thumbs[current].style.borderColor = '#7c3aed';
+        thumbs[current].style.borderColor = '#d7ff3e';
         thumbs[current].style.boxShadow   = '0 0 0 3px rgba(124,58,237,.35)';
 
         if (counter) counter.textContent = (current + 1) + ' / ' + total;
@@ -336,5 +336,6 @@ if (!isset($_SESSION[$cartKey])) {
     });
 })();
 </script>
+<?php $chatProductName = (string)($product['nome'] ?? ''); include __DIR__ . '/views/partials/store_chat.php'; ?>
 </body>
 </html>
