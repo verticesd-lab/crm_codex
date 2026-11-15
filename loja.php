@@ -305,12 +305,12 @@ function render_sizes(string $sizesStr): string {
             </div>
         </div>
         <nav class="store-container store-nav" aria-label="Navegação principal">
+            <a class="store-nav-link is-promo" href="<?= $offersUrl ?>">Ofertas</a>
+            <a class="store-nav-link" href="<?= BASE_URL ?>/promo.php?empresa=<?= urlencode($slug) ?>">Promoções</a>
             <a class="store-nav-link" href="#featured">Destaques</a>
             <?php foreach ($categories as $cat): ?>
                 <a class="store-nav-link <?= $isPremiumCategory($cat) ? 'is-premium' : '' ?>" href="<?= sanitize(public_route_url('loja', $slug, ['categoria' => $cat])) ?>"><?= sanitize($cat) ?></a>
             <?php endforeach; ?>
-            <a class="store-nav-link is-promo" href="<?= $offersUrl ?>">Ofertas</a>
-            <a class="store-nav-link" href="<?= BASE_URL ?>/promo.php?empresa=<?= urlencode($slug) ?>">Promoções</a>
         </nav>
         <nav class="store-container store-mobile-menu" id="store-mobile-menu" aria-label="Navegação móvel">
             <a class="store-nav-link" href="#featured">Destaques</a>

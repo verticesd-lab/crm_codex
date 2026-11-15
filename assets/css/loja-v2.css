@@ -1566,3 +1566,15 @@ img {
     .store-tile:first-child .store-tile-name { font-size: 2.2rem; }
     .store-premium { padding: 18px; }
 }
+
+/* Legibilidade do mosaico: escurece a base da foto sob o nome da categoria. */
+.store-tile::after {
+    background: linear-gradient(to top, rgba(8, 9, 10, 0.92), rgba(8, 9, 10, 0.25) 60%, transparent);
+    content: "";
+    inset: 0;
+    position: absolute;
+}
+
+.store-tile img { opacity: 0.7; }
+.store-tile-name, .store-tile-count { z-index: 1; }
+.store-tile-count { color: var(--store-text); }
