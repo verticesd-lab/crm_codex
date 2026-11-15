@@ -16,7 +16,7 @@
             <div class="store-header-actions">
                 <a class="store-cart" href="<?= BASE_URL ?>/checkout.php?empresa=<?= urlencode($slug) ?>">
                     Carrinho
-                    <span class="store-cart-count"><?= (int)array_sum($_SESSION[$cartKey]) ?></span>
+                    <span class="store-cart-count"><?= (int)array_sum($_SESSION[$cartKey] ?? []) ?></span>
                 </a>
             </div>
         </div>
